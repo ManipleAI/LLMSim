@@ -25,43 +25,20 @@
   ],
 
   "_arguments": [
-    "Tool NAMES are resolved to the client's own spelling automatically",
-    "(Write -> write for OpenCode). Tool ARGUMENTS are not, and cannot be:",
-    "Claude Code's Write takes file_path, OpenCode's write takes filePath.",
+    "Agents disagree about spelling for the same tool. Claude Code declares",
+    "Write(file_path); OpenCode declares write(filePath). Both are handled:",
+    "tool names resolve case-insensitively against what the client declared,",
+    "and arguments are",
+    "realigned against the declared schema by comparing names with case and",
+    "separators removed. So one rule serves both agents, and 'when.provider' is",
+    "for genuine differences in behaviour rather than spelling.",
     "",
-    "So a rule that calls a tool is client-specific in its arguments, which is",
-    "what 'when.provider' below is for. The server logs the real parameter",
-    "names of whatever tool it is about to call, so writing the rule is a",
-    "matter of reading one log line rather than guessing.",
-    "",
-    "This is also the clearest argument for recording real sessions instead of",
-    "hand-writing them: a recording carries the right names by construction."
+    "An argument with no counterpart in the schema is passed through rather",
+    "than dropped: a declared schema is not always complete, and losing an",
+    "argument is a worse failure than sending an unknown one."
   ],
 
   "rules": [
-    {
-      "name": "write-a-file (opencode)",
-      "when": {
-        "provider": "deepseek",
-        "regex": "\\b(create|write|make)\\b[^.]{0,40}\\bfile\\b"
-      },
-      "turns": [
-        {
-          "text": "Creating that file now.",
-          "tool_calls": [
-            {
-              "name": "write",
-              "input": {
-                "filePath": "/workspace/PROOF.md",
-                "content": "# Proof\n\nThis workspace works. Written by OpenCode, driven by DeepSeek, answered by LLMSim.\n"
-              }
-            }
-          ]
-        },
-        { "text": "The file is written. Stopping there, as asked." }
-      ]
-    },
-
     {
       "name": "write-a-file",
       "when": { "regex": "\\b(create|write|make)\\b[^.]{0,40}\\bfile\\b" },

@@ -329,6 +329,34 @@ def declared_tools(body):
     return found
 
 
+def align_arguments(args, params):
+    """Rename scripted arguments to the spellings the client declared.
+
+    The same argument is spelled differently by different agents: Claude
+    Code's Write takes `file_path`, OpenCode's write takes `filePath`. This was
+    the one mismatch left after tool names were resolved, and it was the
+    quietest of the lot — the right tool, called with arguments it ignores,
+    which fails somewhere inside the agent with nothing in any log.
+
+    Comparing names with separators and case removed maps file_path onto
+    filePath, and camelCase onto snake_case, in either direction. Anything
+    with no counterpart is passed through untouched, because a declared
+    schema is not always complete and dropping an argument would be a worse
+    failure than sending one the tool does not know.
+    """
+    if not params:
+        return args
+
+    def norm(name):
+        return re.sub(r"[^a-z0-9]", "", name.lower())
+
+    by_norm = {norm(p): p for p in params}
+    out = {}
+    for key, value in args.items():
+        out[by_norm.get(norm(key), key)] = value
+    return out
+
+
 def resolve_tool_name(scripted, declared):
     """The declared spelling of a scripted tool, when one exists.
 
@@ -502,15 +530,26 @@ class Handler(BaseHTTPRequestHandler):
             resolved = []
             for call in turn["tool_calls"]:
                 real, swapped = resolve_tool_name(call["name"], declared)
-                if swapped:
-                    log("   '%s' -> '%s' (this client's spelling); its parameters are: %s"
-                        % (call["name"], real, ", ".join(declared[real]) or "(none declared)"))
-                elif declared and real not in declared:
+                if declared and real not in declared:
                     log("   WARNING: rule '%s' calls '%s', which this client did not declare. It will "
                         "fail the call. Declared: %s" % (name, real, ", ".join(sorted(declared))[:160]))
+                    resolved.append(dict(call, name=real))
+                    continue
+
+                args = dict(call.get("input") or {})
+                params = declared.get(real, []) if declared else []
+                aligned = align_arguments(args, params)
+                renamed = {k: v for k, v in zip(sorted(args), sorted(aligned)) if k != v}
+
+                if swapped:
+                    log("   '%s' -> '%s' (this client's spelling), parameters: %s"
+                        % (call["name"], real, ", ".join(params) or "(none declared)"))
                 elif declared:
-                    log("   '%s' parameters: %s" % (real, ", ".join(declared[real]) or "(none declared)"))
-                resolved.append(dict(call, name=real))
+                    log("   '%s' parameters: %s" % (real, ", ".join(params) or "(none declared)"))
+                if renamed:
+                    log("   arguments realigned: %s" % ", ".join("%s -> %s" % kv for kv in sorted(renamed.items())))
+
+                resolved.append(dict(call, name=real, input=aligned))
             turn = dict(turn, tool_calls=resolved)
 
         delay = turn.get("delay_ms")

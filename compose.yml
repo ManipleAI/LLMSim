@@ -1,0 +1,13 @@
+services:
+  llmsim:
+    build: .
+    ports:
+      - "8099:8099"
+    volumes:
+      # Bind-mounted so a script edit needs a restart, not a rebuild.
+      - ./responses.json:/app/responses.json:ro
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8099/healthz')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5

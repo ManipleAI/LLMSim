@@ -1,0 +1,108 @@
+{
+  "_comment": [
+    "What LLMSim answers, and when.",
+    "",
+    "Each rule is matched top to bottom against the last thing the caller said.",
+    "'turns' is an ordered script: the first entry answers the first assistant",
+    "turn of a conversation, the second answers the next, and the last entry",
+    "repeats if the conversation runs longer. That is what lets a single rule",
+    "carry a whole agent loop — ask for a tool, then react to its result.",
+    "",
+    "when:  contains | regex | provider | model   (all optional, all must hold)",
+    "turn:  text, tool_calls[{name,input}], stop_reason, input_tokens,",
+    "       delay_ms, error{status,type,message}"
+  ],
+
+  "rules": [
+    {
+      "name": "hello",
+      "when": { "contains": "hello" },
+      "turns": [
+        { "text": "Hello from LLMSim. Nothing here reached a model vendor." }
+      ]
+    },
+
+    {
+      "name": "write-a-file",
+      "when": { "regex": "create|write|make (a|one) file" },
+      "turns": [
+        {
+          "text": "I'll create that file now.",
+          "tool_calls": [
+            {
+              "name": "Write",
+              "input": {
+                "file_path": "HELLO.md",
+                "content": "# Hello\n\nWritten by an agent whose model was LLMSim.\n"
+              }
+            }
+          ]
+        },
+        {
+          "text": "HELLO.md is written. Nothing else to do, so I'll stop here."
+        }
+      ]
+    },
+
+    {
+      "name": "capability-request",
+      "when": { "regex": "invoice|SAP|three-way" },
+      "turns": [
+        {
+          "text": "The catalogue says this needs SAP.Invoice.Read, which this application does not hold. Checking what is granted before I ask.",
+          "tool_calls": [
+            { "name": "Bash", "input": { "command": "cat /workspace/.maniple/granted-capabilities.json" } }
+          ]
+        },
+        {
+          "text": "Nothing is granted, so I'll file the request with the reason tied to this report.",
+          "tool_calls": [
+            {
+              "name": "Bash",
+              "input": {
+                "command": ".maniple/request-capability.sh \"SAP.Invoice.Read\" \"Needed to build INVOICES.md, a report of supplier invoices that are not three-way matched, by reading GET /api/v2/invoices and filtering on matchStatus.\""
+              }
+            }
+          ]
+        },
+        {
+          "text": "The request is filed and tracked as a dependency. I'll stop rather than invent invoice data."
+        }
+      ]
+    },
+
+    {
+      "name": "rate-limited",
+      "when": { "contains": "llmsim:429" },
+      "turns": [
+        {
+          "error": {
+            "status": 429,
+            "type": "rate_limit_error",
+            "message": "Number of request tokens has exceeded your per-minute rate limit."
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "overloaded",
+      "when": { "contains": "llmsim:529" },
+      "turns": [
+        { "error": { "status": 529, "type": "overloaded_error", "message": "Overloaded." } }
+      ]
+    },
+
+    {
+      "name": "slow",
+      "when": { "contains": "llmsim:slow" },
+      "turns": [
+        { "delay_ms": 8000, "text": "That took eight seconds, on purpose." }
+      ]
+    }
+  ],
+
+  "default": {
+    "text": "LLMSim has no rule matching that, so this is the default answer. Add one in responses.json."
+  }
+}

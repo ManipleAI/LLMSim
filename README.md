@@ -1,0 +1,162 @@
+# LLMSim
+
+The model vendors' own APIs, simulated. Anthropic, OpenAI and DeepSeek, in
+their native wire formats, from one process with no dependencies.
+
+Point anything that takes a base URL at it — a gateway, a coding agent, a
+flow editor — and it behaves as though it reached the vendor.
+
+```
+python3 server.py
+sh examples/try-it.sh
+```
+
+That's the whole setup. Python 3.9+, standard library only, nothing to
+install.
+
+## Why simulate the vendors and not the gateway
+
+A gateway already translates between formats. Simulating the gateway would
+only ever prove the simulator agrees with itself, and would leave the
+gateway's own translation — the part most likely to be wrong — untested.
+Sitting where the vendor sits keeps the entire real path in the picture:
+
+```
+Claude Code ─┐
+HarnessRouter ├→ LiteLLM ──→ LLMSim
+Langflow      │              (instead of api.anthropic.com)
+flows        ─┘
+```
+
+One simulator, every caller, whatever format each of them speaks.
+
+## What it does that a gateway's built-in mock cannot
+
+LiteLLM has `mock_response`, and it is genuinely useful: it streams, it
+serves both formats, it needs no provider key. It was measured against a
+live LiteLLM 1.103.0 before this was written, and it does all of that.
+
+What it cannot do is **emit a tool call**. `mock_tool_calls` is ignored, and
+per-request overrides are ignored; a model entry returns one fixed string
+forever. A fixed string proves routing, budgets, translation and streaming.
+It can never make an agent write a file, run a command, or take a second
+turn — so it cannot test an agent loop at all, only the pipe the loop runs
+through.
+
+LLMSim emits real `tool_use` / `tool_calls` blocks, with the right
+`stop_reason`, and advances through a scripted conversation turn by turn.
+
+## Endpoints
+
+| Provider | Base URL | Route | Auth header |
+|---|---|---|---|
+| Anthropic | `http://localhost:8099/anthropic` | `POST /v1/messages` | `x-api-key` |
+| OpenAI | `http://localhost:8099/openai` | `POST /v1/chat/completions` | `Authorization: Bearer` |
+| DeepSeek | `http://localhost:8099/deepseek` | `POST /v1/chat/completions` | `Authorization: Bearer` |
+
+Also served: `GET /v1/models` (Claude Code queries this on startup for
+gateway discovery, and shows an empty model list if it 404s),
+`POST /v1/messages/count_tokens`, and `GET /healthz`, which lists the rules
+currently loaded.
+
+The provider prefix is how one process serves three vendors whose paths
+collide — OpenAI and DeepSeek both want `/v1/chat/completions`. Drop the
+prefix and the provider is inferred from the key presented instead.
+
+## Keys
+
+Hardcoded, fake by construction, and overridable by environment variable:
+
+| Provider | Key |
+|---|---|
+| Anthropic | `sk-ant-llmsim-000000000000000000000000` |
+| OpenAI | `sk-llmsim-000000000000000000000000` |
+| DeepSeek | `sk-llmsim-deepseek-0000000000000000` |
+
+A client presenting the wrong key gets a **401 in that vendor's own error
+envelope**, so a misconfiguration fails the way it would in production
+rather than quietly succeeding.
+
+Nothing here is a real credential and nothing here should become one. If you
+find yourself wanting to put a live key in this file, you want a different
+tool.
+
+## Scripting responses
+
+`responses.json` holds ordered rules. Each has a `when` and a list of
+`turns`:
+
+```json
+{
+  "name": "write-a-file",
+  "when": { "regex": "create|write|make (a|one) file" },
+  "turns": [
+    { "text": "I'll create that file now.",
+      "tool_calls": [{ "name": "Write", "input": { "file_path": "HELLO.md" } }] },
+    { "text": "HELLO.md is written, so I'll stop here." }
+  ]
+}
+```
+
+`when` takes any of `contains`, `regex`, `provider`, `model` — all optional,
+all must hold. A turn takes `text`, `tool_calls`, `stop_reason`,
+`input_tokens`, `delay_ms`, and `error { status, type, message }`.
+
+**Two decisions, kept apart.** *Which rule* comes from the conversation's
+opening ask. *Which turn within it* comes from how many assistant turns have
+already happened.
+
+Both halves of that are load-bearing, and both were arrived at the hard way:
+
+- Matching on the *latest* user message looks right and is wrong. By turn two
+  the latest user message is a tool result, so the conversation gets
+  re-matched against whatever the tool printed. A file named `HELLO.md`
+  dragged an agent-loop conversation into the `hello` rule, mid-loop.
+- Selecting a turn by *hashing the request* fails even faster. Turn three's
+  request contains turns one and two, tool output included — timestamps, ids,
+  directory listings — so a hash misses on the second turn, every time. A
+  count of assistant messages is stable under all of it.
+
+The last turn repeats if a conversation runs longer than the script.
+
+## Testing the unhappy paths
+
+The rules shipped in `responses.json` include ones no live API key will give
+you on demand:
+
+| Say this | And you get |
+|---|---|
+| `llmsim:429` | a rate-limit error in the vendor's envelope |
+| `llmsim:529` | an overloaded error |
+| `llmsim:slow` | an eight-second first token |
+
+These are usually the least-tested paths in any integration, because
+provoking them for real means waiting for a bad day.
+
+## Container
+
+```
+docker compose up --build
+```
+
+Serves on the same port, with `responses.json` bind-mounted so edits take
+effect on restart without a rebuild.
+
+## Limits, stated plainly
+
+- **Token counts are synthetic.** Roughly four characters per token. Cost
+  and budget arithmetic can be exercised, but the numbers are not the
+  vendors' numbers. Real accounting is the one thing a simulator cannot
+  honestly provide, and rounding that off would make cost tests lie rather
+  than fail.
+- **It has no idea what it is saying.** Answers are scripted. It proves a
+  pipeline carries a response of a given shape; it proves nothing about
+  whether a model would produce that response.
+- **Scripts go stale on purpose.** Change a prompt or a harness and a script
+  written for the old one no longer fits. That is information, but it means
+  scripts need maintaining alongside the thing they test.
+- **No recording yet.** Scripts are written by hand. Capturing real sessions
+  and replaying them — the cassette approach, as in
+  [cs-vcr](https://github.com/codesweep-ai/vcr) — would give real tool
+  sequences instead of imagined ones. The `turns` format was designed to
+  accept them: a recorder can emit this shape directly.

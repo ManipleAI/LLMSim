@@ -25,8 +25,11 @@ Stdlib only, single file, no install. Run it:
 Point a client at one of:
 
     http://localhost:8099/anthropic    (then /v1/messages)
-    http://localhost:8099/openai       (then /v1/chat/completions)
+    http://localhost:8099/openai       (then /v1/chat/completions or /v1/responses)
     http://localhost:8099/deepseek     (then /v1/chat/completions)
+
+Three wire formats, because agents disagree: Claude Code speaks Anthropic
+Messages, OpenCode speaks Chat Completions, and Codex speaks Responses.
 
 Or omit the prefix and the provider is inferred from the key presented.
 """
@@ -94,23 +97,27 @@ SCRIPT = load_script()
 
 
 def flatten(msg):
-    """One message's text, whatever shape it arrived in.
+    """One message's text, and whether it is tool output rather than a person.
 
-    Both vendors allow content to be either a plain string or a list of typed
-    blocks, and a tool result arrives as a block inside a user message.
+    Content may be a plain string or a list of typed blocks, and a tool result
+    arrives as a block inside a *user* message — so "was a human speaking here"
+    cannot be answered from the role alone.
     """
     content = msg.get("content")
     if isinstance(content, str):
-        return content
+        return content, bool(msg.get("tool_result"))
     if not isinstance(content, list):
-        return ""
-    parts = []
+        return "", False
+
+    parts, saw_tool_result, saw_text = [], False, False
     for block in content:
         if not isinstance(block, dict):
             continue
         if block.get("type") == "text":
             parts.append(block.get("text", ""))
+            saw_text = True
         elif block.get("type") == "tool_result":
+            saw_tool_result = True
             inner = block.get("content")
             if isinstance(inner, str):
                 parts.append(inner)
@@ -118,31 +125,56 @@ def flatten(msg):
                 for b in inner:
                     if isinstance(b, dict) and b.get("type") == "text":
                         parts.append(b.get("text", ""))
-    return "\n".join(parts)
+    return "\n".join(parts), saw_tool_result and not saw_text
 
 
 def subject(messages):
-    """What this conversation is about: its opening ask.
+    """What this conversation is about: the last thing a person actually asked.
 
-    Deliberately the *first* user message, not the latest. Matching on the
-    latest looks right and is wrong — by turn two the latest user message is
-    a tool result, so the conversation gets re-matched against whatever the
-    tool happened to print. Caught exactly that way: a file named HELLO.md
-    dragged an agent-loop conversation into the "hello" rule, mid-loop. The
-    opening ask identifies the scenario; the turn counter advances it.
+    Both obvious readings are wrong, and each was wrong in its own real run:
+
+    - The *latest* user message is a tool result by turn two, so the
+      conversation gets re-matched against whatever the tool printed. A file
+      named HELLO.md dragged an agent-loop conversation into the "hello" rule,
+      mid-loop.
+    - The *first* user message is not the ask either. A harness injects
+      governance context ahead of the prompt, so the opening text is whatever
+      the platform had to say — which sent a "create a file" session into the
+      SAP capability rule, because the harness guidance mentions SAP.
+
+    What holds in both: the last user message that is not tool output. At turn
+    zero that is the prompt; at turn five it is still the prompt, because
+    everything since has been tool results. The turn counter advances the
+    script; this only decides which script.
     """
+    best = ""
     for msg in messages:
-        if msg.get("role") == "user":
-            return flatten(msg)
-    return ""
+        if msg.get("role") != "user":
+            continue
+        text, is_tool_result = flatten(msg)
+        if not is_tool_result and text.strip():
+            best = text
+    return best
 
 
-def matches(rule, provider, model, text):
+def matches(rule, provider, model, text, declared=None):
     when = rule.get("when", {})
     if "provider" in when and when["provider"] != provider:
         return False
     if "model" in when and when["model"] not in (model or ""):
         return False
+    # Match on the tools the client declared, which is the only honest way to
+    # tell agents apart. Codex declares apply_patch/exec_command and no write
+    # at all; OpenCode declares write; Claude Code declares Write. That is a
+    # difference in vocabulary, not in spelling, so no amount of realigning
+    # names bridges it — a rule has to be able to say "only when this client
+    # can actually do this". `provider` cannot express it: Codex and OpenCode
+    # can both sit behind the same provider.
+    wanted = when.get("tools") or ([when["tool"]] if "tool" in when else [])
+    if wanted:
+        have = {t.lower() for t in (declared or {})}
+        if not all(t.lower() in have for t in wanted):
+            return False
     if "contains" in when and when["contains"].lower() not in text.lower():
         return False
     if "regex" in when and not re.search(when["regex"], text, re.I):
@@ -150,7 +182,7 @@ def matches(rule, provider, model, text):
     return True
 
 
-def choose_turn(provider, model, messages):
+def choose_turn(provider, model, messages, declared=None):
     """Which scripted turn to serve.
 
     Two independent decisions, and keeping them apart is the whole trick.
@@ -165,7 +197,7 @@ def choose_turn(provider, model, messages):
     turns_taken = sum(1 for m in messages if m.get("role") == "assistant")
 
     for rule in SCRIPT.get("rules", []):
-        if matches(rule, provider, model, text):
+        if matches(rule, provider, model, text, declared):
             turns = rule.get("turns") or []
             if not turns:
                 continue
@@ -377,6 +409,144 @@ def resolve_tool_name(scripted, declared):
     return scripted, False
 
 
+# ── OpenAI Responses: /v1/responses ──────────────────────────────────────
+#
+# A third wire format, and not an optional one: Codex talks Responses, not
+# Chat Completions. Pointing HarnessRouter's Codex backend at this server got
+# `404 No such route: /v1/responses` five times over while the agent retried —
+# the routing was right and the format was missing.
+
+def responses_to_messages(body):
+    """The Responses request's history, as chat-shaped messages.
+
+    Lets subject() and choose_turn() stay format-agnostic: a rule written once
+    drives Chat Completions, Anthropic Messages and Responses alike.
+    """
+    raw = body.get("input")
+    if isinstance(raw, str):
+        return [{"role": "user", "content": raw}]
+    if not isinstance(raw, list):
+        return []
+
+    messages = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        kind = item.get("type")
+        # A tool call the model made, and its result coming back — both count
+        # as turns having happened, which is how the script advances.
+        if kind == "function_call":
+            messages.append({"role": "assistant", "content": ""})
+            continue
+        if kind == "function_call_output":
+            # Flagged as tool output so subject() looks past it for the prompt.
+            messages.append({"role": "user", "content": str(item.get("output") or ""), "tool_result": True})
+            continue
+
+        role = item.get("role") or "user"
+        content = item.get("content")
+        if isinstance(content, str):
+            messages.append({"role": role, "content": content})
+        elif isinstance(content, list):
+            parts = [c.get("text", "") for c in content
+                     if isinstance(c, dict) and c.get("type") in ("input_text", "output_text", "text")]
+            messages.append({"role": role, "content": "\n".join(parts)})
+    return messages
+
+
+def responses_body(turn, model):
+    output = []
+    if turn.get("text"):
+        output.append({
+            "type": "message", "id": rand_id("msg_"), "role": "assistant", "status": "completed",
+            "content": [{"type": "output_text", "text": turn["text"], "annotations": []}],
+        })
+    for call in turn.get("tool_calls", []):
+        output.append({
+            "type": "function_call", "id": rand_id("fc_"), "call_id": rand_id("call_", 20),
+            "name": call["name"], "arguments": json.dumps(call.get("input", {})), "status": "completed",
+        })
+
+    input_tokens = turn.get("input_tokens", 1200)
+    output_tokens = rough_tokens(json.dumps(output))
+    return {
+        "id": rand_id("resp_"),
+        "object": "response",
+        "created_at": int(time.time()),
+        "status": "completed",
+        "model": model,
+        "output": output,
+        # Responses clients read output_text as the flattened convenience form;
+        # omitting it makes a reply look empty to anything that trusts it.
+        "output_text": turn.get("text") or "",
+        "usage": {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": input_tokens + output_tokens,
+        },
+    }
+
+
+def responses_sse(turn, model):
+    """Responses streaming: every item announced, delta'd, then closed.
+
+    Text streams as output_text.delta; a function call streams its arguments
+    as function_call_arguments.delta. A client that reads only the terminal
+    response.completed still gets the whole thing, because that event carries
+    the assembled response.
+    """
+    full = responses_body(turn, model)
+    shell = dict(full, status="in_progress", output=[], output_text="")
+
+    yield "response.created", {"type": "response.created", "response": shell}
+    yield "response.in_progress", {"type": "response.in_progress", "response": shell}
+
+    for index, item in enumerate(full["output"]):
+        opening = dict(item)
+        if item["type"] == "message":
+            opening["content"] = []
+        else:
+            opening["arguments"] = ""
+        yield "response.output_item.added", {
+            "type": "response.output_item.added", "output_index": index, "item": opening,
+        }
+
+        if item["type"] == "message":
+            yield "response.content_part.added", {
+                "type": "response.content_part.added", "item_id": item["id"], "output_index": index,
+                "content_index": 0, "part": {"type": "output_text", "text": "", "annotations": []},
+            }
+            for piece in chunked(item["content"][0]["text"], 18):
+                yield "response.output_text.delta", {
+                    "type": "response.output_text.delta", "item_id": item["id"],
+                    "output_index": index, "content_index": 0, "delta": piece,
+                }
+            yield "response.output_text.done", {
+                "type": "response.output_text.done", "item_id": item["id"], "output_index": index,
+                "content_index": 0, "text": item["content"][0]["text"],
+            }
+            yield "response.content_part.done", {
+                "type": "response.content_part.done", "item_id": item["id"], "output_index": index,
+                "content_index": 0, "part": item["content"][0],
+            }
+        else:
+            for piece in chunked(item["arguments"], 24):
+                yield "response.function_call_arguments.delta", {
+                    "type": "response.function_call_arguments.delta", "item_id": item["id"],
+                    "output_index": index, "delta": piece,
+                }
+            yield "response.function_call_arguments.done", {
+                "type": "response.function_call_arguments.done", "item_id": item["id"],
+                "output_index": index, "arguments": item["arguments"],
+            }
+
+        yield "response.output_item.done", {
+            "type": "response.output_item.done", "output_index": index, "item": item,
+        }
+
+    yield "response.completed", {"type": "response.completed", "response": full}
+
+
 def chunked(text, size):
     for i in range(0, len(text), size):
         yield text[i:i + size]
@@ -499,19 +669,26 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(200, {"input_tokens": rough_tokens(text)})
         if path == "/v1/chat/completions":
             return self.handle_chat(body, "openai")
+        if path == "/v1/responses":
+            return self.handle_chat(body, "responses")
 
         return self.refuse(404, "not_found_error", "No such route: " + path)
 
     def handle_chat(self, body, shape):
         model = body.get("model") or (MODELS[self.provider][0])
-        messages = body.get("messages") or []
+        messages = responses_to_messages(body) if shape == "responses" else (body.get("messages") or [])
         stream = bool(body.get("stream"))
-        name, turn = choose_turn(self.provider, model, messages)
+        declared = declared_tools(body)
+        name, turn = choose_turn(self.provider, model, messages, declared)
 
         log("%s %s model=%s stream=%s turns=%d -> rule '%s'%s" % (
             self.provider, shape, model, stream,
             sum(1 for m in messages if m.get("role") == "assistant"), name,
             " (tool_call)" if turn.get("tool_calls") else ""))
+        # The text the rule was chosen from. Without this, a wrong rule is a
+        # mystery: the request carries injected harness context, tool output and
+        # the prompt all mixed together, and only this says which part won.
+        log("   matched on: %r" % (subject(messages)[:160],))
 
         # A scripted tool call has to name a tool the *client* declared, and
         # nothing else will tell you when it doesn't.
@@ -522,7 +699,6 @@ class Handler(BaseHTTPRequestHandler):
         # another turn, and the script's next line announced success. The
         # session finished "completed" with no file and no error anywhere. A
         # simulator that can do that is worse than no simulator.
-        declared = declared_tools(body)
         if declared:
             log("   client declared %d tools: %s" % (len(declared), ", ".join(sorted(declared))[:220]))
 
@@ -531,8 +707,12 @@ class Handler(BaseHTTPRequestHandler):
             for call in turn["tool_calls"]:
                 real, swapped = resolve_tool_name(call["name"], declared)
                 if declared and real not in declared:
-                    log("   WARNING: rule '%s' calls '%s', which this client did not declare. It will "
-                        "fail the call. Declared: %s" % (name, real, ", ".join(sorted(declared))[:160]))
+                    # Printed with signatures, because the next thing anyone
+                    # does after seeing this is write a rule for this client,
+                    # and guessing its argument names is how that goes wrong.
+                    sigs = "; ".join("%s(%s)" % (t, ", ".join(declared[t])) for t in sorted(declared))
+                    log("   WARNING: rule '%s' calls '%s', which this client did not declare — the call "
+                        "will fail. This client offers: %s" % (name, real, sigs[:600]))
                     resolved.append(dict(call, name=real))
                     continue
 
@@ -565,7 +745,9 @@ class Handler(BaseHTTPRequestHandler):
                                err.get("message", "Rate limited."))
 
         if not stream:
-            payload = anthropic_body(turn, model) if shape == "anthropic" else openai_body(turn, model)
+            payload = (anthropic_body(turn, model) if shape == "anthropic"
+                       else responses_body(turn, model) if shape == "responses"
+                       else openai_body(turn, model))
             return self.send_json(200, payload)
 
         # Connection: close, not keep-alive, and the handler stops reusing
@@ -581,8 +763,9 @@ class Handler(BaseHTTPRequestHandler):
         self.close_connection = True
 
         try:
-            if shape == "anthropic":
-                for event, data in anthropic_sse(turn, model):
+            if shape in ("anthropic", "responses"):
+                events = anthropic_sse(turn, model) if shape == "anthropic" else responses_sse(turn, model)
+                for event, data in events:
                     self.wfile.write(("event: %s\ndata: %s\n\n" % (event, json.dumps(data))).encode())
                     self.wfile.flush()
             else:

@@ -6,24 +6,22 @@
     "'turns' is an ordered script: the first entry answers the first assistant",
     "turn of a conversation, the second answers the next, and the last entry",
     "repeats if the conversation runs longer. That is what lets a single rule",
-    "carry a whole agent loop — ask for a tool, then react to its result.",
+    "carry a whole agent loop \u2014 ask for a tool, then react to its result.",
     "",
     "when:  contains | regex | provider | model   (all optional, all must hold)",
     "turn:  text, tool_calls[{name,input}], stop_reason, input_tokens,",
     "       delay_ms, error{status,type,message}"
   ],
-
   "_ordering": [
     "Specific rules first, generic ones last, and prefer an anchored regex to",
     "a bare 'contains' on a common word.",
     "",
     "Learned the hard way: 'hello' as a substring sat first and swallowed the",
-    "prompt \"Create a file called HELLO.md\" — the filename matched. A real",
+    "prompt \"Create a file called HELLO.md\" \u2014 the filename matched. A real",
     "DeepSeek workspace then got plain text where it needed a tool call, did",
     "nothing, and reported a clean, successful, empty session. A greedy rule",
     "does not announce itself; it just quietly answers for everything below it."
   ],
-
   "_arguments": [
     "Agents disagree about spelling for the same tool. Claude Code declares",
     "Write(file_path); OpenCode declares write(filePath). Both are handled:",
@@ -37,11 +35,38 @@
     "than dropped: a declared schema is not always complete, and losing an",
     "argument is a worse failure than sending an unknown one."
   ],
-
   "rules": [
     {
+      "name": "write-a-file (codex)",
+      "_why": "Codex has no write tool at all \u2014 it shells out. Keyed on the tool it declares rather than its provider, because Codex and OpenCode can sit behind the same one.",
+      "when": {
+        "tool": "exec_command",
+        "regex": "\\b(create|write|make)\\b[^.]{0,40}\\bfile\\b"
+      },
+      "turns": [
+        {
+          "text": "Creating that file now.",
+          "tool_calls": [
+            {
+              "name": "exec_command",
+              "input": {
+                "cmd": "printf '# Hello\\n\\nWritten by an agent whose model was LLMSim.\\n' > HELLO.md && ls -l HELLO.md",
+                "workdir": "/workspace",
+                "justification": "Writing the file the prompt asked for."
+              }
+            }
+          ]
+        },
+        {
+          "text": "HELLO.md is written. Nothing else to do, so I'll stop here."
+        }
+      ]
+    },
+    {
       "name": "write-a-file",
-      "when": { "regex": "\\b(create|write|make)\\b[^.]{0,40}\\bfile\\b" },
+      "when": {
+        "regex": "\\b(create|write|make)\\b[^.]{0,40}\\bfile\\b"
+      },
       "turns": [
         {
           "text": "I'll create that file now.",
@@ -60,15 +85,21 @@
         }
       ]
     },
-
     {
       "name": "capability-request",
-      "when": { "regex": "invoice|SAP|three-way" },
+      "when": {
+        "regex": "invoice|SAP|three-way"
+      },
       "turns": [
         {
           "text": "The catalogue says this needs SAP.Invoice.Read, which this application does not hold. Checking what is granted before I ask.",
           "tool_calls": [
-            { "name": "Bash", "input": { "command": "cat /workspace/.maniple/granted-capabilities.json" } }
+            {
+              "name": "Bash",
+              "input": {
+                "command": "cat /workspace/.maniple/granted-capabilities.json"
+              }
+            }
           ]
         },
         {
@@ -87,18 +118,22 @@
         }
       ]
     },
-
     {
       "name": "hello",
-      "when": { "regex": "^\\s*(hi|hey|hello|good (morning|afternoon))\\b" },
+      "when": {
+        "regex": "^\\s*(hi|hey|hello|good (morning|afternoon))\\b"
+      },
       "turns": [
-        { "text": "Hello from LLMSim. Nothing here reached a model vendor." }
+        {
+          "text": "Hello from LLMSim. Nothing here reached a model vendor."
+        }
       ]
     },
-
     {
       "name": "rate-limited",
-      "when": { "contains": "llmsim:429" },
+      "when": {
+        "contains": "llmsim:429"
+      },
       "turns": [
         {
           "error": {
@@ -109,24 +144,34 @@
         }
       ]
     },
-
     {
       "name": "overloaded",
-      "when": { "contains": "llmsim:529" },
+      "when": {
+        "contains": "llmsim:529"
+      },
       "turns": [
-        { "error": { "status": 529, "type": "overloaded_error", "message": "Overloaded." } }
+        {
+          "error": {
+            "status": 529,
+            "type": "overloaded_error",
+            "message": "Overloaded."
+          }
+        }
       ]
     },
-
     {
       "name": "slow",
-      "when": { "contains": "llmsim:slow" },
+      "when": {
+        "contains": "llmsim:slow"
+      },
       "turns": [
-        { "delay_ms": 8000, "text": "That took eight seconds, on purpose." }
+        {
+          "delay_ms": 8000,
+          "text": "That took eight seconds, on purpose."
+        }
       ]
     }
   ],
-
   "default": {
     "text": "LLMSim has no rule matching that, so this is the default answer. Add one in responses.json."
   }

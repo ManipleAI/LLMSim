@@ -160,3 +160,57 @@ effect on restart without a rebuild.
   [cs-vcr](https://github.com/codesweep-ai/vcr) — would give real tool
   sequences instead of imagined ones. The `turns` format was designed to
   accept them: a recorder can emit this shape directly.
+
+## Pointing LiteLLM at it
+
+Verified end to end against LiteLLM 1.103.0 — `examples/litellm-config.yaml`
+is the config that was actually run.
+
+Only `api_base` changes per model, and **each provider appends a different
+suffix to it**, which is the one detail worth getting right:
+
+| LiteLLM provider | Calls | So `api_base` is |
+|---|---|---|
+| `anthropic/*` | `{api_base}/v1/messages` | `http://llmsim:8099/anthropic` |
+| `openai/*` | `{api_base}/chat/completions` | `http://llmsim:8099/openai/v1` |
+| `deepseek/*` | `{api_base}/chat/completions` | `http://llmsim:8099/deepseek/v1` |
+
+Anthropic wants the bare prefix; the OpenAI-shaped providers want `/v1` on
+the end. Get it wrong and you get a 404 that reads like a broken key.
+
+Locally, a LiteLLM container reaches a host-run LLMSim at
+`host.docker.internal:8099` (with `--add-host host.docker.internal:host-gateway`
+on Linux).
+
+What that chain was confirmed to do:
+
+- `/v1/chat/completions` against an `anthropic/` model — LiteLLM translated
+  Anthropic to OpenAI and **the tool call survived**: `finish_reason:
+  "tool_calls"`, arguments intact.
+- `/v1/messages` — LiteLLM's Anthropic-native endpoint returned the
+  `tool_use` block untouched, `stop_reason: "tool_use"`. This is the path a
+  coding agent pointed at the gateway actually takes.
+- Streaming through the gateway, terminating in `[DONE]`.
+- All three providers, each on its own key.
+
+### On a deployment where models live in the database
+
+A LiteLLM started with `STORE_MODEL_IN_DB` ignores `model_list` in a config
+file — models are registered through its API instead:
+
+```
+POST {litellm}/model/new
+Authorization: Bearer {master key}
+
+{
+  "model_name": "sim-claude",
+  "litellm_params": {
+    "model": "anthropic/claude-sonnet-5",
+    "api_base": "http://llmsim.default.svc:8099/anthropic",
+    "api_key": "sk-ant-llmsim-000000000000000000000000"
+  }
+}
+```
+
+Note the service address: in a cluster, `localhost` is the gateway's own pod.
+LLMSim has to be reachable as a service.

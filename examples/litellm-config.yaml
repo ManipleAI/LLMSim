@@ -1,0 +1,33 @@
+# LiteLLM pointed at LLMSim instead of the real vendors.
+#
+# The only thing that changes per model is api_base. Each of LiteLLM's
+# providers appends its own suffix to it, and they are NOT the same — which
+# is why the prefixes below differ. Verified against LiteLLM 1.103.0.
+#
+#   anthropic/*  ->  {api_base}/v1/messages
+#   openai/*     ->  {api_base}/chat/completions
+#   deepseek/*   ->  {api_base}/chat/completions
+#
+# So Anthropic wants the bare provider prefix and the OpenAI-shaped ones
+# want /v1 on the end.
+model_list:
+  - model_name: sim-claude
+    litellm_params:
+      model: anthropic/claude-sonnet-5
+      api_base: http://host.docker.internal:8099/anthropic
+      api_key: sk-ant-llmsim-000000000000000000000000
+
+  - model_name: sim-gpt
+    litellm_params:
+      model: openai/gpt-5
+      api_base: http://host.docker.internal:8099/openai/v1
+      api_key: sk-llmsim-000000000000000000000000
+
+  - model_name: sim-deepseek
+    litellm_params:
+      model: deepseek/deepseek-chat
+      api_base: http://host.docker.internal:8099/deepseek/v1
+      api_key: sk-llmsim-deepseek-0000000000000000
+
+general_settings:
+  master_key: sk-local-llmsim-test

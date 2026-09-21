@@ -309,6 +309,46 @@ def openai_sse(turn, model):
     yield chunk({}, full["choices"][0]["finish_reason"])
 
 
+def declared_tools(body):
+    """What the caller says it can do: {name: [parameter names]}.
+
+    Anthropic sends {name, input_schema}; OpenAI wraps the same thing as
+    {type: "function", function: {name, parameters}}.
+    """
+    found = {}
+    for tool in body.get("tools") or []:
+        if not isinstance(tool, dict):
+            continue
+        inner = tool.get("function") if isinstance(tool.get("function"), dict) else tool
+        name = inner.get("name")
+        if not name:
+            continue
+        schema = inner.get("parameters") or inner.get("input_schema") or {}
+        props = schema.get("properties") if isinstance(schema, dict) else None
+        found[name] = sorted(props) if isinstance(props, dict) else []
+    return found
+
+
+def resolve_tool_name(scripted, declared):
+    """The declared spelling of a scripted tool, when one exists.
+
+    Agents disagree about capitalisation for the same tool: Claude Code
+    declares `Write`, OpenCode declares `write`. A script naming one is
+    useless to the other, and the failure is silent — the agent gets a tool
+    it has never heard of and errors into a tool_result nobody reads.
+
+    Matching case-insensitively lets a single script drive both. It does not
+    fix differing *argument* names, which is a real limit and why recording
+    real sessions beats hand-writing them.
+    """
+    if not declared or scripted in declared:
+        return scripted, False
+    for name in declared:
+        if name.lower() == scripted.lower():
+            return name, True
+    return scripted, False
+
+
 def chunked(text, size):
     for i in range(0, len(text), size):
         yield text[i:i + size]
@@ -444,6 +484,34 @@ class Handler(BaseHTTPRequestHandler):
             self.provider, shape, model, stream,
             sum(1 for m in messages if m.get("role") == "assistant"), name,
             " (tool_call)" if turn.get("tool_calls") else ""))
+
+        # A scripted tool call has to name a tool the *client* declared, and
+        # nothing else will tell you when it doesn't.
+        #
+        # Found the hard way: a script returning "Write" — Claude Code's name
+        # for it — was handed to OpenCode, which calls its own tool something
+        # else. OpenCode took the unknown name, failed the call, came back for
+        # another turn, and the script's next line announced success. The
+        # session finished "completed" with no file and no error anywhere. A
+        # simulator that can do that is worse than no simulator.
+        declared = declared_tools(body)
+        if declared:
+            log("   client declared %d tools: %s" % (len(declared), ", ".join(sorted(declared))[:220]))
+
+        if turn.get("tool_calls"):
+            resolved = []
+            for call in turn["tool_calls"]:
+                real, swapped = resolve_tool_name(call["name"], declared)
+                if swapped:
+                    log("   '%s' -> '%s' (this client's spelling); its parameters are: %s"
+                        % (call["name"], real, ", ".join(declared[real]) or "(none declared)"))
+                elif declared and real not in declared:
+                    log("   WARNING: rule '%s' calls '%s', which this client did not declare. It will "
+                        "fail the call. Declared: %s" % (name, real, ", ".join(sorted(declared))[:160]))
+                elif declared:
+                    log("   '%s' parameters: %s" % (real, ", ".join(declared[real]) or "(none declared)"))
+                resolved.append(dict(call, name=real))
+            turn = dict(turn, tool_calls=resolved)
 
         delay = turn.get("delay_ms")
         if delay:

@@ -214,3 +214,37 @@ Authorization: Bearer {master key}
 
 Note the service address: in a cluster, `localhost` is the gateway's own pod.
 LLMSim has to be reachable as a service.
+
+## Driving a real agent: what it took
+
+Proven end to end on a k3s deployment — OpenCode in a workspace pod, a
+virtual key minted by LiteLLM scoped to one model, LLMSim answering as
+DeepSeek. The agent wrote a real file. No vendor key anywhere in the chain.
+
+Three things had to be right, and each failed silently first:
+
+1. **Rule specificity.** `contains: "hello"` sat first in the script and
+   swallowed the prompt *"Create a file called HELLO.md"* — the filename
+   matched. The agent got prose where it needed a tool call, did nothing, and
+   the session finished `completed` with no file and no error. Specific rules
+   first, and prefer an anchored regex to a bare substring.
+2. **Tool names differ by agent.** Claude Code declares `Write`; OpenCode
+   declares `write`. A script naming the wrong one hands the agent a tool it
+   has never heard of. Names are now resolved case-insensitively against what
+   the client declared, and a genuine mismatch logs a warning rather than
+   failing quietly.
+3. **Tool arguments differ too, and cannot be resolved.** Claude Code's
+   `Write` takes `file_path`; OpenCode's `write` takes `filePath`. So a rule
+   that calls a tool is client-specific in its arguments — which is what
+   `when.provider` is for. The server logs the real parameter names of the
+   tool it is about to call, so writing the rule means reading one log line
+   instead of guessing.
+
+The common thread: **every one of these failures produced a clean, successful,
+empty session.** A simulator that can do that is worse than no simulator, so
+the logging above is not a convenience — it is the feature that makes the
+thing trustworthy.
+
+It is also the strongest argument for recording real sessions rather than
+hand-writing them. A recording carries the right tool names, the right
+argument names and the right sequence by construction.

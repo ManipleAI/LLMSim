@@ -1,0 +1,57 @@
+# LLMSim as a cluster service, so a gateway or a workspace pod can reach it
+# by name. Namespace is passed in; nothing here is Maniple-specific.
+#
+#   docker build -t llmsim:dev . && docker save llmsim:dev | k3s ctr images import -
+#   kubectl -n <ns> apply -f deploy/k8s.yaml
+#
+# Then point a gateway at http://llmsim.<ns>.svc:8099/<provider>
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: llmsim-script
+data:
+  responses.json: |
+    PLACEHOLDER
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llmsim
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: llmsim }
+  template:
+    metadata:
+      labels: { app: llmsim }
+    spec:
+      containers:
+        - name: llmsim
+          image: llmsim:dev
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: LLMSIM_PORT, value: "8099" }
+            - { name: LLMSIM_SCRIPT, value: /script/responses.json }
+          ports:
+            - { name: http, containerPort: 8099 }
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { memory: 128Mi }
+          volumeMounts:
+            - { name: script, mountPath: /script }
+      volumes:
+        - name: script
+          configMap: { name: llmsim-script }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: llmsim
+spec:
+  selector: { app: llmsim }
+  ports:
+    - { name: http, port: 8099, targetPort: http }

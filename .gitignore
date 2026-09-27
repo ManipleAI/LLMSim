@@ -2,3 +2,5 @@ __pycache__/
 *.pyc
 .DS_Store
 cassettes/
+# Written by the console. Machine-local settings, and it holds the upstream key.
+llmsim.config.json

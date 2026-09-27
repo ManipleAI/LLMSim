@@ -119,15 +119,62 @@ Both halves of that are load-bearing, and both were arrived at the hard way:
 
 The last turn repeats if a conversation runs longer than the script.
 
+## The console
+
+```
+python3 server.py            # then open http://localhost:8099/ui
+```
+
+One page, served by the same process, no build step and no dependency, laid
+out as a control plane:
+
+| | |
+|---|---|
+| **Models** | Every model the simulator advertises. Pick one to set what it answers — fixed text, a failure status, a delay — and where its traffic goes. |
+| **Routing** | The default route, and the upstream everything relayed goes to. |
+| **Logs** | Every request as it arrives: model, route taken, what was asked, what came back, how long it took. |
+| **Integrations** | Empty for now. |
+
+### A model's own answer
+
+`responses.json` matches on the **prompt**, which is right for a scenario and
+wrong for "this model is always slow" or "this one is over its quota". Those
+are properties of the model, so they are set per model and win over the
+script:
+
+```json
+"responses": {
+  "claude-opus-5":    {"text": "...", "delay_ms": 250},
+  "claude-haiku-4.5": {"status": 429, "text": "Over its quota."}
+}
+```
+
+A status becomes that vendor's own error envelope, so a client's retry and
+backoff handling is exercised rather than bypassed. Leave a model unset and
+it falls through to the script exactly as before.
+
+Sign-in is `Admin` / `Admin`, changed with `LLMSIM_UI_USER` and
+`LLMSIM_UI_PASSWORD`, or switched off entirely with `LLMSIM_UI_AUTH=off`.
+On by default even on localhost, for one reason: this console can point every
+model at a real upstream and spend real money, which is not a thing to leave
+open by accident. The upstream key is never sent to the browser — the page is
+told whether one is stored, and nothing more.
+
 ## Two modes: scripted, or one real model behind every name
 
 Scripted is the default and everything above describes it: `responses.json`
 decides, deterministically, offline, free.
 
-**Relay** answers every request with one real model instead. Whatever model
-the client asked for — `claude-opus-5`, `gpt-5.4`, `gemini-3.8-flash` — the
-answer comes from `LLMSIM_UPSTREAM_MODEL`, and is returned in the format the
-client asked in.
+**Relay** answers with one real model instead. Whatever model the client
+asked for — `claude-opus-5`, `gpt-5.4`, `gemini-3.8-flash` — the answer comes
+from the upstream model, and is returned in the format the client asked in.
+
+**The choice is per model, not per process.** A default covers everything,
+and any model can be pinned to the other route. So a demo can send the one
+model somebody will actually look at to a real cheap one, and keep the other
+sixty-nine offline and free. The table lives in `llmsim.config.json` beside
+the script, written by the console, and survives a restart; the environment
+variables below seed it the first time and the file wins after that.
 
 ```
 LLMSIM_UPSTREAM=https://api.openai.com/v1 \

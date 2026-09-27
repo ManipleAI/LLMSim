@@ -119,6 +119,58 @@ Both halves of that are load-bearing, and both were arrived at the hard way:
 
 The last turn repeats if a conversation runs longer than the script.
 
+## Two modes: scripted, or one real model behind every name
+
+Scripted is the default and everything above describes it: `responses.json`
+decides, deterministically, offline, free.
+
+**Relay** answers every request with one real model instead. Whatever model
+the client asked for — `claude-opus-5`, `gpt-5.4`, `gemini-3.8-flash` — the
+answer comes from `LLMSIM_UPSTREAM_MODEL`, and is returned in the format the
+client asked in.
+
+```
+LLMSIM_UPSTREAM=https://api.openai.com/v1 \
+LLMSIM_UPSTREAM_KEY=sk-... \
+LLMSIM_UPSTREAM_MODEL=gpt-4o-mini \
+python3 server.py
+```
+
+| Variable | Default | |
+|---|---|---|
+| `LLMSIM_UPSTREAM` | *(unset)* | Base URL. Unset means scripted — nothing leaves the machine. |
+| `LLMSIM_UPSTREAM_KEY` | *(unset)* | The upstream's key. |
+| `LLMSIM_UPSTREAM_MODEL` | `gpt-4o-mini` | The one model that answers everything. |
+| `LLMSIM_UPSTREAM_FORMAT` | `openai` | `openai` or `anthropic` — what the upstream speaks, which need not be what the client speaks. |
+| `LLMSIM_UPSTREAM_FALLBACK` | off | On an upstream failure, serve the script instead of an error. |
+
+### Why this exists
+
+Scripted answers are identical every run and visibly canned, which is right
+for a test and wrong for a demo. Wiring seventy model names to real vendors
+is seventy configurations and a real bill. Relay gives genuinely generated,
+varied answers for any model name, from one cheap model, with nothing
+downstream reconfigured — the gateway, the router and the agent still ask
+for the model they were always going to ask for.
+
+### What it does and does not change
+
+The client's own tool declarations are forwarded, so an agent loop is real:
+the model can call the tools that client actually has, and the call returns
+through the same path a scripted one does, name realignment included.
+
+Streaming still streams. The upstream is called once, unstreamed, and the
+answer is re-emitted as SSE in the client's format — so the shape is right
+even though the timing is not the upstream's.
+
+`/healthz` reports which mode is running, and the startup log says so in a
+sentence. A mode you cannot see is a mode you will misconfigure.
+
+On an upstream failure the default is a vendor-shaped **502**, not a quiet
+fall back to the script: a demo that silently serves canned answers looks
+like it is working and proves nothing. `LLMSIM_UPSTREAM_FALLBACK=1` opts
+into the other behaviour.
+
 ## Testing the unhappy paths
 
 The rules shipped in `responses.json` include ones no live API key will give

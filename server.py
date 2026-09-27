@@ -62,10 +62,58 @@ API_KEYS = {
 # Advertised by /v1/models. Claude Code 2.1.126+ queries {base_url}/v1/models
 # on startup to discover what a gateway offers, and shows an empty model list
 # if it 404s — so this is not decoration.
+#
+# WHAT THIS LIST IS, AND WHAT IT IS NOT
+#
+# It is the set of models the simulator ADVERTISES. The completion endpoints
+# below accept any model name at all and always have — the name is echoed
+# back and nothing else depends on it. So adding a model here does not make
+# it "work"; it makes it discoverable, which is the part a client acts on.
+#
+# WHERE IT COMES FROM
+#
+# Every model id declared by any base the Coding Agent Router serves, plus
+# the real ids in Maniple's own model catalogue. Both were read from a
+# running deployment rather than typed, because a hand-kept list of seventy
+# names drifts the week after it is written. To regenerate, ask the engine
+# for its bases and union their model ids with ModelCatalogEntry.realModelId.
+#
+# HOW IT IS SPLIT
+#
+# By wire format, not by who owns the brand. A provider here is one of the
+# three request shapes this file can answer, so:
+#
+#   anthropic   the Messages format — every claude-*
+#   deepseek    OpenAI-shaped, kept separate for its own key and prefix
+#   openai      the OpenAI format, which is everything else. Gemini, Grok,
+#               Qwen, Kimi, Llama, Mistral and the rest are reached through
+#               OpenAI-compatible endpoints, and the engine configures them
+#               through OpenAI-shaped providers, so that is the shape a
+#               request for them actually arrives in.
 MODELS = {
-    "anthropic": ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5-20251001"],
-    "openai": ["gpt-5", "gpt-5-mini"],
-    "deepseek": ["deepseek-chat", "deepseek-reasoner"],
+    "anthropic": [
+        "claude-fable-5", "claude-fable-5-1", "claude-haiku-4-5-20251001", "claude-haiku-4.5",
+        "claude-opus-4.7", "claude-opus-4.8", "claude-opus-5", "claude-opus-5.5",
+        "claude-sonnet-4.6", "claude-sonnet-5",
+    ],
+    "openai": [
+        "gemini-3-flash-preview", "gemini-3.1-flash-lite", "gemini-3.1-pro-preview",
+        "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.6-flash", "gemini-3.7-flash",
+        "gemini-3.8-flash", "glm-5.3", "glm-5.3-flash", "gpt-5", "gpt-5-mini", "gpt-5.2",
+        "gpt-5.3-codex", "gpt-5.4", "gpt-5.4-mini", "gpt-5.5", "gpt-5.6-luna", "gpt-5.6-sol",
+        "gpt-5.6-terra", "gpt-6-astra", "grok-4.20", "grok-4.3", "grok-4.5", "grok-4.6",
+        "grok-build-0.1", "hunyuan-3", "hunyuan-4-preview", "jev-1.13", "jev-latest",
+        "jev-preview", "kimi-k2.7-code", "kimi-k3", "laya", "ling-3.0-flash", "llama-3.3-70b",
+        "llama-4-maverick", "minimax-m3", "mistral-medium-3.5", "muse-glimmer-30b",
+        "muse-spark-1.1", "muse-spark-1.2", "muse-spark-1.3", "nemotron-3-super",
+        "nemotron-3-ultra", "nemotron-3.5-lightning", "openthai-systemone", "qwen3.7-flash",
+        "qwen3.7-max", "qwen3.7-plus", "qwen3.8-27b", "qwen3.8-flash", "qwen3.8-max",
+        "step-3.7-flash", "system-one-phase2",
+    ],
+    "deepseek": [
+        "deepseek-chat", "deepseek-reasoner", "deepseek-v4-flash", "deepseek-v4-pro",
+        "deepseek-v4.1-flash",
+    ],
 }
 
 

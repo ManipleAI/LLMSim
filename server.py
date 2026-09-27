@@ -34,9 +34,7 @@ Messages, OpenCode speaks Chat Completions, and Codex speaks Responses.
 Or omit the prefix and the provider is inferred from the key presented.
 """
 
-import base64
 import collections
-import hmac
 import itertools
 import json
 import os
@@ -146,13 +144,13 @@ MODELS = {
 # afterwards survives a restart without the environment having to change.
 CONFIG_PATH = os.environ.get("LLMSIM_CONFIG", os.path.join(HERE, "llmsim.config.json"))
 
-# The UI's own sign-in. Localhost is the normal case and a password there is
-# friction, so this is easy to switch off entirely — but it defaults ON,
-# because the UI can redirect every request at a real upstream and spend real
-# money, and that is not a thing to leave open by accident.
-UI_AUTH = os.environ.get("LLMSIM_UI_AUTH", "on").lower() not in ("off", "0", "false", "no")
-UI_USER = os.environ.get("LLMSIM_UI_USER", "Admin")
-UI_PASSWORD = os.environ.get("LLMSIM_UI_PASSWORD", "Admin")
+# The console has no sign-in.
+#
+# This is a simulator: it runs on a developer's machine or a test box, it
+# holds no data worth taking, and a password in front of it was friction on
+# the one path everybody uses. Bind the port somewhere reachable and the
+# console is reachable too — which is the same posture the vendor endpoints
+# below already have, since their keys are published in this file.
 
 DEFAULTS = {
     "routing": {
@@ -175,6 +173,21 @@ DEFAULTS = {
     # status turns it into that vendor's error; text answers with those
     # words; delay_ms waits first. Any of the three may be set alone.
     "responses": {},
+    # ── Functional tests ─────────────────────────────────────────────────
+    #
+    # Test cases that drive this simulator to check the CALLER, not the
+    # model. A case is an ordered list of steps, each one a prompt in and an
+    # expectation about what comes back, so a multi-step exchange — the shape
+    # a card applet conversation has, select then verify then authorise — is
+    # written as the sequence it actually is rather than as one assertion.
+    #
+    #   {"id": "...", "name": "...", "provider": "anthropic", "model": "...",
+    #    "steps": [{"input": "...", "expect": "...", "match": "contains",
+    #               "expectTool": "Write", "expectStatus": 200}]}
+    #
+    # A plan is a named list of case ids, run together and reported together.
+    "tests": [],
+    "plans": [],
     "upstream": {
         "url": os.environ.get("LLMSIM_UPSTREAM", "").rstrip("/"),
         "key": os.environ.get("LLMSIM_UPSTREAM_KEY", ""),
@@ -361,6 +374,161 @@ def matches(rule, provider, model, text, declared=None):
     return True
 
 
+
+
+
+# ── Running a functional test ────────────────────────────────────────────
+#
+# A case is executed against this server over HTTP, on the real vendor
+# routes, with the real keys. It is not a shortcut into choose_turn: the
+# point is to exercise the whole path the caller uses — auth, the wire
+# format, the routing table, the per-model answer and the relay — so that a
+# test which passes here means the caller's own request would have worked.
+#
+# Synchronous by design. A step can depend on the one before it (select,
+# then verify, then authorise), so they run in order and stop at the first
+# failure; a plan runs its cases in order for the same reason.
+
+RESULTS = {"runs": []}          # newest first, bounded below
+RESULTS_LOCK = threading.Lock()
+
+
+def _self_request(provider, model, messages, tools=None, timeout=180):
+    """One call to this server, in that provider's own wire format."""
+    if provider == "anthropic":
+        path, headers = "/anthropic/v1/messages", {"x-api-key": API_KEYS["anthropic"]}
+        payload = {"model": model, "max_tokens": 1024, "messages": messages}
+    else:
+        path = "/%s/v1/chat/completions" % provider
+        headers = {"Authorization": "Bearer " + API_KEYS[provider]}
+        payload = {"model": model, "messages": messages}
+    if tools:
+        payload["tools"] = tools
+    headers["content-type"] = "application/json"
+
+    url = "http://127.0.0.1:%d%s" % (PORT, path)
+    req = urllib.request.Request(url, data=json.dumps(payload).encode(), headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status, json.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        try:
+            return exc.code, json.loads(exc.read())
+        except Exception:
+            return exc.code, {}
+    except Exception as exc:
+        return 0, {"error": {"message": "%s: %s" % (type(exc).__name__, exc)}}
+
+
+def _answer_of(body):
+    """The assistant's words and tool names, whichever format answered."""
+    text, tools = [], []
+    for block in body.get("content") or []:
+        if block.get("type") == "text":
+            text.append(block.get("text") or "")
+        elif block.get("type") == "tool_use":
+            tools.append(block.get("name") or "")
+    for choice in body.get("choices") or []:
+        msg = choice.get("message") or {}
+        if msg.get("content"):
+            text.append(msg["content"])
+        for call in msg.get("tool_calls") or []:
+            tools.append((call.get("function") or {}).get("name") or "")
+    if not text and body.get("error"):
+        text.append(body["error"].get("message") or "")
+    return "\n".join(t for t in text if t), [t for t in tools if t]
+
+
+def _step_verdict(step, status, answer, tools):
+    """Why this step passed or failed, in words worth reading."""
+    want_status = step.get("expectStatus")
+    if want_status and int(want_status) != status:
+        return False, "expected HTTP %s, got %s" % (want_status, status)
+    if not want_status and status >= 400:
+        return False, "HTTP %s: %s" % (status, answer[:120])
+
+    want_tool = (step.get("expectTool") or "").strip()
+    if want_tool and want_tool not in tools:
+        return False, "expected a %s tool call, got %s" % (want_tool, tools or "none")
+
+    # What was actually checked, named. "no expectation set" on a step that
+    # asserted a status or a tool call reads like the step proved nothing,
+    # which is the opposite of true and the sort of thing that gets a passing
+    # suite mistrusted.
+    met = []
+    if want_status:
+        met.append("HTTP %s" % want_status)
+    if want_tool:
+        met.append("%s called" % want_tool)
+
+    want = (step.get("expect") or "").strip()
+    if not want:
+        return True, (", ".join(met) if met else "no expectation set — reached the caller and answered")
+    how = step.get("match") or "contains"
+    if how == "regex":
+        try:
+            ok = bool(re.search(want, answer, re.I | re.S))
+        except re.error as exc:
+            return False, "the expectation is not a valid regex: %s" % exc
+    elif how == "equals":
+        ok = answer.strip() == want
+    else:
+        ok = want.lower() in answer.lower()
+    return ok, (", ".join(met + ["matched"]) if ok else "expected %s %r" % (how, want[:80]))
+
+
+def run_case(case):
+    started = time.time()
+    provider = case.get("provider") or "anthropic"
+    if provider not in API_KEYS:
+        provider = "anthropic"
+    model = case.get("model") or MODELS[provider][0]
+    tools = case.get("tools") or None
+
+    # Carried between steps, so step two is a reply in the same conversation
+    # rather than a fresh one — which is the whole point of a multi-step case.
+    messages, steps = [], []
+    for step in case.get("steps") or []:
+        messages.append({"role": "user", "content": step.get("input") or ""})
+        at = time.time()
+        status, body = _self_request(provider, model, messages, tools)
+        answer, called = _answer_of(body)
+        ok, why = _step_verdict(step, status, answer, called)
+        steps.append({
+            "input": step.get("input") or "", "expect": step.get("expect") or "",
+            "match": step.get("match") or "contains", "status": status,
+            "answer": answer[:600], "tools": called, "ok": ok, "why": why,
+            "ms": int((time.time() - at) * 1000),
+        })
+        messages.append({"role": "assistant", "content": answer})
+        if not ok:
+            break      # a later step assumes this one worked
+
+    ran = len(steps)
+    passed = all(s["ok"] for s in steps) and ran > 0
+    return {
+        "id": case.get("id"), "name": case.get("name") or case.get("id"),
+        "provider": provider, "model": model,
+        "status": "passed" if passed else ("failed" if ran else "empty"),
+        "steps": steps, "ran": ran, "total": len(case.get("steps") or []),
+        "ms": int((time.time() - started) * 1000),
+    }
+
+
+def run_cases(cases, label):
+    results = [run_case(c) for c in cases]
+    run = {
+        "at": time.time(), "label": label, "results": results,
+        "passed": sum(1 for r in results if r["status"] == "passed"),
+        "failed": sum(1 for r in results if r["status"] == "failed"),
+        "empty": sum(1 for r in results if r["status"] == "empty"),
+        "total": len(results),
+        "ms": sum(r["ms"] for r in results),
+    }
+    with RESULTS_LOCK:
+        RESULTS["runs"].insert(0, run)
+        del RESULTS["runs"][20:]     # the last twenty runs is plenty to compare
+    return run
 
 
 # ── What came in ─────────────────────────────────────────────────────────
@@ -903,33 +1071,6 @@ class Handler(BaseHTTPRequestHandler):
     # Served by this process, from one file, with no build step and no
     # dependency — the same promise the rest of this makes.
 
-    def ui_authorised(self):
-        if not UI_AUTH:
-            return True
-        header = self.headers.get("Authorization") or ""
-        if header.startswith("Basic "):
-            try:
-                user, _, password = base64.b64decode(header[6:]).decode("utf-8", "replace").partition(":")
-            except Exception:
-                return False
-            # Compared in constant time. The threat here is small and the
-            # habit is worth more than the cycles.
-            return (hmac.compare_digest(user, UI_USER)
-                    and hmac.compare_digest(password, UI_PASSWORD))
-        return False
-
-    def ui_challenge(self):
-        # Content-Length matters here. Without it the response has no end on a
-        # keep-alive connection and the client waits for a close that never
-        # comes — which looks exactly like the server hanging.
-        payload = json.dumps({"error": "sign in"}).encode()
-        self.send_response(401)
-        self.send_header("WWW-Authenticate", 'Basic realm="LLMSim"')
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(payload)))
-        self.end_headers()
-        self.wfile.write(payload)
-
     def serve_ui(self):
         try:
             with open(os.path.join(HERE, "ui.html"), "rb") as fh:
@@ -951,14 +1092,45 @@ class Handler(BaseHTTPRequestHandler):
         known = sorted({m for models in MODELS.values() for m in models})
         return {
             "config": public_config(),
-            "auth": {"enabled": UI_AUTH, "user": UI_USER if UI_AUTH else None},
             "models": {p: MODELS[p] for p in sorted(MODELS)},
             "allModels": known,
             "rules": [r.get("name") for r in SCRIPT.get("rules", [])],
+            "runs": RESULTS["runs"][:5],
             "requests": rows,
             "seq": REQUEST_SEQ_PEEK(),
         }
 
+
+
+    def run_tests(self, body):
+        """Run named cases, or a whole plan, and report the way a suite does.
+
+        Synchronous on purpose. A step can depend on the one before it, and a
+        caller watching a run wants the answer now rather than a job id to
+        poll — this is a test harness on a developer's machine, not a queue.
+        """
+        cases = {c.get("id"): c for c in CONFIG.get("tests", [])}
+        plan_id = body.get("planId")
+        if plan_id:
+            plan = next((p for p in CONFIG.get("plans", []) if p.get("id") == plan_id), None)
+            if not plan:
+                return self.send_json(404, {"error": "no plan %r" % plan_id})
+            wanted, label = plan.get("testIds") or [], plan.get("name") or plan_id
+        else:
+            wanted = body.get("testIds")
+            if wanted is None:
+                wanted, label = list(cases), "All test cases"
+            else:
+                label = body.get("label") or ("%d case(s)" % len(wanted))
+
+        chosen = [cases[i] for i in wanted if i in cases]
+        if not chosen:
+            return self.send_json(400, {"error": "none of those test cases exist"})
+
+        log("running %d case(s): %s" % (len(chosen), label))
+        run = run_cases(chosen, label)
+        log("  %d passed, %d failed in %dms" % (run["passed"], run["failed"], run["ms"]))
+        return self.send_json(200, run)
 
     def save_ui_config(self, body):
         """Accept only the settings that exist, and say what changed.
@@ -1014,6 +1186,17 @@ class Handler(BaseHTTPRequestHandler):
                 if entry:
                     table[model] = entry
             CONFIG["responses"] = table
+
+        for key in ("tests", "plans"):
+            if key not in body:
+                continue
+            rows = body[key]
+            if not isinstance(rows, list):
+                return self.send_json(400, {"error": "%s must be a list" % key})
+            for row in rows:
+                if not isinstance(row, dict) or not row.get("id"):
+                    return self.send_json(400, {"error": "every %s entry needs an id" % key[:-1]})
+            CONFIG[key] = rows
 
         for field in ("url", "key", "model", "format", "fallback"):
             if field not in upstream:
@@ -1091,13 +1274,9 @@ class Handler(BaseHTTPRequestHandler):
         self.provider = self.resolve_provider(prefix, key) or "openai"
 
         if path == "/ui" or path == "/ui/":
-            if not self.ui_authorised():
-                return self.ui_challenge()
             return self.serve_ui()
 
         if path == "/api/ui/state":
-            if not self.ui_authorised():
-                return self.ui_challenge()
             since = 0
             query = self.path.split("?", 1)[1] if "?" in self.path else ""
             for part in query.split("&"):
@@ -1154,9 +1333,10 @@ class Handler(BaseHTTPRequestHandler):
         # The console writes settings here. Checked before the vendor key
         # below, because this route is not a vendor route and has no API key.
         if path == "/api/ui/config":
-            if not self.ui_authorised():
-                return self.ui_challenge()
             return self.save_ui_config(body)
+
+        if path == "/api/ui/run":
+            return self.run_tests(body)
 
         expected = API_KEYS.get(self.provider)
         if not key:
@@ -1332,8 +1512,7 @@ def main():
             log("          no upstream key set — the upstream will almost certainly refuse")
     else:
         log("upstream: none — scripted answers only, nothing leaves this machine")
-    log("console: http://localhost:%d/ui%s"
-        % (PORT, ("  (sign in as %s)" % UI_USER) if UI_AUTH else "  (no sign-in)"))
+    log("console: http://localhost:%d/ui" % PORT)
     for name in sorted(API_KEYS):
         log("  %-9s http://localhost:%d/%s   key %s" % (name, PORT, name, API_KEYS[name]))
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()

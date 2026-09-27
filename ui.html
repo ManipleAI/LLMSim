@@ -175,6 +175,9 @@
   <div class="group">Observe</div>
   <button data-view="logs" onclick="show('logs')"><span>Logs</span><span class="n" id="n-logs">0</span></button>
 
+  <div class="group">Verify</div>
+  <button data-view="tests" onclick="show('tests')"><span>Test Execution</span><span class="n" id="n-tests">0</span></button>
+
   <div class="group">Connect</div>
   <button data-view="integrations" onclick="show('integrations')"><span>Integrations</span></button>
 
@@ -263,6 +266,31 @@
     </div>
   </section>
 
+
+  <!-- ── Test Execution ─────────────────────────────────────────────── -->
+  <section class="view" id="v-tests" hidden>
+    <div class="head">
+      <div><h1>Test Execution</h1><p>Drive the simulator to check the caller. A case is a sequence of steps, run in order.</p></div>
+      <span class="spacer"></span>
+      <button class="btn ghost" onclick="newCase()">New case</button>
+      <button class="btn" onclick="runAll()" id="runall">Run all</button>
+    </div>
+    <div class="body split" style="max-width:none">
+      <div>
+        <div class="list">
+          <div class="prov">Cases</div>
+          <div class="scroll" id="caselist"></div>
+        </div>
+        <div class="list" style="margin-top:14px">
+          <div class="prov">Plans</div>
+          <div class="scroll" id="planlist"></div>
+          <div style="padding:9px"><button class="btn ghost" style="width:100%" onclick="newPlan()">New plan</button></div>
+        </div>
+      </div>
+      <div id="testdetail"></div>
+    </div>
+  </section>
+
   <!-- ── Integrations ───────────────────────────────────────────────── -->
   <section class="view" id="v-integrations" hidden>
     <div class="head">
@@ -281,6 +309,7 @@
 
 <script>
 let CFG = null, MODELS = {}, ALL = [], REQS = [], SINCE = 0, VIEW = "models", PICKED = null;
+let CASE = null, RUN = null, RUNNING = false;
 
 // Built from the origin rather than used as a relative path: opening this as
 // http://user:pass@host/ui makes every relative fetch throw, and the page
@@ -311,7 +340,7 @@ async function load() {
   for (const row of s.requests) { REQS.unshift(row); SINCE = Math.max(SINCE, row.n); }
   if (REQS.length > 300) REQS.length = 300;
   if (!PICKED) PICKED = ALL[0];
-  renderChrome(); renderList(); renderDetail(); renderRouting(); renderLogs();
+  renderChrome(); renderList(); renderDetail(); renderRouting(); renderLogs(); renderTests();
 }
 
 function renderChrome() {
@@ -320,6 +349,7 @@ function renderChrome() {
   document.getElementById("n-models").textContent = ALL.length;
   document.getElementById("n-routing").textContent = routed ? routed + " set" : CFG.routing.default === "relay" ? "relay" : "local";
   document.getElementById("n-logs").textContent = REQS.length;
+  document.getElementById("n-tests").textContent = (CFG.tests || []).length;
   document.getElementById("footmode").textContent =
     CFG.routing.default + (routed ? " · " + routed + " routed" : "") + (answers ? " · " + answers + " answered" : "");
 }
@@ -461,6 +491,184 @@ const saveUpstream = () => post({
     fallback: document.getElementById("fallback").checked,
   },
 }, "saved");
+
+
+// ── Test Execution ────────────────────────────────────────────────────────
+const uid = (p) => p + "-" + Math.random().toString(36).slice(2, 8);
+const tests = () => CFG.tests || [];
+const plans = () => CFG.plans || [];
+const lastFor = (id) => (RUN ? (RUN.results || []).find((r) => r.id === id) : null);
+
+function renderTests() {
+  if (!CASE && tests().length) CASE = tests()[0].id;
+  document.getElementById("caselist").innerHTML = tests().map((t) => {
+    const r = lastFor(t.id);
+    const tag = r ? `<span class="tag ${r.status === "passed" ? "set" : "err"}">${r.status === "passed" ? "pass" : "fail"}</span>` : "";
+    return `<button class="item" aria-current="${t.id === CASE}" onclick="pickCase('${t.id}')">
+      <span class="nm" style="font-family:inherit">${esc(t.name || t.id)}</span>
+      ${tag}<span class="tag">${(t.steps || []).length}</span></button>`;
+  }).join("") || '<div class="empty" style="padding:18px">No cases yet.</div>';
+
+  document.getElementById("planlist").innerHTML = plans().map((p) =>
+    `<button class="item" onclick="runPlan('${p.id}')">
+      <span class="nm" style="font-family:inherit">${esc(p.name || p.id)}</span>
+      <span class="tag">${(p.testIds || []).length}</span></button>`
+  ).join("") || '<div class="empty" style="padding:14px">No plans yet.</div>';
+
+  renderCase();
+}
+
+function renderCase() {
+  const el = document.getElementById("testdetail");
+  const t = tests().find((x) => x.id === CASE);
+  if (!t) { el.innerHTML = '<div class="card"><div class="empty"><b>No case selected</b>Create one to start.</div></div>'; return; }
+  const r = lastFor(t.id);
+  const provs = Object.keys(MODELS);
+
+  el.innerHTML = `
+    <div class="card">
+      <h2>Case</h2>
+      <label for="t-name">Name</label>
+      <input id="t-name" type="text" value="${esc(t.name || "")}" placeholder="What this proves">
+      <div class="row">
+        <div><label for="t-prov">Provider</label><select id="t-prov">
+          ${provs.map((p) => `<option ${p === (t.provider || "anthropic") ? "selected" : ""}>${esc(p)}</option>`).join("")}
+        </select></div>
+        <div><label for="t-model">Model</label><input id="t-model" class="mono" type="text" value="${esc(t.model || "")}" placeholder="first of the provider"></div>
+      </div>
+      <label for="t-tools">Tools the caller declares (JSON, optional)</label>
+      <textarea id="t-tools" class="mono" style="min-height:62px" placeholder='[{"name":"Write","input_schema":{"type":"object"}}]'>${esc(t.tools ? JSON.stringify(t.tools) : "")}</textarea>
+    </div>
+
+    <div class="card">
+      <h2>Steps</h2>
+      <p class="help">Run in order, in one conversation, and stopped at the first failure — a later step usually assumes the one before it worked.</p>
+      <div id="steps">${(t.steps || []).map(stepRow).join("")}</div>
+      <button class="btn ghost" style="margin-top:12px" onclick="addStep()">Add step</button>
+    </div>
+
+    <div class="card">
+      <div style="display:flex; gap:9px; align-items:center">
+        <button class="btn" onclick="saveCase()">Save</button>
+        <button class="btn ghost" onclick="runOne('${t.id}')">Run this case</button>
+        <button class="btn ghost" onclick="deleteCase('${t.id}')" style="color:var(--primary)">Delete</button>
+        <span id="testsaved" style="font-size:12px"></span>
+      </div>
+      ${r ? resultBlock(r) : ""}
+    </div>`;
+}
+
+const stepRow = (s, i) => `
+  <div class="step" style="border:1px solid var(--border-soft); border-radius:8px; padding:12px; margin-top:10px">
+    <div style="display:flex; align-items:center; gap:8px">
+      <span class="tag">step ${i + 1}</span><span style="flex:1"></span>
+      <button class="btn ghost" style="padding:3px 9px; font-size:11px" onclick="dropStep(${i})">Remove</button>
+    </div>
+    <label>Input prompt</label>
+    <textarea class="s-input mono" style="min-height:52px" placeholder="What the caller sends">${esc(s.input || "")}</textarea>
+    <label>Output prompt — what the answer must contain</label>
+    <textarea class="s-expect mono" style="min-height:44px" placeholder="Leave blank to assert nothing">${esc(s.expect || "")}</textarea>
+    <div class="row">
+      <div><label>Match</label><select class="s-match">
+        ${["contains", "regex", "equals"].map((m) => `<option ${m === (s.match || "contains") ? "selected" : ""}>${m}</option>`).join("")}
+      </select></div>
+      <div><label>Tool called</label><input class="s-tool mono" type="text" value="${esc(s.expectTool || "")}" placeholder="none"></div>
+      <div><label>HTTP status</label><input class="s-status mono" type="number" value="${s.expectStatus || ""}" placeholder="200"></div>
+    </div>
+  </div>`;
+
+function resultBlock(r) {
+  return `<div style="margin-top:16px; border-top:1px solid var(--border-soft); padding-top:14px">
+    <div style="display:flex; align-items:center; gap:9px; margin-bottom:10px">
+      <span class="tag ${r.status === "passed" ? "set" : "err"}">${esc(r.status)}</span>
+      <span style="color:var(--muted); font-size:12px">${r.ran} of ${r.total} steps · ${r.ms}ms · ${esc(r.model)}</span>
+    </div>
+    ${r.steps.map((s, i) => `
+      <div style="border-left:3px solid ${s.ok ? "var(--green)" : "var(--primary)"}; padding:3px 0 3px 11px; margin-bottom:10px">
+        <div style="font-size:12px; color:var(--muted)">step ${i + 1} · ${s.ok ? "passed" : "failed"} · ${s.ms}ms · HTTP ${s.status}</div>
+        <div class="mono" style="margin:3px 0">${esc(s.input)}</div>
+        <div style="font-size:12px; color:${s.ok ? "var(--green)" : "var(--primary)"}">${esc(s.why)}</div>
+        <div class="mono" style="font-size:11.5px; color:var(--faint); margin-top:3px">${esc(s.answer)}</div>
+      </div>`).join("")}
+  </div>`;
+}
+
+function collectCase() {
+  const t = { ...tests().find((x) => x.id === CASE) };
+  t.name = document.getElementById("t-name").value.trim() || t.id;
+  t.provider = document.getElementById("t-prov").value;
+  t.model = document.getElementById("t-model").value.trim();
+  const raw = document.getElementById("t-tools").value.trim();
+  if (raw) { try { t.tools = JSON.parse(raw); } catch { alert("Tools must be valid JSON."); return null; } }
+  else delete t.tools;
+  t.steps = [...document.querySelectorAll("#steps .step")].map((row) => {
+    const step = {
+      input: row.querySelector(".s-input").value,
+      expect: row.querySelector(".s-expect").value,
+      match: row.querySelector(".s-match").value,
+    };
+    const tool = row.querySelector(".s-tool").value.trim();
+    const status = row.querySelector(".s-status").value.trim();
+    if (tool) step.expectTool = tool;
+    if (status) step.expectStatus = Number(status);
+    return step;
+  });
+  return t;
+}
+
+async function saveCase() {
+  const t = collectCase();
+  if (!t) return;
+  await post({ tests: tests().map((x) => (x.id === t.id ? t : x)) }, "testsaved");
+  renderTests();
+}
+function newCase() {
+  const t = { id: uid("case"), name: "New case", provider: "anthropic", steps: [{ input: "", expect: "", match: "contains" }] };
+  CASE = t.id;
+  post({ tests: [...tests(), t] }).then(renderTests);
+  show("tests");
+}
+function deleteCase(id) {
+  CASE = null;
+  post({ tests: tests().filter((t) => t.id !== id) }).then(renderTests);
+}
+function addStep() {
+  const t = collectCase(); if (!t) return;
+  t.steps.push({ input: "", expect: "", match: "contains" });
+  post({ tests: tests().map((x) => (x.id === t.id ? t : x)) }).then(renderTests);
+}
+function dropStep(i) {
+  const t = collectCase(); if (!t) return;
+  t.steps.splice(i, 1);
+  post({ tests: tests().map((x) => (x.id === t.id ? t : x)) }).then(renderTests);
+}
+function newPlan() {
+  const name = prompt("Name this plan");
+  if (!name) return;
+  post({ plans: [...plans(), { id: uid("plan"), name, testIds: tests().map((t) => t.id) }] }).then(renderTests);
+}
+
+async function execute(body, label) {
+  if (RUNNING) return;
+  RUNNING = true;
+  const btn = document.getElementById("runall");
+  if (btn) { btn.disabled = true; btn.textContent = "Running…"; }
+  try {
+    const r = await fetch(api("/api/ui/run"), {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+    });
+    const out = await r.json().catch(() => ({}));
+    if (!r.ok) { alert(out.error || "could not run"); return; }
+    RUN = out;
+    renderTests();
+  } finally {
+    RUNNING = false;
+    if (btn) { btn.disabled = false; btn.textContent = "Run all"; }
+  }
+}
+const runAll = () => execute({}, "all");
+const runOne = (id) => execute({ testIds: [id] });
+const runPlan = (id) => execute({ planId: id });
 
 show("models");
 load();

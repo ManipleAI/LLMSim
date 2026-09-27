@@ -133,7 +133,34 @@ out as a control plane:
 | **Models** | Every model the simulator advertises. Pick one to set what it answers — fixed text, a failure status, a delay — and where its traffic goes. |
 | **Routing** | The default route, and the upstream everything relayed goes to. |
 | **Logs** | Every request as it arrives: model, route taken, what was asked, what came back, how long it took. |
+| **Test Execution** | Functional test cases that drive the simulator to check the **caller**. |
 | **Integrations** | Empty for now. |
+
+### Test Execution
+
+The simulator answers; these check that whatever is calling it behaves. A
+case is an ordered list of steps, each one a prompt in and an expectation
+about what comes back — so a multi-step exchange, the shape a card applet
+conversation has, is written as the sequence it actually is:
+
+```
+VISA: select applet, then read balance      claude-sonnet-5
+  1  SELECT A0000000031010   → contains "9000"
+  2  GET DATA balance        → contains "SW=9000"
+```
+
+A step can assert on the text (`contains`, `regex`, `equals`), on a tool the
+caller was offered and should have called, or on the HTTP status — so "this
+issuer is over quota and must answer 429" is a test rather than a note.
+
+Steps run **in order, in one conversation**, and stop at the first failure,
+because a later step normally assumes the one before it worked. A **plan** is
+a named set of cases, run and reported together.
+
+Cases execute against this server over HTTP on the real vendor routes, with
+the real keys — not through a shortcut into the internals. The point is to
+exercise the whole path the caller uses, so that a passing test means the
+caller's own request would have worked.
 
 ### A model's own answer
 
@@ -153,12 +180,12 @@ A status becomes that vendor's own error envelope, so a client's retry and
 backoff handling is exercised rather than bypassed. Leave a model unset and
 it falls through to the script exactly as before.
 
-Sign-in is `Admin` / `Admin`, changed with `LLMSIM_UI_USER` and
-`LLMSIM_UI_PASSWORD`, or switched off entirely with `LLMSIM_UI_AUTH=off`.
-On by default even on localhost, for one reason: this console can point every
-model at a real upstream and spend real money, which is not a thing to leave
-open by accident. The upstream key is never sent to the browser — the page is
-told whether one is stored, and nothing more.
+There is no sign-in. This runs on a developer's machine or a test box, holds
+nothing worth taking, and a password in front of it was friction on the one
+path everybody uses — the same posture the vendor endpoints already have,
+since their keys are published in this file. Bind the port somewhere
+reachable and the console is reachable too. The upstream key is still never
+sent to the browser: the page is told whether one is stored, and no more.
 
 ## Two modes: scripted, or one real model behind every name
 

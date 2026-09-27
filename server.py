@@ -164,6 +164,17 @@ DEFAULTS = {
         # keep every other model offline and free.
         "models": {},
     },
+    # What a named model answers, instead of whatever the script would say.
+    #
+    # The script matches on the prompt, which is right for a scenario and
+    # wrong for "this model is always slow" or "this one is over its quota".
+    # Those are properties of the model, so they live per model:
+    #
+    #   {"gpt-5.4": {"text": "...", "status": 429, "delay_ms": 800}}
+    #
+    # status turns it into that vendor's error; text answers with those
+    # words; delay_ms waits first. Any of the three may be set alone.
+    "responses": {},
     "upstream": {
         "url": os.environ.get("LLMSIM_UPSTREAM", "").rstrip("/"),
         "key": os.environ.get("LLMSIM_UPSTREAM_KEY", ""),
@@ -470,6 +481,21 @@ def _turn_from_upstream(body):
     return turn
 
 
+
+def _error_type(status):
+    """The vendor's own name for a status, so a client's handling matches."""
+    return {
+        400: "invalid_request_error",
+        401: "authentication_error",
+        403: "permission_error",
+        404: "not_found_error",
+        413: "request_too_large",
+        429: "rate_limit_error",
+        500: "api_error",
+        529: "overloaded_error",
+    }.get(status, "api_error")
+
+
 def choose_turn(provider, model, messages, declared=None):
     """Which scripted turn to serve.
 
@@ -481,6 +507,24 @@ def choose_turn(provider, model, messages, declared=None):
     directory listings. A content hash misses on the second turn, every
     time. A count of assistant messages is stable under all of it.
     """
+    # A model's own answer wins over the script. It is a statement about the
+    # model rather than about the prompt, so nothing about the conversation
+    # should be able to talk it out of applying.
+    fixed = CONFIG.get("responses", {}).get(model)
+    if fixed:
+        turn = {}
+        if fixed.get("status"):
+            turn["error"] = {
+                "status": int(fixed["status"]),
+                "type": fixed.get("type") or _error_type(int(fixed["status"])),
+                "message": fixed.get("text") or "Set for %s in the console." % model,
+            }
+        else:
+            turn["text"] = fixed.get("text") or "(no answer set for %s)" % model
+        if fixed.get("delay_ms"):
+            turn["delay_ms"] = int(fixed["delay_ms"])
+        return "model:" + model, turn
+
     text = subject(messages)
     turns_taken = sum(1 for m in messages if m.get("role") == "assistant")
 
@@ -943,6 +987,34 @@ class Handler(BaseHTTPRequestHandler):
                     table[model] = choice
             CONFIG["routing"]["models"] = table
 
+        if "responses" in body:
+            table = {}
+            for model, spec in (body["responses"] or {}).items():
+                if not isinstance(spec, dict):
+                    return self.send_json(400, {"error": "%s: response must be an object" % model})
+                entry = {}
+                if spec.get("text"):
+                    entry["text"] = str(spec["text"])[:4000]
+                if spec.get("status"):
+                    try:
+                        status = int(spec["status"])
+                    except (TypeError, ValueError):
+                        return self.send_json(400, {"error": "%s: status must be a number" % model})
+                    if not 200 <= status <= 599:
+                        return self.send_json(400, {"error": "%s: status out of range" % model})
+                    entry["status"] = status
+                if spec.get("delay_ms"):
+                    try:
+                        entry["delay_ms"] = max(0, min(60000, int(spec["delay_ms"])))
+                    except (TypeError, ValueError):
+                        return self.send_json(400, {"error": "%s: delay must be a number" % model})
+                # An empty entry is a removal, not a model that answers with
+                # nothing — otherwise clearing a field would leave a rule
+                # behind that silently answers "(no answer set)".
+                if entry:
+                    table[model] = entry
+            CONFIG["responses"] = table
+
         for field in ("url", "key", "model", "format", "fallback"):
             if field not in upstream:
                 continue
@@ -960,9 +1032,9 @@ class Handler(BaseHTTPRequestHandler):
             CONFIG["upstream"][field] = value
 
         save_config()
-        log("config saved: default=%s routed=%d upstream=%s"
+        log("config saved: default=%s routed=%d answers=%d upstream=%s"
             % (CONFIG["routing"]["default"], len(CONFIG["routing"]["models"]),
-               CONFIG["upstream"]["url"] or "none"))
+               len(CONFIG.get("responses") or {}), CONFIG["upstream"]["url"] or "none"))
         return self.send_json(200, {"ok": True, "config": public_config()})
 
     def send_json(self, status, payload):
@@ -1138,7 +1210,7 @@ class Handler(BaseHTTPRequestHandler):
         else:
             name, turn = choose_turn(self.provider, model, messages, declared)
 
-        record({"provider": self.provider, "shape": shape, "model": model, "route": route,
+        entry = record({"provider": self.provider, "shape": shape, "model": model, "route": route,
                 "rule": name, "stream": stream, "status": turn.get("error", {}).get("status", 200),
                 "ms": int((time.time() - started) * 1000),
                 "prompt": subject(messages)[:400],
@@ -1200,6 +1272,9 @@ class Handler(BaseHTTPRequestHandler):
         delay = turn.get("delay_ms")
         if delay:
             time.sleep(delay / 1000.0)
+        # Stamped after the wait, not before it. The entry is the same object
+        # the log holds, so updating it here is what the console shows.
+        entry["ms"] = int((time.time() - started) * 1000)
 
         # A scripted failure, in the vendor's own envelope — the paths that
         # only ever run when something goes wrong are the ones no live key

@@ -6,305 +6,463 @@
 <title>LLMSim</title>
 <!--
   One file, no build step, no dependency — the same promise the server makes.
+
   Colours are Maniple's own, copied from its app/globals.css rather than
-  eyeballed, because this console sits beside Maniple's screens and a near
-  miss reads worse than a deliberate difference.
+  eyeballed: this console sits beside Maniple's screens, and a near miss
+  reads worse than a deliberate difference.
+
+  Laid out as a control plane rather than a page of cards, because it is now
+  four unrelated jobs — what a model answers, where traffic goes, what came
+  in, and what is connected — and stacking them made the important one
+  (routing) the thing you scroll past.
 -->
 <style>
   :root {
-    --page:#efece6; --surface:#fff; --surface-subtle:#f5f2ec;
+    --page:#efece6; --surface:#fff; --subtle:#f5f2ec;
     --ink:#14181f; --muted:#5a6068; --faint:#8a8f97;
-    --border:#e7e2d9; --border-subtle:#ede8e0;
+    --border:#e7e2d9; --border-soft:#ede8e0;
     --primary:#b23a22; --primary-hover:#8e2c18; --primary-tint:#f7ece8;
     --amber:#a96609; --amber-tint:#fbf0dd;
     --green:#2a6f4e; --green-tint:#e4f0e9;
+    --chrome:#14181f; --chrome-fg:#d6d0c6; --chrome-dim:#7d8590;
     --mono: ui-monospace, Menlo, monospace;
+    --nav: 216px;
   }
   * { box-sizing:border-box; }
+  html, body { height:100%; }
   body {
-    margin:0; background:var(--page); color:var(--ink);
-    font:14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    margin:0; background:var(--page); color:var(--ink); display:flex;
+    font:14px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-font-smoothing:antialiased;
   }
-  header {
-    background:var(--ink); color:#d6d0c6; padding:14px 22px;
-    display:flex; align-items:center; gap:12px;
+
+  /* ── control plane ───────────────────────────────────────────────── */
+  nav {
+    width:var(--nav); flex:0 0 var(--nav); background:var(--chrome); color:var(--chrome-fg);
+    display:flex; flex-direction:column; height:100vh; position:sticky; top:0;
   }
-  header h1 { font-size:15px; margin:0; font-weight:700; letter-spacing:-.01em; color:#fff; }
-  header .sub { font-size:12px; color:#9aa0a8; }
-  header .spacer { flex:1; }
-  .pill {
-    font:600 10px/1 var(--mono); letter-spacing:.12em; text-transform:uppercase;
-    padding:5px 8px; border-radius:5px;
+  .brand { display:flex; align-items:center; gap:9px; padding:18px 18px 16px; }
+  .brand b { color:#fff; font-size:14.5px; letter-spacing:-.01em; }
+  .brand span { color:var(--chrome-dim); font-size:11px; display:block; margin-top:1px; }
+  nav .group {
+    font:600 9.5px/1 var(--mono); letter-spacing:.16em; text-transform:uppercase;
+    color:#5c646e; padding:14px 18px 7px;
   }
-  .pill.scripted { background:#2b3038; color:#c8cdd4; }
-  .pill.relay { background:var(--primary); color:#fff; }
-  main { padding:22px; max-width:1180px; margin:0 auto; display:grid; gap:18px; }
-  @media (min-width:1000px) { main { grid-template-columns: 420px 1fr; align-items:start; } }
-  .card { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:16px; }
-  .card h2 {
-    font:600 10px/1 var(--mono); letter-spacing:.14em; text-transform:uppercase;
-    color:var(--muted); margin:0 0 4px;
+  nav button {
+    display:flex; align-items:center; gap:9px; width:100%; text-align:left;
+    background:none; border:0; color:var(--chrome-fg); cursor:pointer;
+    padding:8px 18px; font:500 13px/1.3 inherit;
   }
-  .card p.help { color:var(--muted); font-size:12px; margin:0 0 12px; }
-  label { display:block; font-size:12px; color:var(--muted); margin:10px 0 4px; }
-  input[type=text], input[type=password], select {
-    width:100%; padding:8px 9px; border:1px solid var(--border); border-radius:7px;
+  nav button:hover { background:#1c212a; color:#fff; }
+  nav button[aria-current=true] { background:#222833; color:#fff; box-shadow:inset 2px 0 0 var(--primary); }
+  nav button .n {
+    margin-left:auto; font:600 10px/1 var(--mono); color:var(--chrome-dim);
+    background:#242a34; padding:3px 6px; border-radius:4px;
+  }
+  nav button[aria-current=true] .n { color:#fff; }
+  nav .foot { margin-top:auto; padding:14px 18px 16px; border-top:1px solid #222833; font-size:11px; color:var(--chrome-dim); }
+  nav .foot .status { display:flex; align-items:center; gap:7px; }
+  .dot { width:7px; height:7px; border-radius:50%; background:var(--green); flex:0 0 7px; }
+  .dot.off { background:#6b3b31; }
+
+  /* ── main ────────────────────────────────────────────────────────── */
+  main { flex:1; min-width:0; height:100vh; overflow:auto; }
+  .head {
+    padding:22px 28px 16px; border-bottom:1px solid var(--border);
+    display:flex; align-items:baseline; gap:12px; background:var(--page);
+    position:sticky; top:0; z-index:5;
+  }
+  .head h1 { margin:0; font-size:20px; letter-spacing:-.02em; font-weight:700; }
+  .head p { margin:0; color:var(--muted); font-size:12.5px; }
+  .head .spacer { flex:1; }
+  .body { padding:22px 28px 40px; max-width:1100px; }
+  .view[hidden] { display:none; }
+
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:17px 18px; }
+  .card + .card { margin-top:16px; }
+  .card h2 { font:600 10px/1 var(--mono); letter-spacing:.14em; text-transform:uppercase; color:var(--muted); margin:0 0 5px; }
+  .card p.help { color:var(--muted); font-size:12.5px; margin:0 0 14px; }
+
+  label { display:block; font-size:12px; color:var(--muted); margin:12px 0 5px; }
+  input[type=text], input[type=password], input[type=number], select, textarea {
+    width:100%; padding:8px 10px; border:1px solid var(--border); border-radius:7px;
     font-size:13px; background:#fff; color:var(--ink); font-family:inherit;
   }
-  input:focus, select:focus { outline:none; border-color:var(--primary); }
-  input.mono { font-family:var(--mono); font-size:12px; }
-  .row { display:flex; gap:10px; align-items:end; }
-  .row > * { flex:1; }
-  button {
-    background:var(--primary); color:#fff; border:0; border-radius:7px;
-    padding:8px 13px; font-size:12.5px; font-weight:600; cursor:pointer; font-family:inherit;
+  textarea { min-height:84px; resize:vertical; line-height:1.5; }
+  input:focus, select:focus, textarea:focus { outline:none; border-color:var(--primary); }
+  .mono { font-family:var(--mono); font-size:12px; }
+  /* Scoped to the content area on purpose: this was a bare `.row` once, and
+     the nav footer reusing the name inherited flex:1 and stretched a 7px
+     status dot into a bar. */
+  .body .row { display:flex; gap:12px; }
+  .body .row > * { flex:1; min-width:0; }
+
+  button.btn {
+    background:var(--primary); color:#fff; border:0; border-radius:7px; padding:8px 14px;
+    font:600 12.5px/1.4 inherit; cursor:pointer;
   }
-  button:hover { background:var(--primary-hover); }
+  button.btn:hover { background:var(--primary-hover); }
   button.ghost { background:transparent; color:var(--muted); border:1px solid var(--border); }
-  button.ghost:hover { background:var(--surface-subtle); color:var(--ink); }
-  button:disabled { opacity:.5; cursor:default; }
-  .seg { display:inline-flex; border:1px solid var(--border); border-radius:7px; overflow:hidden; }
-  .seg button {
-    background:transparent; color:var(--muted); border-radius:0; font-weight:500;
-    padding:6px 12px; font-size:12px;
-  }
+  button.ghost:hover { background:var(--subtle); color:var(--ink); }
+  button.btn:disabled { opacity:.45; cursor:default; }
+
+  .seg { display:inline-flex; border:1px solid var(--border); border-radius:8px; overflow:hidden; background:#fff; }
+  .seg button { background:none; border:0; padding:8px 15px; font:500 12.5px/1.3 inherit; color:var(--muted); cursor:pointer; }
+  .seg button + button { border-left:1px solid var(--border); }
   .seg button[aria-pressed=true] { background:var(--primary); color:#fff; font-weight:600; }
-  .note { font-size:11.5px; border-radius:7px; padding:8px 10px; margin-top:10px; }
+
+  .note { font-size:11.5px; border-radius:7px; padding:9px 11px; margin-top:12px; }
   .note.warn { background:var(--amber-tint); color:var(--amber); }
   .note.ok { background:var(--green-tint); color:var(--green); }
-  .models { max-height:330px; overflow:auto; border:1px solid var(--border-subtle); border-radius:7px; }
-  .model {
-    display:flex; align-items:center; gap:8px; padding:6px 9px;
-    border-bottom:1px solid var(--border-subtle); font-size:12.5px;
-  }
-  .model:last-child { border-bottom:0; }
-  .model .name { flex:1; font-family:var(--mono); font-size:11.5px; }
-  .model .tag {
+
+  .tag {
     font:600 9px/1 var(--mono); letter-spacing:.1em; text-transform:uppercase;
-    padding:3px 6px; border-radius:4px; background:var(--surface-subtle); color:var(--faint);
+    padding:3px 6px; border-radius:4px; background:var(--subtle); color:var(--faint); white-space:nowrap;
   }
-  .model .tag.relay { background:var(--primary-tint); color:var(--primary); }
-  .model select { width:auto; padding:3px 6px; font-size:11.5px; }
-  .search { margin:0 0 8px; }
+  .tag.relay { background:var(--primary-tint); color:var(--primary); }
+  .tag.set { background:var(--green-tint); color:var(--green); }
+  .tag.err { background:var(--amber-tint); color:var(--amber); }
+
+  /* ── models: list beside detail ──────────────────────────────────── */
+  .split { display:grid; grid-template-columns:300px 1fr; gap:16px; align-items:start; }
+  @media (max-width:900px) { .split { grid-template-columns:1fr; } }
+  .list { background:var(--surface); border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+  .list .search { padding:10px; border-bottom:1px solid var(--border-soft); }
+  .list .scroll { max-height:68vh; overflow:auto; }
+  .list .prov {
+    font:600 9.5px/1 var(--mono); letter-spacing:.14em; text-transform:uppercase; color:var(--faint);
+    padding:11px 12px 6px; background:var(--subtle); border-bottom:1px solid var(--border-soft);
+    position:sticky; top:0;
+  }
+  .item {
+    display:flex; align-items:center; gap:7px; width:100%; text-align:left; background:none;
+    border:0; border-bottom:1px solid var(--border-soft); padding:8px 12px; cursor:pointer;
+    font:12.5px/1.3 var(--mono); color:var(--ink);
+  }
+  .item:hover { background:var(--subtle); }
+  .item[aria-current=true] { background:var(--primary-tint); box-shadow:inset 2px 0 0 var(--primary); }
+  .item .nm { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+  /* ── logs ────────────────────────────────────────────────────────── */
   table { width:100%; border-collapse:collapse; font-size:12.5px; }
   th {
-    text-align:left; font:600 10px/1 var(--mono); letter-spacing:.1em; text-transform:uppercase;
-    color:var(--muted); padding:0 8px 7px; position:sticky; top:0; background:var(--surface);
+    text-align:left; font:600 9.5px/1 var(--mono); letter-spacing:.12em; text-transform:uppercase;
+    color:var(--muted); padding:0 9px 8px; position:sticky; top:0; background:var(--surface);
   }
-  td { padding:7px 8px; border-top:1px solid var(--border-subtle); vertical-align:top; }
-  td.mono { font-family:var(--mono); font-size:11.5px; }
-  tr.err td { background:#fdf4f2; }
-  .status { font-family:var(--mono); font-size:11.5px; }
-  .status.bad { color:var(--primary); font-weight:600; }
-  .truncate { max-width:1px; width:38%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .feedhead { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
-  .feedhead h2 { margin:0; }
-  .feedhead .spacer { flex:1; }
-  .empty { color:var(--faint); font-size:12.5px; padding:18px 8px; }
-  .live { font-size:11.5px; color:var(--muted); display:flex; align-items:center; gap:6px; }
-  .dot { width:7px; height:7px; border-radius:50%; background:var(--green); }
-  .dot.off { background:var(--faint); }
+  td { padding:8px 9px; border-top:1px solid var(--border-soft); vertical-align:top; }
+  tr.bad td { background:#fdf5f3; }
+  .truncate { max-width:1px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .empty { color:var(--faint); font-size:12.5px; padding:26px 10px; text-align:center; }
+  .empty b { display:block; color:var(--muted); font-size:13px; margin-bottom:3px; }
 </style>
 </head>
 <body>
-<header>
-  <svg width="20" height="20" viewBox="0 0 100 100" fill="none" aria-hidden="true">
-    <path d="M10 42 L50 12 L90 42" stroke="#B23A22" stroke-width="15" stroke-linecap="square"/>
-    <path d="M10 66 L50 36 L90 66" stroke="#FBFAF7" stroke-width="15" stroke-linecap="square"/>
-    <path d="M10 90 L50 60 L90 90" stroke="#FBFAF7" stroke-width="15" stroke-linecap="square"/>
-  </svg>
-  <h1>LLMSim</h1>
-  <span class="sub">the vendors' APIs, simulated</span>
-  <span class="spacer"></span>
-  <span id="modepill" class="pill scripted">scripted</span>
-</header>
 
-<main>
-  <div>
-    <section class="card">
-      <h2>Where answers come from</h2>
-      <p class="help">The default every model follows unless it is named below.</p>
-      <div class="seg" role="group" aria-label="Default route">
-        <button id="def-scripted" onclick="setDefault('scripted')" aria-pressed="false">Offline — scripted</button>
-        <button id="def-relay" onclick="setDefault('relay')" aria-pressed="false">Relay — upstream</button>
-      </div>
-      <div id="nourl" class="note warn" hidden>
-        No upstream is configured, so relay routes fall back to scripted answers. Set one below.
-      </div>
-    </section>
-
-    <section class="card" style="margin-top:18px">
-      <h2>Upstream</h2>
-      <p class="help">The one real model that answers for every model routed to relay.</p>
-      <label for="url">Base URL</label>
-      <input id="url" class="mono" type="text" placeholder="https://api.openai.com/v1">
-      <div class="row">
-        <div>
-          <label for="model">Model</label>
-          <input id="model" class="mono" type="text" placeholder="gpt-4o-mini">
-        </div>
-        <div style="flex:0 0 130px">
-          <label for="format">Speaks</label>
-          <select id="format"><option value="openai">openai</option><option value="anthropic">anthropic</option></select>
-        </div>
-      </div>
-      <label for="key">Key <span id="keyset" style="color:var(--green)"></span></label>
-      <input id="key" class="mono" type="password" placeholder="leave blank to keep the stored one">
-      <label style="display:flex; align-items:center; gap:7px; margin-top:12px">
-        <input id="fallback" type="checkbox" style="width:auto"> Fall back to scripted if the upstream fails
-      </label>
-      <div class="note warn" style="margin-top:6px">
-        Off by default on purpose: a demo that quietly serves canned answers looks like it is working.
-      </div>
-      <div style="margin-top:12px; display:flex; gap:8px; align-items:center">
-        <button onclick="save()">Save</button>
-        <span id="saved" class="live"></span>
-      </div>
-    </section>
-
-    <section class="card" style="margin-top:18px">
-      <h2>Per model</h2>
-      <p class="help">Anything not listed follows the default. Set one model to relay and the rest stay offline and free.</p>
-      <input id="filter" class="search mono" type="text" placeholder="filter…" oninput="renderModels()">
-      <div class="models" id="models"></div>
-      <div style="margin-top:10px; display:flex; gap:8px">
-        <button class="ghost" onclick="bulk('scripted')">All offline</button>
-        <button class="ghost" onclick="bulk('relay')">All relay</button>
-        <button class="ghost" onclick="bulk(null)">Clear overrides</button>
-      </div>
-    </section>
+<nav>
+  <div class="brand">
+    <svg width="22" height="22" viewBox="0 0 100 100" fill="none" aria-hidden="true">
+      <path d="M10 42 L50 12 L90 42" stroke="#B23A22" stroke-width="15" stroke-linecap="square"/>
+      <path d="M10 66 L50 36 L90 66" stroke="#FBFAF7" stroke-width="15" stroke-linecap="square"/>
+      <path d="M10 90 L50 60 L90 90" stroke="#FBFAF7" stroke-width="15" stroke-linecap="square"/>
+    </svg>
+    <div><b>LLMSim</b><span>the vendors' APIs, simulated</span></div>
   </div>
 
-  <section class="card">
-    <div class="feedhead">
-      <h2>What came in</h2>
-      <span class="spacer"></span>
-      <span class="live"><span id="dot" class="dot"></span><span id="count">0</span> requests</span>
-      <button class="ghost" onclick="REQS=[];renderFeed()">Clear</button>
+  <div class="group">Simulate</div>
+  <button data-view="models" onclick="show('models')"><span>Models</span><span class="n" id="n-models">0</span></button>
+  <button data-view="routing" onclick="show('routing')"><span>Routing</span><span class="n" id="n-routing">—</span></button>
+
+  <div class="group">Observe</div>
+  <button data-view="logs" onclick="show('logs')"><span>Logs</span><span class="n" id="n-logs">0</span></button>
+
+  <div class="group">Connect</div>
+  <button data-view="integrations" onclick="show('integrations')"><span>Integrations</span></button>
+
+  <div class="foot">
+    <div class="status"><span id="dot" class="dot"></span><span id="conn">connected</span></div>
+    <div style="margin-top:5px" id="footmode">scripted</div>
+  </div>
+</nav>
+
+<main>
+  <!-- ── Models ─────────────────────────────────────────────────────── -->
+  <section class="view" id="v-models">
+    <div class="head">
+      <div><h1>Models</h1><p>What each model answers, and where its traffic goes.</p></div>
     </div>
-    <div style="max-height:72vh; overflow:auto">
-      <table>
-        <thead><tr>
-          <th style="width:58px">Time</th><th style="width:74px">Route</th><th>Model</th>
-          <th>Asked</th><th>Answered</th><th style="width:52px">ms</th>
-        </tr></thead>
-        <tbody id="feed"></tbody>
-      </table>
-      <div id="feedempty" class="empty">Nothing yet. Point an agent, a gateway or a curl at this port and it appears here.</div>
+    <div class="body split">
+      <div class="list">
+        <div class="search"><input id="filter" class="mono" type="text" placeholder="filter…" oninput="renderList()"></div>
+        <div class="scroll" id="list"></div>
+      </div>
+      <div id="detail"></div>
+    </div>
+  </section>
+
+  <!-- ── Routing ────────────────────────────────────────────────────── -->
+  <section class="view" id="v-routing" hidden>
+    <div class="head">
+      <div><h1>Routing</h1><p>Whether answers are made up here, or by one real model upstream.</p></div>
+    </div>
+    <div class="body">
+      <div class="card">
+        <h2>Default</h2>
+        <p class="help">What every model does unless it is set otherwise on its own page.</p>
+        <div class="seg" role="group" aria-label="Default route">
+          <button id="def-scripted" onclick="setDefault('scripted')" aria-pressed="false">No upstream — answer here</button>
+          <button id="def-relay" onclick="setDefault('relay')" aria-pressed="false">Upstream — relay</button>
+        </div>
+        <div id="nourl" class="note warn" hidden>
+          Nothing is configured to relay to, so relay routes answer here instead. Set an upstream below.
+        </div>
+        <div id="routed" class="note ok" hidden></div>
+      </div>
+
+      <div class="card">
+        <h2>Upstream</h2>
+        <p class="help">One real model answers for every model routed to it — whatever name the client asked for, and in the format it asked in.</p>
+        <label for="url">Base URL</label>
+        <input id="url" class="mono" type="text" placeholder="https://api.openai.com/v1">
+        <div class="row">
+          <div><label for="umodel">Model</label><input id="umodel" class="mono" type="text" placeholder="gpt-4o-mini"></div>
+          <div style="flex:0 0 150px"><label for="format">Speaks</label>
+            <select id="format"><option value="openai">openai</option><option value="anthropic">anthropic</option></select></div>
+        </div>
+        <label for="key">Key <span id="keyset" style="color:var(--green)"></span></label>
+        <input id="key" class="mono" type="password" placeholder="leave blank to keep the stored one">
+        <label style="display:flex; align-items:center; gap:8px; margin-top:14px; color:var(--ink)">
+          <input id="fallback" type="checkbox" style="width:auto"> Answer here if the upstream fails
+        </label>
+        <div class="note warn">Off by default on purpose: a demo that quietly serves canned answers looks like it is working.</div>
+        <div style="margin-top:14px; display:flex; gap:9px; align-items:center">
+          <button class="btn" onclick="saveUpstream()">Save</button>
+          <span id="saved" style="font-size:12px"></span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Logs ───────────────────────────────────────────────────────── -->
+  <section class="view" id="v-logs" hidden>
+    <div class="head">
+      <div><h1>Logs</h1><p>Every request as it arrives.</p></div>
+      <span class="spacer"></span>
+      <button class="btn ghost" onclick="REQS=[];renderLogs()">Clear</button>
+    </div>
+    <div class="body" style="max-width:none">
+      <div class="card" style="padding:14px 8px 8px">
+        <table>
+          <thead><tr>
+            <th style="width:62px">Time</th><th style="width:78px">Route</th><th style="width:190px">Model</th>
+            <th style="width:30%">Asked</th><th>Answered</th><th style="width:54px">ms</th>
+          </tr></thead>
+          <tbody id="logs"></tbody>
+        </table>
+        <div id="logsempty" class="empty"><b>Nothing yet</b>Point an agent, a gateway or a curl at this port.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Integrations ───────────────────────────────────────────────── -->
+  <section class="view" id="v-integrations" hidden>
+    <div class="head">
+      <div><h1>Integrations</h1><p>What this simulator is wired into.</p></div>
+    </div>
+    <div class="body">
+      <div class="card">
+        <div class="empty" style="padding:44px 10px">
+          <b>Nothing here yet</b>
+          This is where connected gateways, routers and agents will be listed.
+        </div>
+      </div>
     </div>
   </section>
 </main>
 
 <script>
-let CFG = null, MODELS = [], REQS = [], SINCE = 0;
+let CFG = null, MODELS = {}, ALL = [], REQS = [], SINCE = 0, VIEW = "models", PICKED = null;
 
-// Built from the origin rather than used as a relative path. Opening this
-// page as http://user:pass@host/ui is a natural thing to do, and a relative
-// fetch from such a document throws "Request cannot be constructed from a URL
-// that includes credentials" — every request fails and the page looks broken
-// for a reason nothing on screen explains.
-const api = (path) => new URL(path, location.origin).toString();
-
+// Built from the origin rather than used as a relative path: opening this as
+// http://user:pass@host/ui makes every relative fetch throw, and the page
+// then looks broken for a reason nothing on screen explains.
+const api = (p) => new URL(p, location.origin).toString();
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
 
-async function load() {
-  const r = await fetch(api("/api/ui/state?since=" + SINCE), { headers: { accept: "application/json" } });
-  if (!r.ok) { document.getElementById("dot").className = "dot off"; return; }
-  const s = await r.json();
-  document.getElementById("dot").className = "dot";
-  CFG = s.config; MODELS = s.allModels;
-  for (const row of s.requests) { REQS.unshift(row); SINCE = Math.max(SINCE, row.n); }
-  if (REQS.length > 300) REQS.length = 300;
-  renderConfig(); renderModels(); renderFeed();
+function show(v) {
+  VIEW = v;
+  for (const s of document.querySelectorAll(".view")) s.hidden = s.id !== "v-" + v;
+  for (const b of document.querySelectorAll("nav button[data-view]")) b.setAttribute("aria-current", b.dataset.view === v);
 }
 
-function renderConfig() {
-  const d = CFG.routing.default, up = CFG.upstream;
+async function load() {
+  let s;
+  try {
+    const r = await fetch(api("/api/ui/state?since=" + SINCE));
+    if (!r.ok) throw new Error(r.status);
+    s = await r.json();
+  } catch {
+    document.getElementById("dot").className = "dot off";
+    document.getElementById("conn").textContent = "not responding";
+    return;
+  }
+  document.getElementById("dot").className = "dot";
+  document.getElementById("conn").textContent = "connected";
+  CFG = s.config; MODELS = s.models; ALL = s.allModels;
+  for (const row of s.requests) { REQS.unshift(row); SINCE = Math.max(SINCE, row.n); }
+  if (REQS.length > 300) REQS.length = 300;
+  if (!PICKED) PICKED = ALL[0];
+  renderChrome(); renderList(); renderDetail(); renderRouting(); renderLogs();
+}
+
+function renderChrome() {
+  const routed = Object.keys(CFG.routing.models).length;
+  const answers = Object.keys(CFG.responses || {}).length;
+  document.getElementById("n-models").textContent = ALL.length;
+  document.getElementById("n-routing").textContent = routed ? routed + " set" : CFG.routing.default === "relay" ? "relay" : "local";
+  document.getElementById("n-logs").textContent = REQS.length;
+  document.getElementById("footmode").textContent =
+    CFG.routing.default + (routed ? " · " + routed + " routed" : "") + (answers ? " · " + answers + " answered" : "");
+}
+
+function routeOf(m) { return CFG.routing.models[m] || CFG.routing.default; }
+
+function renderList() {
+  const q = (document.getElementById("filter").value || "").toLowerCase();
+  let html = "";
+  for (const prov of Object.keys(MODELS)) {
+    const hits = MODELS[prov].filter((m) => m.toLowerCase().includes(q));
+    if (!hits.length) continue;
+    html += `<div class="prov">${esc(prov)}</div>`;
+    for (const m of hits) {
+      const r = routeOf(m), fixed = (CFG.responses || {})[m];
+      html += `<button class="item" aria-current="${m === PICKED}" onclick="pick('${esc(m)}')">
+        <span class="nm">${esc(m)}</span>
+        ${fixed ? `<span class="tag ${fixed.status ? "err" : "set"}">${fixed.status || "set"}</span>` : ""}
+        <span class="tag ${r === "relay" ? "relay" : ""}">${r === "relay" ? "up" : "local"}</span></button>`;
+    }
+  }
+  document.getElementById("list").innerHTML = html || '<div class="empty">No model matches that.</div>';
+}
+
+const pick = (m) => { PICKED = m; renderList(); renderDetail(); };
+
+function renderDetail() {
+  if (!PICKED) return;
+  const m = PICKED, r = CFG.routing.models[m] || "", fixed = (CFG.responses || {})[m] || {};
+  document.getElementById("detail").innerHTML = `
+    <div class="card">
+      <h2>Model</h2>
+      <p class="help" style="font-family:var(--mono); color:var(--ink); font-size:13px; margin-bottom:14px">${esc(m)}</p>
+      <label>Where its traffic goes</label>
+      <div class="seg" role="group">
+        <button onclick="setRoute('${esc(m)}','')" aria-pressed="${r === ""}">Default (${esc(CFG.routing.default === "relay" ? "upstream" : "no upstream")})</button>
+        <button onclick="setRoute('${esc(m)}','scripted')" aria-pressed="${r === "scripted"}">No upstream</button>
+        <button onclick="setRoute('${esc(m)}','relay')" aria-pressed="${r === "relay"}">Upstream</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Its answer</h2>
+      <p class="help">Overrides the script for this model alone. Leave everything blank and it falls back to <code>responses.json</code>, which matches on the prompt instead.</p>
+      <label for="r-text">Answers with</label>
+      <textarea id="r-text" placeholder="Leave blank to use the script">${esc(fixed.text || "")}</textarea>
+      <div class="row">
+        <div><label for="r-status">Fails with status</label>
+          <input id="r-status" type="number" class="mono" placeholder="none" value="${fixed.status || ""}"></div>
+        <div><label for="r-delay">Waits first (ms)</label>
+          <input id="r-delay" type="number" class="mono" placeholder="0" value="${fixed.delay_ms || ""}"></div>
+      </div>
+      <div class="note warn" style="margin-top:12px">
+        A status turns the text above into that vendor's error message — 429 for a quota, 529 for overloaded.
+      </div>
+      <div style="margin-top:14px; display:flex; gap:9px; align-items:center">
+        <button class="btn" onclick="saveAnswer('${esc(m)}')">Save</button>
+        <button class="btn ghost" onclick="clearAnswer('${esc(m)}')">Clear</button>
+        <span id="answersaved" style="font-size:12px"></span>
+      </div>
+    </div>`;
+}
+
+function renderRouting() {
+  const d = CFG.routing.default, up = CFG.upstream, routed = Object.keys(CFG.routing.models).length;
   document.getElementById("def-scripted").setAttribute("aria-pressed", d === "scripted");
   document.getElementById("def-relay").setAttribute("aria-pressed", d === "relay");
-  const pill = document.getElementById("modepill");
-  const routed = Object.keys(CFG.routing.models).length;
-  pill.className = "pill " + d;
-  pill.textContent = d + (routed ? " · " + routed + " routed" : "");
   document.getElementById("nourl").hidden = !!up.url || d !== "relay";
-  if (document.activeElement.id !== "url") document.getElementById("url").value = up.url || "";
-  if (document.activeElement.id !== "model") document.getElementById("model").value = up.model || "";
-  document.getElementById("format").value = up.format || "openai";
-  document.getElementById("fallback").checked = !!up.fallback;
+  const r = document.getElementById("routed");
+  r.hidden = !routed;
+  r.textContent = routed + " model" + (routed === 1 ? "" : "s") + " set individually, on the Models page.";
+  const live = document.activeElement ? document.activeElement.id : "";
+  if (live !== "url") document.getElementById("url").value = up.url || "";
+  if (live !== "umodel") document.getElementById("umodel").value = up.model || "";
+  if (live !== "format") document.getElementById("format").value = up.format || "openai";
+  if (live !== "fallback") document.getElementById("fallback").checked = !!up.fallback;
   document.getElementById("keyset").textContent = up.keySet ? "· stored" : "";
 }
 
-function renderModels() {
-  const q = (document.getElementById("filter").value || "").toLowerCase();
-  const def = CFG.routing.default, over = CFG.routing.models;
-  const rows = MODELS.filter((m) => m.toLowerCase().includes(q)).map((m) => {
-    const route = over[m] || def;
-    const pinned = m in over;
-    return `<div class="model">
-      <span class="name">${esc(m)}</span>
-      <span class="tag ${route === "relay" ? "relay" : ""}">${route}</span>
-      <select onchange="setModel('${esc(m)}', this.value)">
-        <option value=""${pinned ? "" : " selected"}>default</option>
-        <option value="scripted"${over[m] === "scripted" ? " selected" : ""}>offline</option>
-        <option value="relay"${over[m] === "relay" ? " selected" : ""}>relay</option>
-      </select></div>`;
-  });
-  document.getElementById("models").innerHTML = rows.join("") ||
-    '<div class="empty" style="padding:12px">No model matches that.</div>';
-}
-
-function renderFeed() {
-  document.getElementById("count").textContent = REQS.length;
-  document.getElementById("feedempty").hidden = REQS.length > 0;
-  document.getElementById("feed").innerHTML = REQS.map((r) => {
-    const t = new Date(r.at * 1000).toLocaleTimeString([], { hour12: false });
-    const bad = r.status >= 400;
-    const tools = (r.tools || []).length ? ` <span class="tag">${esc(r.tools.join(", "))}</span>` : "";
-    return `<tr class="${bad ? "err" : ""}">
+function renderLogs() {
+  document.getElementById("logsempty").hidden = REQS.length > 0;
+  document.getElementById("logs").innerHTML = REQS.map((x) => {
+    const t = new Date(x.at * 1000).toLocaleTimeString([], { hour12: false });
+    const bad = x.status >= 400;
+    const tools = (x.tools || []).length ? ` <span class="tag">${esc(x.tools.join(", "))}</span>` : "";
+    return `<tr class="${bad ? "bad" : ""}">
       <td class="mono">${t}</td>
-      <td><span class="tag ${r.route === "relay" ? "relay" : ""}">${esc(r.route)}</span></td>
-      <td class="mono">${esc(r.model)}<br><span style="color:var(--faint)">${esc(r.provider)}/${esc(r.shape)}${r.stream ? " · stream" : ""}</span></td>
-      <td class="truncate" title="${esc(r.prompt)}">${esc(r.prompt)}</td>
-      <td class="truncate" title="${esc(r.error || r.reply)}">
-        <span class="status ${bad ? "bad" : ""}">${r.status}</span>
-        ${esc(r.error || r.reply)}${tools}</td>
-      <td class="mono">${r.ms}</td></tr>`;
+      <td><span class="tag ${x.route === "relay" ? "relay" : ""}">${x.route === "relay" ? "up" : "local"}</span></td>
+      <td class="mono">${esc(x.model)}<br><span style="color:var(--faint)">${esc(x.provider)}/${esc(x.shape)}${x.stream ? " · stream" : ""}</span></td>
+      <td class="truncate" title="${esc(x.prompt)}">${esc(x.prompt)}</td>
+      <td class="truncate" title="${esc(x.error || x.reply)}">
+        <span class="mono" style="${bad ? "color:var(--primary);font-weight:600" : "color:var(--faint)"}">${x.status}</span>
+        ${esc(x.error || x.reply)}${tools}</td>
+      <td class="mono">${x.ms}</td></tr>`;
   }).join("");
 }
 
-async function post(body) {
+async function post(body, flash) {
   const r = await fetch(api("/api/ui/config"), {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
   });
-  const out = await r.json();
-  const el = document.getElementById("saved");
-  if (!r.ok) { el.textContent = out.error || "could not save"; el.style.color = "var(--primary)"; return; }
-  CFG = out.config; el.textContent = "saved"; el.style.color = "var(--green)";
-  setTimeout(() => (el.textContent = ""), 2000);
-  renderConfig(); renderModels();
+  const out = await r.json().catch(() => ({}));
+  const el = flash && document.getElementById(flash);
+  if (!r.ok) { if (el) { el.textContent = out.error || "could not save"; el.style.color = "var(--primary)"; } return; }
+  CFG = out.config;
+  if (el) { el.textContent = "saved"; el.style.color = "var(--green)"; setTimeout(() => (el.textContent = ""), 1800); }
+  renderChrome(); renderList(); renderDetail(); renderRouting();
 }
 
 const setDefault = (d) => post({ routing: { default: d } });
-function setModel(name, choice) {
+function setRoute(model, choice) {
   const models = { ...CFG.routing.models };
-  if (choice) models[name] = choice; else delete models[name];
+  if (choice) models[model] = choice; else delete models[model];
   post({ routing: { models } });
 }
-function bulk(choice) {
-  const models = {};
-  if (choice) for (const m of MODELS) models[m] = choice;
-  post({ routing: { models } });
+function saveAnswer(model) {
+  const responses = { ...(CFG.responses || {}) };
+  const text = document.getElementById("r-text").value.trim();
+  const status = document.getElementById("r-status").value.trim();
+  const delay = document.getElementById("r-delay").value.trim();
+  const entry = {};
+  if (text) entry.text = text;
+  if (status) entry.status = Number(status);
+  if (delay) entry.delay_ms = Number(delay);
+  if (Object.keys(entry).length) responses[model] = entry; else delete responses[model];
+  post({ responses }, "answersaved");
 }
-const save = () => post({
+function clearAnswer(model) {
+  const responses = { ...(CFG.responses || {}) };
+  delete responses[model];
+  post({ responses }, "answersaved");
+}
+const saveUpstream = () => post({
   upstream: {
     url: document.getElementById("url").value.trim(),
-    model: document.getElementById("model").value.trim(),
+    model: document.getElementById("umodel").value.trim(),
     format: document.getElementById("format").value,
     key: document.getElementById("key").value,
     fallback: document.getElementById("fallback").checked,
   },
-});
+}, "saved");
 
+show("models");
 load();
 setInterval(load, 1500);
 </script>

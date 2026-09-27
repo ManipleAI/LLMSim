@@ -125,9 +125,33 @@ The last turn repeats if a conversation runs longer than the script.
 python3 server.py            # then open http://localhost:8099/ui
 ```
 
-One page, served by the same process, no build step and no dependency. It
-shows every request as it arrives — model, route taken, what was asked, what
-came back, how long it took — and it is where the routing below is set.
+One page, served by the same process, no build step and no dependency, laid
+out as a control plane:
+
+| | |
+|---|---|
+| **Models** | Every model the simulator advertises. Pick one to set what it answers — fixed text, a failure status, a delay — and where its traffic goes. |
+| **Routing** | The default route, and the upstream everything relayed goes to. |
+| **Logs** | Every request as it arrives: model, route taken, what was asked, what came back, how long it took. |
+| **Integrations** | Empty for now. |
+
+### A model's own answer
+
+`responses.json` matches on the **prompt**, which is right for a scenario and
+wrong for "this model is always slow" or "this one is over its quota". Those
+are properties of the model, so they are set per model and win over the
+script:
+
+```json
+"responses": {
+  "claude-opus-5":    {"text": "...", "delay_ms": 250},
+  "claude-haiku-4.5": {"status": 429, "text": "Over its quota."}
+}
+```
+
+A status becomes that vendor's own error envelope, so a client's retry and
+backoff handling is exercised rather than bypassed. Leave a model unset and
+it falls through to the script exactly as before.
 
 Sign-in is `Admin` / `Admin`, changed with `LLMSIM_UI_USER` and
 `LLMSIM_UI_PASSWORD`, or switched off entirely with `LLMSIM_UI_AUTH=off`.

@@ -1,9 +1,9 @@
 # Nothing to install — the point of a stdlib-only server is that its image is
-# the base image plus two files.
+# the base image plus three files, one of which is the console.
 FROM python:3.12-slim
 
 WORKDIR /app
-COPY server.py responses.json ./
+COPY server.py responses.json ui.html ./
 
 ENV LLMSIM_PORT=8099
 EXPOSE 8099

@@ -34,8 +34,13 @@ Messages, OpenCode speaks Chat Completions, and Codex speaks Responses.
 Or omit the prefix and the provider is inferred from the key presented.
 """
 
+import base64
+import collections
+import hmac
+import itertools
 import json
 import os
+import threading
 import random
 import re
 import string
@@ -136,20 +141,100 @@ MODELS = {
 # claude-opus-5 or gpt-5.4 and still get an answer in that vendor's format.
 #
 # Unset LLMSIM_UPSTREAM and nothing changes: no request leaves the machine.
-UPSTREAM = os.environ.get("LLMSIM_UPSTREAM", "").rstrip("/")
-UPSTREAM_KEY = os.environ.get("LLMSIM_UPSTREAM_KEY", "")
-UPSTREAM_MODEL = os.environ.get("LLMSIM_UPSTREAM_MODEL", "gpt-4o-mini")
-# The wire format the upstream speaks, which need not be the one the client
-# used: a client asking in Anthropic's format is answered in it whatever the
-# cheap model behind this happens to be.
-UPSTREAM_FORMAT = os.environ.get("LLMSIM_UPSTREAM_FORMAT", "openai").lower()
-# On an upstream failure, fall back to the script instead of returning an
-# error. Off by default, deliberately: a demo that quietly degrades to canned
-# answers looks like it is working and proves nothing.
-UPSTREAM_FALLBACK = os.environ.get("LLMSIM_UPSTREAM_FALLBACK", "") == "1"
+# Env seeds the settings; the file wins once written. So a container starts
+# configured the way its environment says, and anything changed in the UI
+# afterwards survives a restart without the environment having to change.
+CONFIG_PATH = os.environ.get("LLMSIM_CONFIG", os.path.join(HERE, "llmsim.config.json"))
+
+# The UI's own sign-in. Localhost is the normal case and a password there is
+# friction, so this is easy to switch off entirely — but it defaults ON,
+# because the UI can redirect every request at a real upstream and spend real
+# money, and that is not a thing to leave open by accident.
+UI_AUTH = os.environ.get("LLMSIM_UI_AUTH", "on").lower() not in ("off", "0", "false", "no")
+UI_USER = os.environ.get("LLMSIM_UI_USER", "Admin")
+UI_PASSWORD = os.environ.get("LLMSIM_UI_PASSWORD", "Admin")
+
+DEFAULTS = {
+    "routing": {
+        # What a model does when nothing names it specifically.
+        "default": "relay" if os.environ.get("LLMSIM_UPSTREAM") else "scripted",
+        # Per model: "scripted" or "relay". Anything not listed follows the
+        # default above. This is the whole point of the routing table — a
+        # demo can send one expensive-looking model to a real cheap one and
+        # keep every other model offline and free.
+        "models": {},
+    },
+    "upstream": {
+        "url": os.environ.get("LLMSIM_UPSTREAM", "").rstrip("/"),
+        "key": os.environ.get("LLMSIM_UPSTREAM_KEY", ""),
+        "model": os.environ.get("LLMSIM_UPSTREAM_MODEL", "gpt-4o-mini"),
+        "format": os.environ.get("LLMSIM_UPSTREAM_FORMAT", "openai").lower(),
+        "fallback": os.environ.get("LLMSIM_UPSTREAM_FALLBACK", "") == "1",
+    },
+}
+
+
+def _merge(base, over):
+    out = dict(base)
+    for k, v in (over or {}).items():
+        out[k] = _merge(base[k], v) if isinstance(v, dict) and isinstance(base.get(k), dict) else v
+    return out
+
+
+def load_config():
+    try:
+        with open(CONFIG_PATH) as fh:
+            return _merge(DEFAULTS, json.load(fh))
+    except FileNotFoundError:
+        return json.loads(json.dumps(DEFAULTS))
+    except Exception as exc:
+        # A broken file is worth saying out loud rather than silently
+        # starting with defaults that are not what anyone configured.
+        log("config: %s is not readable (%s) — using defaults" % (CONFIG_PATH, exc))
+        return json.loads(json.dumps(DEFAULTS))
+
+
+CONFIG = load_config()
+
+
+def save_config():
+    tmp = CONFIG_PATH + ".tmp"
+    with open(tmp, "w") as fh:
+        json.dump(CONFIG, fh, indent=2)
+    os.replace(tmp, CONFIG_PATH)   # atomic, so a crash never leaves half a file
+
+
+
+def public_config():
+    """CONFIG with the upstream key replaced by whether there is one.
+
+    The console never receives the secret. It does not need it to show a
+    routing table, and a key that reaches a browser is a key in a screenshot,
+    a bug report and a page cache.
+    """
+    out = json.loads(json.dumps(CONFIG))
+    out["upstream"]["key"] = ""
+    out["upstream"]["keySet"] = bool(CONFIG["upstream"]["key"])
+    return out
+
+
+def route_for(model):
+    """scripted or relay, for this model.
+
+    A named model wins over the default, and a relay route with no upstream
+    URL configured is scripted — saying "relay" while having nowhere to relay
+    to would fail every request for a reason the table does not show.
+    """
+    routing = CONFIG["routing"]
+    choice = routing["models"].get(model) or routing["default"]
+    if choice == "relay" and not CONFIG["upstream"]["url"]:
+        return "scripted"
+    return choice
+
 
 def relaying():
-    return bool(UPSTREAM)
+    """Whether any route can reach an upstream at all."""
+    return bool(CONFIG["upstream"]["url"])
 
 
 def log(*parts):
@@ -266,6 +351,34 @@ def matches(rule, provider, model, text, declared=None):
 
 
 
+
+# ── What came in ─────────────────────────────────────────────────────────
+#
+# A bounded, in-memory log of the last few hundred requests, for the UI to
+# show. Deliberately not written to disk: this is a simulator, the log is a
+# window rather than a record, and a file would be one more thing to rotate.
+#
+# Bounded on purpose too. An agent loop can be thousands of turns, and a list
+# that grows without limit is a memory leak with a nice name.
+REQUESTS = collections.deque(maxlen=int(os.environ.get("LLMSIM_LOG_SIZE", "300")))
+REQUEST_SEQ = itertools.count(1)
+_SEQ_SEEN = [0]
+
+
+def REQUEST_SEQ_PEEK():
+    return _SEQ_SEEN[0]
+REQUESTS_LOCK = threading.Lock()
+
+
+def record(entry):
+    entry["n"] = next(REQUEST_SEQ)
+    _SEQ_SEEN[0] = entry["n"]
+    entry["at"] = time.time()
+    with REQUESTS_LOCK:
+        REQUESTS.append(entry)
+    return entry
+
+
 # ── Relay: one real model answers for every model ────────────────────────
 #
 # The whole mode fits in one function because of a decision made earlier in
@@ -288,20 +401,21 @@ def upstream_turn(messages, declared, tools_body):
     name and argument realignment, which a real model needs just as much as
     a hand-written rule does.
     """
-    if UPSTREAM_FORMAT == "anthropic":
-        url = UPSTREAM + "/v1/messages"
-        headers = {"x-api-key": UPSTREAM_KEY, "anthropic-version": "2023-06-01"}
+    up = CONFIG["upstream"]
+    if up["format"] == "anthropic":
+        url = up["url"] + "/v1/messages"
+        headers = {"x-api-key": up["key"], "anthropic-version": "2023-06-01"}
         payload = {
-            "model": UPSTREAM_MODEL,
+            "model": up["model"],
             "max_tokens": 2048,
             "messages": [m for m in messages if m.get("role") in ("user", "assistant")],
         }
         if tools_body:
             payload["tools"] = tools_body
     else:
-        url = UPSTREAM + "/v1/chat/completions"
-        headers = {"Authorization": "Bearer " + UPSTREAM_KEY}
-        payload = {"model": UPSTREAM_MODEL, "messages": messages}
+        url = up["url"] + "/v1/chat/completions"
+        headers = {"Authorization": "Bearer " + up["key"]}
+        payload = {"model": up["model"], "messages": messages}
         if tools_body:
             payload["tools"] = tools_body
 
@@ -739,6 +853,118 @@ class Handler(BaseHTTPRequestHandler):
 
     # -- helpers --
 
+
+    # ── The console ──────────────────────────────────────────────────────
+    #
+    # Served by this process, from one file, with no build step and no
+    # dependency — the same promise the rest of this makes.
+
+    def ui_authorised(self):
+        if not UI_AUTH:
+            return True
+        header = self.headers.get("Authorization") or ""
+        if header.startswith("Basic "):
+            try:
+                user, _, password = base64.b64decode(header[6:]).decode("utf-8", "replace").partition(":")
+            except Exception:
+                return False
+            # Compared in constant time. The threat here is small and the
+            # habit is worth more than the cycles.
+            return (hmac.compare_digest(user, UI_USER)
+                    and hmac.compare_digest(password, UI_PASSWORD))
+        return False
+
+    def ui_challenge(self):
+        # Content-Length matters here. Without it the response has no end on a
+        # keep-alive connection and the client waits for a close that never
+        # comes — which looks exactly like the server hanging.
+        payload = json.dumps({"error": "sign in"}).encode()
+        self.send_response(401)
+        self.send_header("WWW-Authenticate", 'Basic realm="LLMSim"')
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def serve_ui(self):
+        try:
+            with open(os.path.join(HERE, "ui.html"), "rb") as fh:
+                page = fh.read()
+        except FileNotFoundError:
+            return self.send_json(500, {"error": "ui.html is missing from the image"})
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(page)))
+        # Never cached: the console is read while settings are being changed,
+        # and a stale one shows a routing table that is no longer true.
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(page)
+
+    def ui_state(self, since):
+        with REQUESTS_LOCK:
+            rows = [r for r in REQUESTS if r["n"] > since]
+        known = sorted({m for models in MODELS.values() for m in models})
+        return {
+            "config": public_config(),
+            "auth": {"enabled": UI_AUTH, "user": UI_USER if UI_AUTH else None},
+            "models": {p: MODELS[p] for p in sorted(MODELS)},
+            "allModels": known,
+            "rules": [r.get("name") for r in SCRIPT.get("rules", [])],
+            "requests": rows,
+            "seq": REQUEST_SEQ_PEEK(),
+        }
+
+
+    def save_ui_config(self, body):
+        """Accept only the settings that exist, and say what changed.
+
+        Validated rather than merged blindly: a routing table is the one
+        thing here that can send traffic to a paid endpoint, and a typo that
+        silently becomes a new key would be discovered on an invoice.
+        """
+        routing = body.get("routing") or {}
+        upstream = body.get("upstream") or {}
+
+        default = routing.get("default")
+        if default is not None:
+            if default not in ("scripted", "relay"):
+                return self.send_json(400, {"error": "routing.default must be scripted or relay"})
+            CONFIG["routing"]["default"] = default
+
+        if "models" in routing:
+            table = {}
+            for model, choice in (routing["models"] or {}).items():
+                if choice not in ("scripted", "relay"):
+                    return self.send_json(400, {"error": "%s: must be scripted or relay" % model})
+                # "same as the default" is not an override; storing it would
+                # pin the model the next time the default changes.
+                if choice != CONFIG["routing"]["default"]:
+                    table[model] = choice
+            CONFIG["routing"]["models"] = table
+
+        for field in ("url", "key", "model", "format", "fallback"):
+            if field not in upstream:
+                continue
+            value = upstream[field]
+            if field == "format" and value not in ("openai", "anthropic"):
+                return self.send_json(400, {"error": "upstream.format must be openai or anthropic"})
+            if field == "fallback":
+                value = bool(value)
+            if field == "url":
+                value = str(value).rstrip("/")
+            # An empty key means "leave the stored one alone", so a person
+            # editing the model name does not have to retype the secret.
+            if field == "key" and not value:
+                continue
+            CONFIG["upstream"][field] = value
+
+        save_config()
+        log("config saved: default=%s routed=%d upstream=%s"
+            % (CONFIG["routing"]["default"], len(CONFIG["routing"]["models"]),
+               CONFIG["upstream"]["url"] or "none"))
+        return self.send_json(200, {"ok": True, "config": public_config()})
+
     def send_json(self, status, payload):
         raw = json.dumps(payload).encode()
         self.send_response(status)
@@ -792,13 +1018,33 @@ class Handler(BaseHTTPRequestHandler):
         key = self.presented_key()
         self.provider = self.resolve_provider(prefix, key) or "openai"
 
+        if path == "/ui" or path == "/ui/":
+            if not self.ui_authorised():
+                return self.ui_challenge()
+            return self.serve_ui()
+
+        if path == "/api/ui/state":
+            if not self.ui_authorised():
+                return self.ui_challenge()
+            since = 0
+            query = self.path.split("?", 1)[1] if "?" in self.path else ""
+            for part in query.split("&"):
+                if part.startswith("since="):
+                    try:
+                        since = int(part[6:])
+                    except ValueError:
+                        since = 0
+            return self.send_json(200, self.ui_state(since))
+
         if path in ("/", "/healthz"):
             return self.send_json(200, {
                 "ok": True, "service": "llmsim",
                 "providers": sorted(API_KEYS),
-                "mode": ("relay" if relaying() else "scripted"),
-                "upstream": ({"model": UPSTREAM_MODEL, "format": UPSTREAM_FORMAT,
-                              "fallback": UPSTREAM_FALLBACK} if relaying() else None),
+                "mode": CONFIG["routing"]["default"],
+                "routed": len(CONFIG["routing"]["models"]),
+                "upstream": ({"model": CONFIG["upstream"]["model"],
+                              "format": CONFIG["upstream"]["format"],
+                              "fallback": CONFIG["upstream"]["fallback"]} if relaying() else None),
                 "rules": [r.get("name") for r in SCRIPT.get("rules", [])],
             })
 
@@ -833,6 +1079,13 @@ class Handler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             return self.refuse(400, "invalid_request_error", "Request body is not valid JSON.")
 
+        # The console writes settings here. Checked before the vendor key
+        # below, because this route is not a vendor route and has no API key.
+        if path == "/api/ui/config":
+            if not self.ui_authorised():
+                return self.ui_challenge()
+            return self.save_ui_config(body)
+
         expected = API_KEYS.get(self.provider)
         if not key:
             return self.refuse(401, "authentication_error", "No API key provided.")
@@ -857,27 +1110,41 @@ class Handler(BaseHTTPRequestHandler):
         stream = bool(body.get("stream"))
         declared = declared_tools(body)
 
-        # Relay first, when configured: one real model answers for whatever
-        # model was asked for, and its reply becomes the same {text,
-        # tool_calls} a rule would have produced — so everything below here,
-        # including the tool-name realignment, is unchanged.
-        if relaying():
+        # Per model, not per process. A demo can point one model at a real
+        # cheap one and leave every other model offline and free, which is
+        # the routing table's whole reason for existing.
+        route = route_for(model)
+        started = time.time()
+        if route == "relay":
             try:
                 turn = upstream_turn(messages, declared, body.get("tools"))
-                name = "relay:" + UPSTREAM_MODEL
+                name = "relay:" + CONFIG["upstream"]["model"]
             except UpstreamError as exc:
                 log("relay failed: %s" % exc)
-                if not UPSTREAM_FALLBACK:
+                if not CONFIG["upstream"]["fallback"]:
                     # Reported rather than hidden. A demo that silently falls
                     # back to canned answers looks like it is working and
                     # proves nothing — which is the one outcome worth
                     # refusing.
+                    record({"provider": self.provider, "shape": shape, "model": model,
+                            "route": route, "rule": None, "stream": stream, "status": 502,
+                            "ms": int((time.time() - started) * 1000),
+                            "prompt": subject(messages)[:400], "reply": None, "tools": [],
+                            "error": str(exc)})
                     return self.refuse(502, "upstream_error",
                                        "LLMSim could not reach its upstream model: %s" % exc)
                 name, turn = choose_turn(self.provider, model, messages, declared)
                 name = "fallback:" + name
         else:
             name, turn = choose_turn(self.provider, model, messages, declared)
+
+        record({"provider": self.provider, "shape": shape, "model": model, "route": route,
+                "rule": name, "stream": stream, "status": turn.get("error", {}).get("status", 200),
+                "ms": int((time.time() - started) * 1000),
+                "prompt": subject(messages)[:400],
+                "reply": (turn.get("text") or "")[:400],
+                "tools": [c.get("name") for c in (turn.get("tool_calls") or [])],
+                "error": None})
 
         log("%s %s model=%s stream=%s turns=%d -> rule '%s'%s" % (
             self.provider, shape, model, stream,
@@ -979,14 +1246,19 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     log("listening on http://localhost:%d" % PORT)
     log("script: %s (%d rules)" % (SCRIPT_PATH, len(SCRIPT.get("rules", []))))
+    up, routing = CONFIG["upstream"], CONFIG["routing"]
+    log("default: %s%s" % (routing["default"],
+        ("  (%d model(s) routed individually)" % len(routing["models"])) if routing["models"] else ""))
     if relaying():
-        log("mode:   relay — every model answered by %s at %s (%s format)%s"
-            % (UPSTREAM_MODEL, UPSTREAM, UPSTREAM_FORMAT,
-               ", falling back to the script on failure" if UPSTREAM_FALLBACK else ""))
-        if not UPSTREAM_KEY:
-            log("        no LLMSIM_UPSTREAM_KEY set — the upstream will almost certainly refuse")
+        log("upstream: %s at %s (%s format)%s"
+            % (up["model"], up["url"], up["format"],
+               ", falling back to the script on failure" if up["fallback"] else ""))
+        if not up["key"]:
+            log("          no upstream key set — the upstream will almost certainly refuse")
     else:
-        log("mode:   scripted — responses.json answers everything, nothing leaves this machine")
+        log("upstream: none — scripted answers only, nothing leaves this machine")
+    log("console: http://localhost:%d/ui%s"
+        % (PORT, ("  (sign in as %s)" % UI_USER) if UI_AUTH else "  (no sign-in)"))
     for name in sorted(API_KEYS):
         log("  %-9s http://localhost:%d/%s   key %s" % (name, PORT, name, API_KEYS[name]))
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()

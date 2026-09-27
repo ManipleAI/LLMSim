@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LLMSim</title>
+<!--
+  One file, no build step, no dependency — the same promise the server makes.
+  Colours are Maniple's own, copied from its app/globals.css rather than
+  eyeballed, because this console sits beside Maniple's screens and a near
+  miss reads worse than a deliberate difference.
+-->
+<style>
+  :root {
+    --page:#efece6; --surface:#fff; --surface-subtle:#f5f2ec;
+    --ink:#14181f; --muted:#5a6068; --faint:#8a8f97;
+    --border:#e7e2d9; --border-subtle:#ede8e0;
+    --primary:#b23a22; --primary-hover:#8e2c18; --primary-tint:#f7ece8;
+    --amber:#a96609; --amber-tint:#fbf0dd;
+    --green:#2a6f4e; --green-tint:#e4f0e9;
+    --mono: ui-monospace, Menlo, monospace;
+  }
+  * { box-sizing:border-box; }
+  body {
+    margin:0; background:var(--page); color:var(--ink);
+    font:14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  header {
+    background:var(--ink); color:#d6d0c6; padding:14px 22px;
+    display:flex; align-items:center; gap:12px;
+  }
+  header h1 { font-size:15px; margin:0; font-weight:700; letter-spacing:-.01em; color:#fff; }
+  header .sub { font-size:12px; color:#9aa0a8; }
+  header .spacer { flex:1; }
+  .pill {
+    font:600 10px/1 var(--mono); letter-spacing:.12em; text-transform:uppercase;
+    padding:5px 8px; border-radius:5px;
+  }
+  .pill.scripted { background:#2b3038; color:#c8cdd4; }
+  .pill.relay { background:var(--primary); color:#fff; }
+  main { padding:22px; max-width:1180px; margin:0 auto; display:grid; gap:18px; }
+  @media (min-width:1000px) { main { grid-template-columns: 420px 1fr; align-items:start; } }
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:16px; }
+  .card h2 {
+    font:600 10px/1 var(--mono); letter-spacing:.14em; text-transform:uppercase;
+    color:var(--muted); margin:0 0 4px;
+  }
+  .card p.help { color:var(--muted); font-size:12px; margin:0 0 12px; }
+  label { display:block; font-size:12px; color:var(--muted); margin:10px 0 4px; }
+  input[type=text], input[type=password], select {
+    width:100%; padding:8px 9px; border:1px solid var(--border); border-radius:7px;
+    font-size:13px; background:#fff; color:var(--ink); font-family:inherit;
+  }
+  input:focus, select:focus { outline:none; border-color:var(--primary); }
+  input.mono { font-family:var(--mono); font-size:12px; }
+  .row { display:flex; gap:10px; align-items:end; }
+  .row > * { flex:1; }
+  button {
+    background:var(--primary); color:#fff; border:0; border-radius:7px;
+    padding:8px 13px; font-size:12.5px; font-weight:600; cursor:pointer; font-family:inherit;
+  }
+  button:hover { background:var(--primary-hover); }
+  button.ghost { background:transparent; color:var(--muted); border:1px solid var(--border); }
+  button.ghost:hover { background:var(--surface-subtle); color:var(--ink); }
+  button:disabled { opacity:.5; cursor:default; }
+  .seg { display:inline-flex; border:1px solid var(--border); border-radius:7px; overflow:hidden; }
+  .seg button {
+    background:transparent; color:var(--muted); border-radius:0; font-weight:500;
+    padding:6px 12px; font-size:12px;
+  }
+  .seg button[aria-pressed=true] { background:var(--primary); color:#fff; font-weight:600; }
+  .note { font-size:11.5px; border-radius:7px; padding:8px 10px; margin-top:10px; }
+  .note.warn { background:var(--amber-tint); color:var(--amber); }
+  .note.ok { background:var(--green-tint); color:var(--green); }
+  .models { max-height:330px; overflow:auto; border:1px solid var(--border-subtle); border-radius:7px; }
+  .model {
+    display:flex; align-items:center; gap:8px; padding:6px 9px;
+    border-bottom:1px solid var(--border-subtle); font-size:12.5px;
+  }
+  .model:last-child { border-bottom:0; }
+  .model .name { flex:1; font-family:var(--mono); font-size:11.5px; }
+  .model .tag {
+    font:600 9px/1 var(--mono); letter-spacing:.1em; text-transform:uppercase;
+    padding:3px 6px; border-radius:4px; background:var(--surface-subtle); color:var(--faint);
+  }
+  .model .tag.relay { background:var(--primary-tint); color:var(--primary); }
+  .model select { width:auto; padding:3px 6px; font-size:11.5px; }
+  .search { margin:0 0 8px; }
+  table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  th {
+    text-align:left; font:600 10px/1 var(--mono); letter-spacing:.1em; text-transform:uppercase;
+    color:var(--muted); padding:0 8px 7px; position:sticky; top:0; background:var(--surface);
+  }
+  td { padding:7px 8px; border-top:1px solid var(--border-subtle); vertical-align:top; }
+  td.mono { font-family:var(--mono); font-size:11.5px; }
+  tr.err td { background:#fdf4f2; }
+  .status { font-family:var(--mono); font-size:11.5px; }
+  .status.bad { color:var(--primary); font-weight:600; }
+  .truncate { max-width:1px; width:38%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .feedhead { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
+  .feedhead h2 { margin:0; }
+  .feedhead .spacer { flex:1; }
+  .empty { color:var(--faint); font-size:12.5px; padding:18px 8px; }
+  .live { font-size:11.5px; color:var(--muted); display:flex; align-items:center; gap:6px; }
+  .dot { width:7px; height:7px; border-radius:50%; background:var(--green); }
+  .dot.off { background:var(--faint); }
+</style>
+</head>
+<body>
+<header>
+  <svg width="20" height="20" viewBox="0 0 100 100" fill="none" aria-hidden="true">
+    <path d="M10 42 L50 12 L90 42" stroke="#B23A22" stroke-width="15" stroke-linecap="square"/>
+    <path d="M10 66 L50 36 L90 66" stroke="#FBFAF7" stroke-width="15" stroke-linecap="square"/>
+    <path d="M10 90 L50 60 L90 90" stroke="#FBFAF7" stroke-width="15" stroke-linecap="square"/>
+  </svg>
+  <h1>LLMSim</h1>
+  <span class="sub">the vendors' APIs, simulated</span>
+  <span class="spacer"></span>
+  <span id="modepill" class="pill scripted">scripted</span>
+</header>
+
+<main>
+  <div>
+    <section class="card">
+      <h2>Where answers come from</h2>
+      <p class="help">The default every model follows unless it is named below.</p>
+      <div class="seg" role="group" aria-label="Default route">
+        <button id="def-scripted" onclick="setDefault('scripted')" aria-pressed="false">Offline — scripted</button>
+        <button id="def-relay" onclick="setDefault('relay')" aria-pressed="false">Relay — upstream</button>
+      </div>
+      <div id="nourl" class="note warn" hidden>
+        No upstream is configured, so relay routes fall back to scripted answers. Set one below.
+      </div>
+    </section>
+
+    <section class="card" style="margin-top:18px">
+      <h2>Upstream</h2>
+      <p class="help">The one real model that answers for every model routed to relay.</p>
+      <label for="url">Base URL</label>
+      <input id="url" class="mono" type="text" placeholder="https://api.openai.com/v1">
+      <div class="row">
+        <div>
+          <label for="model">Model</label>
+          <input id="model" class="mono" type="text" placeholder="gpt-4o-mini">
+        </div>
+        <div style="flex:0 0 130px">
+          <label for="format">Speaks</label>
+          <select id="format"><option value="openai">openai</option><option value="anthropic">anthropic</option></select>
+        </div>
+      </div>
+      <label for="key">Key <span id="keyset" style="color:var(--green)"></span></label>
+      <input id="key" class="mono" type="password" placeholder="leave blank to keep the stored one">
+      <label style="display:flex; align-items:center; gap:7px; margin-top:12px">
+        <input id="fallback" type="checkbox" style="width:auto"> Fall back to scripted if the upstream fails
+      </label>
+      <div class="note warn" style="margin-top:6px">
+        Off by default on purpose: a demo that quietly serves canned answers looks like it is working.
+      </div>
+      <div style="margin-top:12px; display:flex; gap:8px; align-items:center">
+        <button onclick="save()">Save</button>
+        <span id="saved" class="live"></span>
+      </div>
+    </section>
+
+    <section class="card" style="margin-top:18px">
+      <h2>Per model</h2>
+      <p class="help">Anything not listed follows the default. Set one model to relay and the rest stay offline and free.</p>
+      <input id="filter" class="search mono" type="text" placeholder="filter…" oninput="renderModels()">
+      <div class="models" id="models"></div>
+      <div style="margin-top:10px; display:flex; gap:8px">
+        <button class="ghost" onclick="bulk('scripted')">All offline</button>
+        <button class="ghost" onclick="bulk('relay')">All relay</button>
+        <button class="ghost" onclick="bulk(null)">Clear overrides</button>
+      </div>
+    </section>
+  </div>
+
+  <section class="card">
+    <div class="feedhead">
+      <h2>What came in</h2>
+      <span class="spacer"></span>
+      <span class="live"><span id="dot" class="dot"></span><span id="count">0</span> requests</span>
+      <button class="ghost" onclick="REQS=[];renderFeed()">Clear</button>
+    </div>
+    <div style="max-height:72vh; overflow:auto">
+      <table>
+        <thead><tr>
+          <th style="width:58px">Time</th><th style="width:74px">Route</th><th>Model</th>
+          <th>Asked</th><th>Answered</th><th style="width:52px">ms</th>
+        </tr></thead>
+        <tbody id="feed"></tbody>
+      </table>
+      <div id="feedempty" class="empty">Nothing yet. Point an agent, a gateway or a curl at this port and it appears here.</div>
+    </div>
+  </section>
+</main>
+
+<script>
+let CFG = null, MODELS = [], REQS = [], SINCE = 0;
+
+// Built from the origin rather than used as a relative path. Opening this
+// page as http://user:pass@host/ui is a natural thing to do, and a relative
+// fetch from such a document throws "Request cannot be constructed from a URL
+// that includes credentials" — every request fails and the page looks broken
+// for a reason nothing on screen explains.
+const api = (path) => new URL(path, location.origin).toString();
+
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
+
+async function load() {
+  const r = await fetch(api("/api/ui/state?since=" + SINCE), { headers: { accept: "application/json" } });
+  if (!r.ok) { document.getElementById("dot").className = "dot off"; return; }
+  const s = await r.json();
+  document.getElementById("dot").className = "dot";
+  CFG = s.config; MODELS = s.allModels;
+  for (const row of s.requests) { REQS.unshift(row); SINCE = Math.max(SINCE, row.n); }
+  if (REQS.length > 300) REQS.length = 300;
+  renderConfig(); renderModels(); renderFeed();
+}
+
+function renderConfig() {
+  const d = CFG.routing.default, up = CFG.upstream;
+  document.getElementById("def-scripted").setAttribute("aria-pressed", d === "scripted");
+  document.getElementById("def-relay").setAttribute("aria-pressed", d === "relay");
+  const pill = document.getElementById("modepill");
+  const routed = Object.keys(CFG.routing.models).length;
+  pill.className = "pill " + d;
+  pill.textContent = d + (routed ? " · " + routed + " routed" : "");
+  document.getElementById("nourl").hidden = !!up.url || d !== "relay";
+  if (document.activeElement.id !== "url") document.getElementById("url").value = up.url || "";
+  if (document.activeElement.id !== "model") document.getElementById("model").value = up.model || "";
+  document.getElementById("format").value = up.format || "openai";
+  document.getElementById("fallback").checked = !!up.fallback;
+  document.getElementById("keyset").textContent = up.keySet ? "· stored" : "";
+}
+
+function renderModels() {
+  const q = (document.getElementById("filter").value || "").toLowerCase();
+  const def = CFG.routing.default, over = CFG.routing.models;
+  const rows = MODELS.filter((m) => m.toLowerCase().includes(q)).map((m) => {
+    const route = over[m] || def;
+    const pinned = m in over;
+    return `<div class="model">
+      <span class="name">${esc(m)}</span>
+      <span class="tag ${route === "relay" ? "relay" : ""}">${route}</span>
+      <select onchange="setModel('${esc(m)}', this.value)">
+        <option value=""${pinned ? "" : " selected"}>default</option>
+        <option value="scripted"${over[m] === "scripted" ? " selected" : ""}>offline</option>
+        <option value="relay"${over[m] === "relay" ? " selected" : ""}>relay</option>
+      </select></div>`;
+  });
+  document.getElementById("models").innerHTML = rows.join("") ||
+    '<div class="empty" style="padding:12px">No model matches that.</div>';
+}
+
+function renderFeed() {
+  document.getElementById("count").textContent = REQS.length;
+  document.getElementById("feedempty").hidden = REQS.length > 0;
+  document.getElementById("feed").innerHTML = REQS.map((r) => {
+    const t = new Date(r.at * 1000).toLocaleTimeString([], { hour12: false });
+    const bad = r.status >= 400;
+    const tools = (r.tools || []).length ? ` <span class="tag">${esc(r.tools.join(", "))}</span>` : "";
+    return `<tr class="${bad ? "err" : ""}">
+      <td class="mono">${t}</td>
+      <td><span class="tag ${r.route === "relay" ? "relay" : ""}">${esc(r.route)}</span></td>
+      <td class="mono">${esc(r.model)}<br><span style="color:var(--faint)">${esc(r.provider)}/${esc(r.shape)}${r.stream ? " · stream" : ""}</span></td>
+      <td class="truncate" title="${esc(r.prompt)}">${esc(r.prompt)}</td>
+      <td class="truncate" title="${esc(r.error || r.reply)}">
+        <span class="status ${bad ? "bad" : ""}">${r.status}</span>
+        ${esc(r.error || r.reply)}${tools}</td>
+      <td class="mono">${r.ms}</td></tr>`;
+  }).join("");
+}
+
+async function post(body) {
+  const r = await fetch(api("/api/ui/config"), {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+  });
+  const out = await r.json();
+  const el = document.getElementById("saved");
+  if (!r.ok) { el.textContent = out.error || "could not save"; el.style.color = "var(--primary)"; return; }
+  CFG = out.config; el.textContent = "saved"; el.style.color = "var(--green)";
+  setTimeout(() => (el.textContent = ""), 2000);
+  renderConfig(); renderModels();
+}
+
+const setDefault = (d) => post({ routing: { default: d } });
+function setModel(name, choice) {
+  const models = { ...CFG.routing.models };
+  if (choice) models[name] = choice; else delete models[name];
+  post({ routing: { models } });
+}
+function bulk(choice) {
+  const models = {};
+  if (choice) for (const m of MODELS) models[m] = choice;
+  post({ routing: { models } });
+}
+const save = () => post({
+  upstream: {
+    url: document.getElementById("url").value.trim(),
+    model: document.getElementById("model").value.trim(),
+    format: document.getElementById("format").value,
+    key: document.getElementById("key").value,
+    fallback: document.getElementById("fallback").checked,
+  },
+});
+
+load();
+setInterval(load, 1500);
+</script>
+</body>
+</html>

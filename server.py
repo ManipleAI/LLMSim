@@ -41,6 +41,8 @@ import re
 import string
 import sys
 import time
+import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -115,6 +117,39 @@ MODELS = {
         "deepseek-v4.1-flash",
     ],
 }
+
+
+# ── Where answers come from ──────────────────────────────────────────────
+#
+# Two modes, and the default is the one this file has always had.
+#
+#   scripted   responses.json decides. Deterministic, free, offline, and it
+#              proves a pipeline carries a response of a given shape.
+#   relay      one real model answers everything. Every request, whatever
+#              model it named, is served by LLMSIM_UPSTREAM_MODEL.
+#
+# Relay exists for the demo problem: scripted answers are the same every
+# time and visibly canned, while wiring seventy models to real vendors costs
+# seventy configurations and a real bill. This gives genuinely generated,
+# varied answers for any model name, from one cheap model, with nothing
+# downstream reconfigured — Maniple, the gateway and the agent still ask for
+# claude-opus-5 or gpt-5.4 and still get an answer in that vendor's format.
+#
+# Unset LLMSIM_UPSTREAM and nothing changes: no request leaves the machine.
+UPSTREAM = os.environ.get("LLMSIM_UPSTREAM", "").rstrip("/")
+UPSTREAM_KEY = os.environ.get("LLMSIM_UPSTREAM_KEY", "")
+UPSTREAM_MODEL = os.environ.get("LLMSIM_UPSTREAM_MODEL", "gpt-4o-mini")
+# The wire format the upstream speaks, which need not be the one the client
+# used: a client asking in Anthropic's format is answered in it whatever the
+# cheap model behind this happens to be.
+UPSTREAM_FORMAT = os.environ.get("LLMSIM_UPSTREAM_FORMAT", "openai").lower()
+# On an upstream failure, fall back to the script instead of returning an
+# error. Off by default, deliberately: a demo that quietly degrades to canned
+# answers looks like it is working and proves nothing.
+UPSTREAM_FALLBACK = os.environ.get("LLMSIM_UPSTREAM_FALLBACK", "") == "1"
+
+def relaying():
+    return bool(UPSTREAM)
 
 
 def log(*parts):
@@ -228,6 +263,97 @@ def matches(rule, provider, model, text, declared=None):
     if "regex" in when and not re.search(when["regex"], text, re.I):
         return False
     return True
+
+
+
+# ── Relay: one real model answers for every model ────────────────────────
+#
+# The whole mode fits in one function because of a decision made earlier in
+# this file: a scripted rule produces a plain {text, tool_calls} dict, and
+# every format builder below consumes that and nothing else. So a real
+# model's answer converted into the same dict is served by the same three
+# body builders and the same three SSE builders, in whichever format the
+# client asked. Relay never touches them.
+
+class UpstreamError(Exception):
+    pass
+
+
+def upstream_turn(messages, declared, tools_body):
+    """Ask the one configured model, and return a turn in the script's shape.
+
+    The client's own tool declarations are forwarded, so an agent loop is
+    real: the model can call the tools that client actually has, and the call
+    comes back through the same path a scripted one does — including the
+    name and argument realignment, which a real model needs just as much as
+    a hand-written rule does.
+    """
+    if UPSTREAM_FORMAT == "anthropic":
+        url = UPSTREAM + "/v1/messages"
+        headers = {"x-api-key": UPSTREAM_KEY, "anthropic-version": "2023-06-01"}
+        payload = {
+            "model": UPSTREAM_MODEL,
+            "max_tokens": 2048,
+            "messages": [m for m in messages if m.get("role") in ("user", "assistant")],
+        }
+        if tools_body:
+            payload["tools"] = tools_body
+    else:
+        url = UPSTREAM + "/v1/chat/completions"
+        headers = {"Authorization": "Bearer " + UPSTREAM_KEY}
+        payload = {"model": UPSTREAM_MODEL, "messages": messages}
+        if tools_body:
+            payload["tools"] = tools_body
+
+    headers["content-type"] = "application/json"
+    req = urllib.request.Request(url, data=json.dumps(payload).encode(), headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            body = json.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        raise UpstreamError("%s %s: %s" % (exc.code, exc.reason, exc.read()[:200].decode("utf-8", "replace")))
+    except Exception as exc:
+        raise UpstreamError("%s: %s" % (type(exc).__name__, exc))
+
+    return _turn_from_upstream(body)
+
+
+def _turn_from_upstream(body):
+    """Whatever the upstream sent, as {text, tool_calls}."""
+    text_parts, calls = [], []
+
+    # Anthropic shape
+    if isinstance(body.get("content"), list):
+        for block in body["content"]:
+            if block.get("type") == "text" and block.get("text"):
+                text_parts.append(block["text"])
+            elif block.get("type") == "tool_use":
+                calls.append({"name": block.get("name", ""), "input": block.get("input") or {}})
+    # OpenAI shape
+    for choice in body.get("choices") or []:
+        msg = choice.get("message") or {}
+        if msg.get("content"):
+            text_parts.append(msg["content"])
+        for call in msg.get("tool_calls") or []:
+            fn = call.get("function") or {}
+            args = fn.get("arguments")
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except Exception:
+                    args = {"_raw": args}   # keep it rather than drop it
+            calls.append({"name": fn.get("name", ""), "input": args or {}})
+
+    turn = {}
+    if text_parts:
+        turn["text"] = "\n".join(text_parts)
+    if calls:
+        turn["tool_calls"] = calls
+    # A model that answered with neither is still an answer; saying so beats
+    # an empty body the client has to guess about.
+    if not turn:
+        turn["text"] = "(the upstream model returned no content)"
+    return turn
 
 
 def choose_turn(provider, model, messages, declared=None):
@@ -670,6 +796,9 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(200, {
                 "ok": True, "service": "llmsim",
                 "providers": sorted(API_KEYS),
+                "mode": ("relay" if relaying() else "scripted"),
+                "upstream": ({"model": UPSTREAM_MODEL, "format": UPSTREAM_FORMAT,
+                              "fallback": UPSTREAM_FALLBACK} if relaying() else None),
                 "rules": [r.get("name") for r in SCRIPT.get("rules", [])],
             })
 
@@ -727,7 +856,28 @@ class Handler(BaseHTTPRequestHandler):
         messages = responses_to_messages(body) if shape == "responses" else (body.get("messages") or [])
         stream = bool(body.get("stream"))
         declared = declared_tools(body)
-        name, turn = choose_turn(self.provider, model, messages, declared)
+
+        # Relay first, when configured: one real model answers for whatever
+        # model was asked for, and its reply becomes the same {text,
+        # tool_calls} a rule would have produced — so everything below here,
+        # including the tool-name realignment, is unchanged.
+        if relaying():
+            try:
+                turn = upstream_turn(messages, declared, body.get("tools"))
+                name = "relay:" + UPSTREAM_MODEL
+            except UpstreamError as exc:
+                log("relay failed: %s" % exc)
+                if not UPSTREAM_FALLBACK:
+                    # Reported rather than hidden. A demo that silently falls
+                    # back to canned answers looks like it is working and
+                    # proves nothing — which is the one outcome worth
+                    # refusing.
+                    return self.refuse(502, "upstream_error",
+                                       "LLMSim could not reach its upstream model: %s" % exc)
+                name, turn = choose_turn(self.provider, model, messages, declared)
+                name = "fallback:" + name
+        else:
+            name, turn = choose_turn(self.provider, model, messages, declared)
 
         log("%s %s model=%s stream=%s turns=%d -> rule '%s'%s" % (
             self.provider, shape, model, stream,
@@ -829,6 +979,14 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     log("listening on http://localhost:%d" % PORT)
     log("script: %s (%d rules)" % (SCRIPT_PATH, len(SCRIPT.get("rules", []))))
+    if relaying():
+        log("mode:   relay — every model answered by %s at %s (%s format)%s"
+            % (UPSTREAM_MODEL, UPSTREAM, UPSTREAM_FORMAT,
+               ", falling back to the script on failure" if UPSTREAM_FALLBACK else ""))
+        if not UPSTREAM_KEY:
+            log("        no LLMSIM_UPSTREAM_KEY set — the upstream will almost certainly refuse")
+    else:
+        log("mode:   scripted — responses.json answers everything, nothing leaves this machine")
     for name in sorted(API_KEYS):
         log("  %-9s http://localhost:%d/%s   key %s" % (name, PORT, name, API_KEYS[name]))
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()

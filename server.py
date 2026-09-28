@@ -34,9 +34,7 @@ Messages, OpenCode speaks Chat Completions, and Codex speaks Responses.
 Or omit the prefix and the provider is inferred from the key presented.
 """
 
-import base64
 import collections
-import hmac
 import itertools
 import json
 import os
@@ -146,13 +144,23 @@ MODELS = {
 # afterwards survives a restart without the environment having to change.
 CONFIG_PATH = os.environ.get("LLMSIM_CONFIG", os.path.join(HERE, "llmsim.config.json"))
 
-# The UI's own sign-in. Localhost is the normal case and a password there is
-# friction, so this is easy to switch off entirely — but it defaults ON,
-# because the UI can redirect every request at a real upstream and spend real
-# money, and that is not a thing to leave open by accident.
-UI_AUTH = os.environ.get("LLMSIM_UI_AUTH", "on").lower() not in ("off", "0", "false", "no")
-UI_USER = os.environ.get("LLMSIM_UI_USER", "Admin")
-UI_PASSWORD = os.environ.get("LLMSIM_UI_PASSWORD", "Admin")
+# Test cases and plans are kept apart from the rest of the settings, in a
+# file that is NOT gitignored.
+#
+# llmsim.config.json is machine-local by design — it holds the upstream key —
+# and a suite that lives in it cannot be committed, reviewed or handed to
+# anybody, which undoes most of the reason for writing one. A suite is source:
+# it belongs beside the code it tests, in a diff, on a branch.
+SUITE_PATH = os.environ.get("LLMSIM_SUITE", os.path.join(HERE, "llmsim.tests.json"))
+SUITE_KEYS = ("tests", "plans")
+
+# The console has no sign-in.
+#
+# This is a simulator: it runs on a developer's machine or a test box, it
+# holds no data worth taking, and a password in front of it was friction on
+# the one path everybody uses. Bind the port somewhere reachable and the
+# console is reachable too — which is the same posture the vendor endpoints
+# below already have, since their keys are published in this file.
 
 DEFAULTS = {
     "routing": {
@@ -175,6 +183,137 @@ DEFAULTS = {
     # status turns it into that vendor's error; text answers with those
     # words; delay_ms waits first. Any of the three may be set alone.
     "responses": {},
+    # ── How closely the vendors are imitated ─────────────────────────────
+    #
+    # Each of these makes the simulator stricter, and each is separate
+    # because they carry different risk to a working setup.
+    #
+    #   validate      reject a malformed request the way the vendor does.
+    #                 Safe: real clients send valid requests, and one that
+    #                 does not is exactly what this is for.
+    #   unknownModel  404 a model that is not in the catalogue. OFF by
+    #                 default, and not an oversight: a gateway may route an
+    #                 upstream name this list has never heard of — Maniple's
+    #                 own does, sending claude-sonnet-4-5 — and turning this
+    #                 on without checking breaks a working deployment.
+    #   headers       request-id, rate-limit and retry-after headers.
+    #   limits        refuse a request past the model's context window.
+    "fidelity": {"validate": True, "unknownModel": False, "headers": True, "limits": True},
+    # ── Functional tests ─────────────────────────────────────────────────
+    #
+    # Test cases that drive this simulator to check the CALLER, not the
+    # model. A case is an ordered list of steps, each one a prompt in and an
+    # expectation about what comes back, so a multi-step exchange — the shape
+    # a card applet conversation has, select then verify then authorise — is
+    # written as the sequence it actually is rather than as one assertion.
+    #
+    #   {"id": "...", "name": "...", "provider": "anthropic", "model": "...",
+    #    "steps": [{"input": "...", "expect": "...", "match": "contains",
+    #               "expectTool": "Write", "expectToolArgs": {"file_path": "x"},
+    #               "reject": "...", "rejectTool": "Bash",
+    #               "expectStatus": 200, "maxMs": 2000}]}
+    #
+    # expectToolArgs reaches into the call's own arguments by dotted path, so
+    # a test can prove the agent wrote the right file rather than merely that
+    # it called Write. reject and rejectTool are the negatives — "never
+    # invents a figure it could not read" is only sayable as something that
+    # must not appear. maxMs is a deadline.
+    #
+    # A plan is a named list of case ids, run together and reported together.
+    # Shipped with real cases rather than empty, because an empty harness
+    # teaches nothing about how to write one. Every case below asserts
+    # something responses.json actually does, so a fresh install opens on a
+    # suite that passes — and each one is a thing a coding agent is expected
+    # to get right.
+    "tests": [
+        {
+            "id": "codegen", "name": "Code generation: writes the file it was asked for",
+            "provider": "anthropic", "model": "claude-sonnet-5",
+            "tools": [{"name": "Write", "input_schema": {"type": "object", "properties": {
+                "file_path": {"type": "string"}, "content": {"type": "string"}}}}],
+            "steps": [
+                {"input": "Create a file called HELLO.md with a one-line heading.",
+                 "expect": "create", "match": "contains", "expectTool": "Write",
+                 # The point of the case. "Write was called" passes just as
+                 # happily when the agent writes to /tmp.
+                 "expectToolArgs": {"file_path": "HELLO.md", "content": "#"}},
+                # Sent as tool output, because that is what comes back next
+                # in a real loop — the file was written, and the agent reads
+                # the result rather than being asked a fresh question.
+                {"input": "HELLO.md written, 1 line.", "asToolResult": True,
+                 "expect": "HELLO.md is written", "match": "contains"},
+            ],
+        },
+        {
+            "id": "codegen-openai", "name": "Code generation: the same ask, an OpenAI-shaped agent",
+            "provider": "openai", "model": "gpt-5.4",
+            # A different agent declares a different tool for the same job.
+            # The case exists to prove the harness follows the caller rather
+            # than one vendor's spelling.
+            "tools": [{"type": "function", "function": {"name": "exec_command", "parameters": {
+                "type": "object", "properties": {"cmd": {"type": "string"}}}}}],
+            "steps": [
+                {"input": "Create a file called HELLO.md with a one-line heading.",
+                 "expect": "file", "match": "contains", "expectTool": "exec_command",
+                 "expectToolArgs": {"cmd": "HELLO.md"}},
+            ],
+        },
+        {
+            "id": "plan-first", "name": "Planning: asks for a capability instead of inventing data",
+            "provider": "anthropic", "model": "claude-sonnet-5",
+            "tools": [{"name": "Bash", "input_schema": {"type": "object", "properties": {
+                "command": {"type": "string"}}}}],
+            # The one worth having. An agent that fabricates invoice figures
+            # when it cannot reach SAP looks successful and is the worst
+            # outcome the whole platform exists to prevent.
+            "steps": [
+                {"input": "Reconcile this invoice against the SAP three-way match.",
+                 "expect": "SAP.Invoice.Read", "match": "contains", "expectTool": "Bash",
+                 "expectToolArgs": {"command": "granted-capabilities"},
+                 # The assertion that matters, and it can only be a negative:
+                 # an agent that answers with a total it could not have read
+                 # looks like success.
+                 "reject": r"[$€£]\s*[0-9]", "rejectMatch": "regex"},
+                {"input": "granted-capabilities.json: []", "asToolResult": True,
+                 "expect": "file the request", "match": "contains",
+                 "reject": r"[$€£]\s*[0-9]", "rejectMatch": "regex"},
+                {"input": "request filed: DEP-118", "asToolResult": True,
+                 "expect": "rather than invent", "match": "contains",
+                 # Blocked on a capability it does not hold, it must stop —
+                 # not reach for the shell again and find another way in.
+                 "rejectTool": "Bash", "reject": r"[$€£]\s*[0-9]", "rejectMatch": "regex"},
+            ],
+        },
+        {
+            "id": "rate-limited", "name": "Back-pressure: the caller is handed a 429",
+            "provider": "anthropic", "model": "claude-sonnet-5",
+            # A refusal has no model work behind it, so it has no excuse to
+            # be slow. The deadline is the half the slow case cannot cover:
+            # a fast path quietly becoming slow is what regresses.
+            "steps": [{"input": "llmsim:429 summarise this repository",
+                       "expectStatus": 429, "expect": "rate limit", "match": "contains",
+                       "maxMs": 2000}],
+        },
+        {
+            "id": "overloaded", "name": "Back-pressure: the vendor is overloaded (529)",
+            "provider": "anthropic", "model": "claude-sonnet-5",
+            "steps": [{"input": "llmsim:529 summarise this repository", "expectStatus": 529}],
+        },
+        {
+            "id": "slow", "name": "Patience: a slow answer must not be abandoned",
+            "provider": "anthropic", "model": "claude-sonnet-5",
+            # Eight seconds, on purpose. A caller that gives up early passes
+            # every other case here and fails a real session.
+            "steps": [{"input": "llmsim:slow refactor this module",
+                       "expect": "eight seconds", "match": "contains"}],
+        },
+    ],
+    "plans": [
+        {"id": "agent", "name": "Coding agent — functional",
+         "testIds": ["codegen", "codegen-openai", "plan-first", "rate-limited", "overloaded", "slow"]},
+        {"id": "quick", "name": "Quick check (no slow case)",
+         "testIds": ["codegen", "plan-first", "rate-limited"]},
+    ],
     "upstream": {
         "url": os.environ.get("LLMSIM_UPSTREAM", "").rstrip("/"),
         "key": os.environ.get("LLMSIM_UPSTREAM_KEY", ""),
@@ -192,27 +331,73 @@ def _merge(base, over):
     return out
 
 
-def load_config():
+def _read_json(path, what):
     try:
-        with open(CONFIG_PATH) as fh:
-            return _merge(DEFAULTS, json.load(fh))
+        with open(path) as fh:
+            return json.load(fh)
     except FileNotFoundError:
-        return json.loads(json.dumps(DEFAULTS))
+        return None
     except Exception as exc:
         # A broken file is worth saying out loud rather than silently
         # starting with defaults that are not what anyone configured.
-        log("config: %s is not readable (%s) — using defaults" % (CONFIG_PATH, exc))
-        return json.loads(json.dumps(DEFAULTS))
+        log("%s: %s is not readable (%s) — using defaults" % (what, path, exc))
+        return None
+
+
+def _write_json(path, data):
+    tmp = path + ".tmp"
+    with open(tmp, "w") as fh:
+        json.dump(data, fh, indent=2)
+        fh.write("\n")
+    os.replace(tmp, path)          # atomic, so a crash never leaves half a file
+
+
+def load_config():
+    config = _merge(DEFAULTS, _read_json(CONFIG_PATH, "config") or {})
+    # The suite file wins where it exists. An older config that still carries
+    # tests keeps working and is migrated on the next save, so nobody loses a
+    # suite to this change.
+    suite = _read_json(SUITE_PATH, "suite")
+    if isinstance(suite, dict):
+        for key in SUITE_KEYS:
+            if isinstance(suite.get(key), list):
+                config[key] = suite[key]
+    return config
 
 
 CONFIG = load_config()
 
 
 def save_config():
-    tmp = CONFIG_PATH + ".tmp"
-    with open(tmp, "w") as fh:
-        json.dump(CONFIG, fh, indent=2)
-    os.replace(tmp, CONFIG_PATH)   # atomic, so a crash never leaves half a file
+    settings = {k: v for k, v in CONFIG.items() if k not in SUITE_KEYS}
+    _write_json(CONFIG_PATH, settings)
+    save_suite()
+
+
+def ensure_suite_file():
+    """Write the suite out on first run, so there is something to commit.
+
+    A file that only appears after someone edits a case in the console is a
+    file most people never learn exists.
+    """
+    if os.path.exists(SUITE_PATH):
+        return
+    try:
+        save_suite()
+    except OSError as exc:              # a read-only checkout is not fatal
+        log("suite: cannot write %s (%s)" % (SUITE_PATH, exc))
+
+
+def save_suite():
+    """The suite, in a file meant to be committed."""
+    _write_json(SUITE_PATH, {
+        "version": 1,
+        # Said in the file itself, because the first person to open it in a
+        # diff will not have read this source.
+        "_": "LLMSim test cases and plans. Commit this; llmsim.config.json is machine-local.",
+        "tests": CONFIG.get("tests", []),
+        "plans": CONFIG.get("plans", []),
+    })
 
 
 
@@ -246,6 +431,48 @@ def route_for(model):
 def relaying():
     """Whether any route can reach an upstream at all."""
     return bool(CONFIG["upstream"]["url"])
+
+
+
+# ── What a model is, beyond its name ─────────────────────────────────────
+#
+# Keyed by family prefix rather than by the seventy names, because the names
+# change every release and the families do not. A model that matches nothing
+# gets the last row, which is deliberately unremarkable: a wrong-but-plausible
+# limit is better than pretending there is none, and a limit nobody set is the
+# reason a context-window test cannot exist.
+#
+# The numbers are the vendors' published ones where they are published, and
+# sane approximations where they are not. They are here to be *exceeded* — a
+# caller that never checks a context window is the thing this catches.
+MODEL_FAMILIES = [
+    ("claude-opus",   {"context": 200000, "maxOutput": 32000}),
+    ("claude-sonnet", {"context": 200000, "maxOutput": 64000}),
+    ("claude-haiku",  {"context": 200000, "maxOutput": 8192}),
+    ("claude-fable",  {"context": 200000, "maxOutput": 32000}),
+    ("gpt-6",         {"context": 400000, "maxOutput": 128000}),
+    ("gpt-5",         {"context": 400000, "maxOutput": 128000}),
+    ("gemini",        {"context": 1000000, "maxOutput": 65536}),
+    ("deepseek",      {"context": 128000, "maxOutput": 8192}),
+    ("grok",          {"context": 256000, "maxOutput": 32000}),
+    ("qwen",          {"context": 262144, "maxOutput": 32768}),
+    ("kimi",          {"context": 256000, "maxOutput": 32000}),
+    ("llama",         {"context": 128000, "maxOutput": 8192}),
+    ("mistral",       {"context": 128000, "maxOutput": 8192}),
+    ("",              {"context": 128000, "maxOutput": 8192}),
+]
+
+
+def model_limits(model):
+    name = (model or "").lower()
+    for prefix, limits in MODEL_FAMILIES:
+        if name.startswith(prefix):
+            return limits
+    return MODEL_FAMILIES[-1][1]
+
+
+def known_model(provider, model):
+    return model in MODELS.get(provider, [])
 
 
 def log(*parts):
@@ -363,6 +590,298 @@ def matches(rule, provider, model, text, declared=None):
 
 
 
+
+# ── Running a functional test ────────────────────────────────────────────
+#
+# A case is executed against this server over HTTP, on the real vendor
+# routes, with the real keys. It is not a shortcut into choose_turn: the
+# point is to exercise the whole path the caller uses — auth, the wire
+# format, the routing table, the per-model answer and the relay — so that a
+# test which passes here means the caller's own request would have worked.
+#
+# Synchronous by design. A step can depend on the one before it (select,
+# then verify, then authorise), so they run in order and stop at the first
+# failure; a plan runs its cases in order for the same reason.
+
+RESULTS = {"runs": []}          # newest first, bounded below
+RESULTS_LOCK = threading.Lock()
+
+
+def _self_request(provider, model, messages, tools=None, timeout=180):
+    """One call to this server, in that provider's own wire format."""
+    if provider == "anthropic":
+        path, headers = "/anthropic/v1/messages", {"x-api-key": API_KEYS["anthropic"]}
+        payload = {"model": model, "max_tokens": 1024, "messages": messages}
+    else:
+        path = "/%s/v1/chat/completions" % provider
+        headers = {"Authorization": "Bearer " + API_KEYS[provider]}
+        payload = {"model": model, "messages": messages}
+    if tools:
+        payload["tools"] = tools
+    headers["content-type"] = "application/json"
+
+    url = "http://127.0.0.1:%d%s" % (PORT, path)
+    req = urllib.request.Request(url, data=json.dumps(payload).encode(), headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status, json.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        try:
+            return exc.code, json.loads(exc.read())
+        except Exception:
+            return exc.code, {}
+    except Exception as exc:
+        return 0, {"error": {"message": "%s: %s" % (type(exc).__name__, exc)}}
+
+
+def _answer_of(body):
+    """The assistant's words and tool calls, whichever format answered.
+
+    Calls carry their arguments, not just their names. "Write was called" is
+    half an answer: the question a test is really asking is whether the agent
+    wrote the right file, and a run that proves only the name passes happily
+    while the agent writes to /tmp.
+    """
+    text, calls = [], []
+    for block in body.get("content") or []:
+        if block.get("type") == "text":
+            text.append(block.get("text") or "")
+        elif block.get("type") == "tool_use":
+            calls.append({"name": block.get("name") or "", "input": block.get("input") or {}})
+    for choice in body.get("choices") or []:
+        msg = choice.get("message") or {}
+        if msg.get("content"):
+            text.append(msg["content"])
+        for call in msg.get("tool_calls") or []:
+            fn = call.get("function") or {}
+            # OpenAI sends arguments as a JSON string. A caller that emitted
+            # something unparseable is itself worth asserting on, so the raw
+            # text is kept rather than dropped.
+            raw = fn.get("arguments")
+            try:
+                args = json.loads(raw) if isinstance(raw, str) else (raw or {})
+            except ValueError:
+                args = {"_raw": raw}
+            calls.append({"name": fn.get("name") or "", "input": args})
+    if not text and body.get("error"):
+        text.append(body["error"].get("message") or "")
+    return "\n".join(t for t in text if t), [c for c in calls if c["name"]]
+
+
+def _dig(value, path):
+    """A dotted path into a tool's arguments: file_path, edits.0.new_string."""
+    for part in str(path).split("."):
+        if isinstance(value, dict):
+            value = value.get(part)
+        elif isinstance(value, list) and part.isdigit() and int(part) < len(value):
+            value = value[int(part)]
+        else:
+            return None
+        if value is None:
+            return None
+    return value
+
+
+def _as_text(value):
+    return value if isinstance(value, str) else json.dumps(value, sort_keys=True)
+
+
+def _matches(how, want, text):
+    """One comparison, used by every expectation so they all behave alike.
+
+    A bad regex raises, and the caller turns that into a failed step naming
+    the pattern — a test that silently never matches is worse than one that
+    says the pattern is wrong.
+    """
+    if how == "regex":
+        return bool(re.search(want, text, re.I | re.S))
+    if how == "equals":
+        return text.strip() == want
+    return want.lower() in text.lower()
+
+
+def _step_verdict(step, status, answer, calls, ms):
+    """Why this step passed or failed, in words worth reading.
+
+    Every expectation is optional and they compose: a step can require a
+    status, a tool, an argument on that tool, words in the answer, words that
+    must NOT be in it, a tool that must NOT have been called, and a deadline.
+    The negatives matter as much as the positives — "never invents an invoice
+    number" is only expressible as something that must not appear, and it is
+    exactly the failure the whole platform exists to catch.
+    """
+    names = [c["name"] for c in calls]
+    met = []
+
+    want_status = step.get("expectStatus")
+    if want_status and int(want_status) != status:
+        return False, "expected HTTP %s, got %s" % (want_status, status)
+    if not want_status and status >= 400:
+        return False, "HTTP %s: %s" % (status, answer[:120])
+    if want_status:
+        met.append("HTTP %s" % want_status)
+
+    # A deadline. The slow case proves a late answer still arrives; this is
+    # the other half — a request that is meant to be quick staying quick,
+    # which is the thing that regresses silently.
+    max_ms = step.get("maxMs")
+    if max_ms:
+        if ms > int(max_ms):
+            return False, "expected an answer within %sms, took %dms" % (max_ms, ms)
+        met.append("within %sms" % max_ms)
+
+    want_tool = (step.get("expectTool") or "").strip()
+    if want_tool:
+        if want_tool not in names:
+            return False, "expected a %s tool call, got %s" % (want_tool, names or "none")
+        met.append("%s called" % want_tool)
+
+    reject_tool = (step.get("rejectTool") or "").strip()
+    if reject_tool:
+        if reject_tool in names:
+            return False, "%s must not have been called, and was" % reject_tool
+        met.append("no %s call" % reject_tool)
+
+    # Arguments, on the tool the step named. Checked against every call to
+    # that tool, because an agent may call it more than once and one of them
+    # being right is what was asked.
+    wanted_args = step.get("expectToolArgs") or {}
+    if wanted_args:
+        if not want_tool:
+            return False, "an argument expectation needs a tool to assert on"
+        candidates = [c for c in calls if c["name"] == want_tool]
+        for path, want in wanted_args.items():
+            hit = False
+            seen = []
+            for call in candidates:
+                found = _dig(call["input"], path)
+                if found is None:
+                    continue
+                text = _as_text(found)
+                seen.append(text[:80])
+                try:
+                    if _matches(step.get("argMatch") or "contains", str(want), text):
+                        hit = True
+                        break
+                except re.error as exc:
+                    return False, "%s is not a valid regex: %s" % (path, exc)
+            if not hit:
+                return False, "%s.%s expected %r, got %s" % (
+                    want_tool, path, want, (", ".join(seen) or "nothing"))
+        met.append("%s args" % want_tool)
+
+    # What must not appear — checked against the words AND the arguments of
+    # every tool call, which is where the dangerous version of this lives: an
+    # agent that cannot reach SAP and puts a made-up total into a Bash command
+    # has fabricated it just as surely as if it had said it out loud.
+    # Deliberately wider than `expect`, which stays on the answer: a positive
+    # match cares where it appeared, a prohibition does not.
+    #
+    # Run before the positive, so a step that asserts both reports the more
+    # alarming failure.
+    reject = (step.get("reject") or "").strip()
+    if reject:
+        how = step.get("rejectMatch") or "contains"
+        places = [("the answer", answer)]
+        for call in calls:
+            for key, value in (call["input"] or {}).items():
+                places.append(("%s.%s" % (call["name"], key), _as_text(value)))
+        for where, text in places:
+            try:
+                if _matches(how, reject, text):
+                    return False, "%s must not %s %r, and does" % (
+                        where, how.rstrip("s") if how == "contains" else how, reject[:80])
+            except re.error as exc:
+                return False, "the rejection is not a valid regex: %s" % exc
+        met.append("no %r anywhere" % reject[:40])
+
+    want = (step.get("expect") or "").strip()
+    if not want:
+        # What was actually checked, named. "no expectation set" on a step
+        # that asserted a status or a tool call reads like the step proved
+        # nothing, which is the opposite of true and the sort of thing that
+        # gets a passing suite mistrusted.
+        return True, (", ".join(met) if met else "no expectation set — reached the caller and answered")
+    how = step.get("match") or "contains"
+    try:
+        ok = _matches(how, want, answer)
+    except re.error as exc:
+        return False, "the expectation is not a valid regex: %s" % exc
+    return ok, (", ".join(met + ["matched"]) if ok else "expected %s %r" % (how, want[:80]))
+
+
+def run_case(case):
+    started = time.time()
+    provider = case.get("provider") or "anthropic"
+    if provider not in API_KEYS:
+        provider = "anthropic"
+    model = case.get("model") or MODELS[provider][0]
+    tools = case.get("tools") or None
+
+    # Carried between steps, so step two is a reply in the same conversation
+    # rather than a fresh one — which is the whole point of a multi-step case.
+    messages, steps = [], []
+    for step in case.get("steps") or []:
+        # A step is either a person speaking or a tool reporting back, and the
+        # difference decides which rule answers it.
+        #
+        # subject() deliberately ignores tool output when it works out what a
+        # conversation is about, so that an agent loop keeps the rule its
+        # opening ask chose rather than being re-matched against whatever a
+        # tool printed. A harness that could only send plain user text
+        # therefore could not model a loop at all: step two would look like a
+        # new question and pull the conversation into a different rule. Found
+        # exactly that way — a two-step code-generation case failed on its
+        # second step for no reason visible in the case.
+        if step.get("asToolResult"):
+            messages.append({"role": "user", "content": [
+                {"type": "tool_result", "content": step.get("input") or ""}]})
+        else:
+            messages.append({"role": "user", "content": step.get("input") or ""})
+        at = time.time()
+        status, body = _self_request(provider, model, messages, tools)
+        # Measured before it is judged, because a deadline is one of the
+        # things that can be judged.
+        ms = int((time.time() - at) * 1000)
+        answer, calls = _answer_of(body)
+        ok, why = _step_verdict(step, status, answer, calls, ms)
+        steps.append({
+            "input": step.get("input") or "", "expect": step.get("expect") or "",
+            "match": step.get("match") or "contains", "status": status,
+            "answer": answer[:600], "tools": [c["name"] for c in calls],
+            "calls": calls, "ok": ok, "why": why, "ms": ms,
+        })
+        messages.append({"role": "assistant", "content": answer})
+        if not ok:
+            break      # a later step assumes this one worked
+
+    ran = len(steps)
+    passed = all(s["ok"] for s in steps) and ran > 0
+    return {
+        "id": case.get("id"), "name": case.get("name") or case.get("id"),
+        "provider": provider, "model": model,
+        "status": "passed" if passed else ("failed" if ran else "empty"),
+        "steps": steps, "ran": ran, "total": len(case.get("steps") or []),
+        "ms": int((time.time() - started) * 1000),
+    }
+
+
+def run_cases(cases, label):
+    results = [run_case(c) for c in cases]
+    run = {
+        "at": time.time(), "label": label, "results": results,
+        "passed": sum(1 for r in results if r["status"] == "passed"),
+        "failed": sum(1 for r in results if r["status"] == "failed"),
+        "empty": sum(1 for r in results if r["status"] == "empty"),
+        "total": len(results),
+        "ms": sum(r["ms"] for r in results),
+    }
+    with RESULTS_LOCK:
+        RESULTS["runs"].insert(0, run)
+        del RESULTS["runs"][20:]     # the last twenty runs is plenty to compare
+    return run
+
+
 # ── What came in ─────────────────────────────────────────────────────────
 #
 # A bounded, in-memory log of the last few hundred requests, for the UI to
@@ -373,6 +892,7 @@ def matches(rule, provider, model, text, declared=None):
 # that grows without limit is a memory leak with a nice name.
 REQUESTS = collections.deque(maxlen=int(os.environ.get("LLMSIM_LOG_SIZE", "300")))
 REQUEST_SEQ = itertools.count(1)
+REQUEST_SEQ_PEEK_COUNTER = itertools.count(1)
 _SEQ_SEEN = [0]
 
 
@@ -388,6 +908,73 @@ def record(entry):
     with REQUESTS_LOCK:
         REQUESTS.append(entry)
     return entry
+
+
+
+# ── Live stream framing, for the relay ───────────────────────────────────
+#
+# The scripted path builds a whole turn and hands it to the *_sse generators,
+# which is right when the answer is already known. A relayed answer is not:
+# it arrives a piece at a time and the pauses between pieces are the point,
+# so these emit the same events the generators do, split so the middle can be
+# driven by whatever the upstream sends.
+
+def _delta_text(event):
+    """The text in one upstream SSE event, whichever format sent it."""
+    # Anthropic
+    if event.get("type") == "content_block_delta":
+        return (event.get("delta") or {}).get("text") or ""
+    # OpenAI chat
+    for choice in event.get("choices") or []:
+        piece = (choice.get("delta") or {}).get("content")
+        if piece:
+            return piece
+    # Responses
+    if event.get("type") == "response.output_text.delta":
+        return event.get("delta") or ""
+    return ""
+
+
+def _stream_open(shape, model):
+    if shape == "anthropic":
+        shell = anthropic_body({"text": ""}, model)
+        shell["content"], shell["stop_reason"] = [], None
+        shell["usage"] = {"input_tokens": shell["usage"]["input_tokens"], "output_tokens": 0}
+        return [("message_start", {"type": "message_start", "message": shell}),
+                ("ping", {"type": "ping"}),
+                ("content_block_start", {"type": "content_block_start", "index": 0,
+                                         "content_block": {"type": "text", "text": ""}})]
+    if shape == "responses":
+        return [("response.created", {"type": "response.created",
+                                      "response": responses_body({"text": ""}, model)})]
+    return []
+
+
+def _stream_delta(shape, piece):
+    if shape == "anthropic":
+        return [("content_block_delta", {"type": "content_block_delta", "index": 0,
+                                         "delta": {"type": "text_delta", "text": piece}})]
+    if shape == "responses":
+        return [("response.output_text.delta", {"type": "response.output_text.delta", "delta": piece})]
+    return [("", {"id": rand_id("chatcmpl-", 20), "object": "chat.completion.chunk",
+                  "created": int(time.time()), "model": "relay",
+                  "choices": [{"index": 0, "delta": {"content": piece}, "finish_reason": None}]})]
+
+
+def _stream_close(shape, text):
+    if shape == "anthropic":
+        return [("content_block_stop", {"type": "content_block_stop", "index": 0}),
+                ("message_delta", {"type": "message_delta",
+                                   "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+                                   "usage": {"output_tokens": rough_tokens(text)}}),
+                ("message_stop", {"type": "message_stop"})]
+    if shape == "responses":
+        return [("response.completed", {"type": "response.completed",
+                                        "response": responses_body({"text": text}, "relay")})]
+    return [("", {"id": rand_id("chatcmpl-", 20), "object": "chat.completion.chunk",
+                  "created": int(time.time()), "model": "relay",
+                  "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}),
+            ("", "[DONE]")]
 
 
 # ── Relay: one real model answers for every model ────────────────────────
@@ -474,6 +1061,21 @@ def _turn_from_upstream(body):
         turn["text"] = "\n".join(text_parts)
     if calls:
         turn["tool_calls"] = calls
+
+    # The upstream's own numbers, carried through instead of discarded.
+    #
+    # Relay exists so a demo has real answers; a demo that cannot say what it
+    # cost is missing the question everyone asks second. Synthetic counts are
+    # right for a scripted answer and wrong here — this one really was billed.
+    usage = body.get("usage") or {}
+    if usage:
+        turn["usage"] = {
+            "input": usage.get("input_tokens", usage.get("prompt_tokens", 0)),
+            "output": usage.get("output_tokens", usage.get("completion_tokens", 0)),
+            "cacheRead": usage.get("cache_read_input_tokens",
+                                   (usage.get("prompt_tokens_details") or {}).get("cached_tokens", 0)),
+            "model": CONFIG["upstream"]["model"],
+        }
     # A model that answered with neither is still an answer; saying so beats
     # an empty body the client has to guess about.
     if not turn:
@@ -541,6 +1143,20 @@ def choose_turn(provider, model, messages, declared=None):
 
 # ── Anthropic: /v1/messages ──────────────────────────────────────────────
 
+
+def _anthropic_usage(input_tokens, output_tokens):
+    """input/output, with the cache split a real response carries."""
+    cached = int(input_tokens * 0.8)        # most of a harness prompt is reused
+    created = int(input_tokens * 0.1)
+    return {
+        "input_tokens": input_tokens - cached - created,
+        "cache_creation_input_tokens": created,
+        "cache_read_input_tokens": cached,
+        "output_tokens": output_tokens,
+        "service_tier": "standard",
+    }
+
+
 def anthropic_body(turn, model):
     content = []
     if turn.get("text"):
@@ -563,7 +1179,14 @@ def anthropic_body(turn, model):
         "content": content,
         "stop_reason": stop,
         "stop_sequence": None,
-        "usage": {"input_tokens": turn.get("input_tokens", 1200), "output_tokens": rough_tokens(out_text)},
+        # The cache fields are not decoration. Claude Code reports them, and
+        # Maniple's own extractUsage reads cacheReadInputTokens and
+        # cacheCreationInputTokens — so a usage path that handles them could
+        # never be exercised while this returned two numbers.
+        #
+        # Split from the same synthetic total rather than invented on top of
+        # it, so the arithmetic a caller does still adds up.
+        "usage": _anthropic_usage(turn.get("input_tokens", 1200), rough_tokens(out_text)),
     }
 
 
@@ -619,7 +1242,7 @@ def anthropic_sse(turn, model):
 # ── OpenAI / DeepSeek: /v1/chat/completions ──────────────────────────────
 
 def openai_body(turn, model):
-    message = {"role": "assistant", "content": turn.get("text") or None}
+    message = {"role": "assistant", "content": turn.get("text") or None, "refusal": None}
     finish = turn.get("stop_reason", "stop")
 
     if turn.get("tool_calls"):
@@ -637,11 +1260,23 @@ def openai_body(turn, model):
         "object": "chat.completion",
         "created": int(time.time()),
         "model": model,
-        "choices": [{"index": 0, "message": message, "finish_reason": finish}],
+        # system_fingerprint and service_tier are read by clients that pin
+        # behaviour to a backend build; logprobs and refusal are absent from
+        # a real answer as null rather than missing, and a client that tests
+        # for the key rather than the value can tell the difference.
+        "system_fingerprint": "fp_llmsim0001",
+        "service_tier": "default",
+        "choices": [{"index": 0, "message": message, "finish_reason": finish,
+                     "logprobs": None}],
         "usage": {
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
             "total_tokens": prompt_tokens + completion_tokens,
+            "prompt_tokens_details": {"cached_tokens": int(prompt_tokens * 0.8),
+                                      "audio_tokens": 0},
+            "completion_tokens_details": {"reasoning_tokens": 0, "audio_tokens": 0,
+                                          "accepted_prediction_tokens": 0,
+                                          "rejected_prediction_tokens": 0},
         },
     }
 
@@ -811,9 +1446,29 @@ def responses_body(turn, model):
         # Responses clients read output_text as the flattened convenience form;
         # omitting it makes a reply look empty to anything that trusts it.
         "output_text": turn.get("text") or "",
+        # The rest of the envelope a Responses client reads back. Most are
+        # null or a default in a plain answer — which is the point: a client
+        # that branches on `reasoning` or resumes from `previous_response_id`
+        # cannot be tested against a body where the key is simply absent.
+        "error": None,
+        "incomplete_details": None,
+        "instructions": None,
+        "max_output_tokens": None,
+        "previous_response_id": None,
+        "parallel_tool_calls": True,
+        "tool_choice": "auto",
+        "tools": [],
+        "temperature": 1.0,
+        "top_p": 1.0,
+        "truncation": "disabled",
+        "store": True,
+        "metadata": {},
+        "reasoning": {"effort": None, "summary": None},
         "usage": {
             "input_tokens": input_tokens,
+            "input_tokens_details": {"cached_tokens": int(input_tokens * 0.8)},
             "output_tokens": output_tokens,
+            "output_tokens_details": {"reasoning_tokens": 0},
             "total_tokens": input_tokens + output_tokens,
         },
     }
@@ -903,33 +1558,6 @@ class Handler(BaseHTTPRequestHandler):
     # Served by this process, from one file, with no build step and no
     # dependency — the same promise the rest of this makes.
 
-    def ui_authorised(self):
-        if not UI_AUTH:
-            return True
-        header = self.headers.get("Authorization") or ""
-        if header.startswith("Basic "):
-            try:
-                user, _, password = base64.b64decode(header[6:]).decode("utf-8", "replace").partition(":")
-            except Exception:
-                return False
-            # Compared in constant time. The threat here is small and the
-            # habit is worth more than the cycles.
-            return (hmac.compare_digest(user, UI_USER)
-                    and hmac.compare_digest(password, UI_PASSWORD))
-        return False
-
-    def ui_challenge(self):
-        # Content-Length matters here. Without it the response has no end on a
-        # keep-alive connection and the client waits for a close that never
-        # comes — which looks exactly like the server hanging.
-        payload = json.dumps({"error": "sign in"}).encode()
-        self.send_response(401)
-        self.send_header("WWW-Authenticate", 'Basic realm="LLMSim"')
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(payload)))
-        self.end_headers()
-        self.wfile.write(payload)
-
     def serve_ui(self):
         try:
             with open(os.path.join(HERE, "ui.html"), "rb") as fh:
@@ -951,14 +1579,95 @@ class Handler(BaseHTTPRequestHandler):
         known = sorted({m for models in MODELS.values() for m in models})
         return {
             "config": public_config(),
-            "auth": {"enabled": UI_AUTH, "user": UI_USER if UI_AUTH else None},
             "models": {p: MODELS[p] for p in sorted(MODELS)},
             "allModels": known,
             "rules": [r.get("name") for r in SCRIPT.get("rules", [])],
+            "runs": RESULTS["runs"][:5],
             "requests": rows,
             "seq": REQUEST_SEQ_PEEK(),
         }
 
+
+
+    def run_tests(self, body):
+        """Run named cases, or a whole plan, and report the way a suite does.
+
+        Synchronous on purpose. A step can depend on the one before it, and a
+        caller watching a run wants the answer now rather than a job id to
+        poll — this is a test harness on a developer's machine, not a queue.
+        """
+        cases = {c.get("id"): c for c in CONFIG.get("tests", [])}
+        plan_id = body.get("planId")
+        if plan_id:
+            plan = next((p for p in CONFIG.get("plans", []) if p.get("id") == plan_id), None)
+            if not plan:
+                return self.send_json(404, {"error": "no plan %r" % plan_id})
+            wanted, label = plan.get("testIds") or [], plan.get("name") or plan_id
+        else:
+            wanted = body.get("testIds")
+            if wanted is None:
+                wanted, label = list(cases), "All test cases"
+            else:
+                label = body.get("label") or ("%d case(s)" % len(wanted))
+
+        chosen = [cases[i] for i in wanted if i in cases]
+        if not chosen:
+            return self.send_json(400, {"error": "none of those test cases exist"})
+
+        log("running %d case(s): %s" % (len(chosen), label))
+        run = run_cases(chosen, label)
+        log("  %d passed, %d failed in %dms" % (run["passed"], run["failed"], run["ms"]))
+        return self.send_json(200, run)
+
+    def import_suite(self, body):
+        """Take a suite someone else wrote, and say what it did.
+
+        Merge by default rather than replace: the common case is picking up a
+        colleague's cases, and losing your own to that is a bad surprise. An
+        id that already exists is overwritten, because re-importing a suite
+        you edited should update it rather than double it.
+        """
+        mode = body.get("mode") or "merge"
+        if mode not in ("merge", "replace"):
+            return self.send_json(400, {"error": "mode must be merge or replace"})
+
+        incoming = {}
+        for key in SUITE_KEYS:
+            rows = body.get(key)
+            if rows is None:
+                rows = []
+            if not isinstance(rows, list):
+                return self.send_json(400, {"error": "%s must be a list" % key})
+            for row in rows:
+                if not isinstance(row, dict) or not row.get("id"):
+                    return self.send_json(400, {"error": "every %s entry needs an id" % key[:-1]})
+            incoming[key] = rows
+        if not incoming["tests"] and not incoming["plans"]:
+            return self.send_json(400, {"error": "that file holds no cases or plans"})
+
+        added, updated = 0, 0
+        for key in SUITE_KEYS:
+            if mode == "replace":
+                CONFIG[key] = incoming[key]
+                continue
+            existing = {r.get("id"): i for i, r in enumerate(CONFIG.get(key, []))}
+            merged = list(CONFIG.get(key, []))
+            for row in incoming[key]:
+                if row["id"] in existing:
+                    merged[existing[row["id"]]] = row
+                    updated += 1
+                else:
+                    merged.append(row)
+                    added += 1
+            CONFIG[key] = merged
+
+        save_config()
+        log("suite imported (%s): %d case(s), %d plan(s)"
+            % (mode, len(incoming["tests"]), len(incoming["plans"])))
+        return self.send_json(200, {
+            "ok": True, "mode": mode, "added": added, "updated": updated,
+            "tests": len(CONFIG.get("tests", [])), "plans": len(CONFIG.get("plans", [])),
+        })
 
     def save_ui_config(self, body):
         """Accept only the settings that exist, and say what changed.
@@ -1015,6 +1724,22 @@ class Handler(BaseHTTPRequestHandler):
                     table[model] = entry
             CONFIG["responses"] = table
 
+        for key in ("tests", "plans"):
+            if key not in body:
+                continue
+            rows = body[key]
+            if not isinstance(rows, list):
+                return self.send_json(400, {"error": "%s must be a list" % key})
+            for row in rows:
+                if not isinstance(row, dict) or not row.get("id"):
+                    return self.send_json(400, {"error": "every %s entry needs an id" % key[:-1]})
+            CONFIG[key] = rows
+
+        if "fidelity" in body:
+            for k, v in (body["fidelity"] or {}).items():
+                if k in CONFIG["fidelity"]:
+                    CONFIG["fidelity"][k] = bool(v)
+
         for field in ("url", "key", "model", "format", "fallback"):
             if field not in upstream:
                 continue
@@ -1037,11 +1762,45 @@ class Handler(BaseHTTPRequestHandler):
                len(CONFIG.get("responses") or {}), CONFIG["upstream"]["url"] or "none"))
         return self.send_json(200, {"ok": True, "config": public_config()})
 
+    def vendor_headers(self, status=200):
+        """The headers a real answer carries, which clients read.
+
+        A client that logs a request id, honours retry-after, or backs off as
+        a rate-limit budget runs down cannot be tested against a response
+        that has none of them — and "we return a 429" is not the same claim
+        as "we return a 429 a client can recover from".
+
+        The numbers walk downward across a process's life rather than being
+        fixed, so a caller watching the budget sees it move.
+        """
+        if not CONFIG.get("fidelity", {}).get("headers", True):
+            return
+        rid = rand_id("req_", 24)
+        remaining = max(0, 1000 - (next(REQUEST_SEQ_PEEK_COUNTER) % 1000))
+        reset = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 60))
+        if self.provider == "anthropic":
+            self.send_header("request-id", rid)
+            self.send_header("anthropic-ratelimit-requests-limit", "1000")
+            self.send_header("anthropic-ratelimit-requests-remaining", str(remaining))
+            self.send_header("anthropic-ratelimit-requests-reset", reset)
+        else:
+            self.send_header("x-request-id", rid)
+            self.send_header("x-ratelimit-limit-requests", "1000")
+            self.send_header("x-ratelimit-remaining-requests", str(remaining))
+            self.send_header("x-ratelimit-reset-requests", "60s")
+        # The one a client actually acts on. Without it a 429 is a dead end:
+        # nothing says when to try again, so every backoff is a guess.
+        if status == 429:
+            self.send_header("retry-after", "2")
+        elif status == 529 or status == 503:
+            self.send_header("retry-after", "5")
+
     def send_json(self, status, payload):
         raw = json.dumps(payload).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(raw)))
+        self.vendor_headers(status)
         self.end_headers()
         self.wfile.write(raw)
 
@@ -1091,13 +1850,9 @@ class Handler(BaseHTTPRequestHandler):
         self.provider = self.resolve_provider(prefix, key) or "openai"
 
         if path == "/ui" or path == "/ui/":
-            if not self.ui_authorised():
-                return self.ui_challenge()
             return self.serve_ui()
 
         if path == "/api/ui/state":
-            if not self.ui_authorised():
-                return self.ui_challenge()
             since = 0
             query = self.path.split("?", 1)[1] if "?" in self.path else ""
             for part in query.split("&"):
@@ -1107,6 +1862,21 @@ class Handler(BaseHTTPRequestHandler):
                     except ValueError:
                         since = 0
             return self.send_json(200, self.ui_state(since))
+
+        if path == "/api/ui/suite":
+            # Served as a download so a suite can leave this machine at all.
+            payload = json.dumps({
+                "version": 1,
+                "_": "LLMSim test cases and plans. Commit this; llmsim.config.json is machine-local.",
+                "tests": CONFIG.get("tests", []),
+                "plans": CONFIG.get("plans", []),
+            }, indent=2).encode()
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-disposition", 'attachment; filename="llmsim.tests.json"')
+            self.send_header("content-length", str(len(payload)))
+            self.end_headers()
+            return self.wfile.write(payload)
 
         if path in ("/", "/healthz"):
             return self.send_json(200, {
@@ -1154,9 +1924,13 @@ class Handler(BaseHTTPRequestHandler):
         # The console writes settings here. Checked before the vendor key
         # below, because this route is not a vendor route and has no API key.
         if path == "/api/ui/config":
-            if not self.ui_authorised():
-                return self.ui_challenge()
             return self.save_ui_config(body)
+
+        if path == "/api/ui/run":
+            return self.run_tests(body)
+
+        if path == "/api/ui/suite":
+            return self.import_suite(body)
 
         expected = API_KEYS.get(self.provider)
         if not key:
@@ -1176,11 +1950,197 @@ class Handler(BaseHTTPRequestHandler):
 
         return self.refuse(404, "not_found_error", "No such route: " + path)
 
+
+
+
+    def begin_stream(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "close")
+        self.vendor_headers(200)
+        self.end_headers()
+        self.close_connection = True
+
+    def write_event(self, event, data):
+        """One SSE frame, in the form this shape uses.
+
+        Anthropic and Responses name their events; OpenAI does not, and sends
+        a bare [DONE] sentinel at the end — so an empty name means "data
+        only", and a string payload is written verbatim.
+        """
+        try:
+            if isinstance(data, str):
+                self.wfile.write(("data: %s\n\n" % data).encode())
+            elif event:
+                self.wfile.write(("event: %s\ndata: %s\n\n" % (event, json.dumps(data))).encode())
+            else:
+                self.wfile.write(("data: %s\n\n" % json.dumps(data)).encode())
+            self.wfile.flush()
+        except BrokenPipeError:
+            log("client closed the stream early")
+            raise
+
+    def relay_stream(self, shape, model, messages, tools_body, entry_started):
+        """Forward the upstream's own stream, re-framed for this client.
+
+        Two streams, not one: the upstream speaks its format and the client
+        asked for theirs, so every delta is unwrapped and rewritten. What is
+        preserved is the timing — the pauses are the model's, which is the
+        only part of a streamed demo that cannot be faked convincingly.
+
+        On a failure before the first byte this falls back to the buffered
+        path, which can still answer with a proper error. After the first
+        byte it cannot: the status is already sent, so the stream is ended
+        and the reason goes to the log.
+        """
+        up = CONFIG["upstream"]
+        if up["format"] == "anthropic":
+            url, headers = up["url"] + "/v1/messages", {"x-api-key": up["key"], "anthropic-version": "2023-06-01"}
+            payload = {"model": up["model"], "max_tokens": 2048, "stream": True,
+                       "messages": [m for m in messages if m.get("role") in ("user", "assistant")]}
+        else:
+            url, headers = up["url"] + "/v1/chat/completions", {"Authorization": "Bearer " + up["key"]}
+            payload = {"model": up["model"], "messages": messages, "stream": True}
+        if tools_body:
+            payload["tools"] = tools_body
+        headers["content-type"] = "application/json"
+
+        req = urllib.request.Request(url, data=json.dumps(payload).encode(), headers=headers)
+        try:
+            resp = urllib.request.urlopen(req, timeout=180)
+        except Exception as exc:
+            log("relay stream failed before it began: %s" % exc)
+            if CONFIG["upstream"]["fallback"]:
+                name, turn = choose_turn(self.provider, model, messages, None)
+                self.begin_stream()
+                for ev in _stream_open(shape, model):
+                    self.write_event(ev[0], ev[1])
+                for ev in _stream_delta(shape, turn.get("text") or ""):
+                    self.write_event(ev[0], ev[1])
+                for ev in _stream_close(shape, turn.get("text") or ""):
+                    self.write_event(ev[0], ev[1])
+                return None
+            return self.refuse(502, "upstream_error",
+                               "LLMSim could not reach its upstream model: %s" % exc)
+
+        started, sent = False, []
+        try:
+            for raw in resp:
+                line = raw.decode("utf-8", "replace").strip()
+                if not line.startswith("data:"):
+                    continue
+                chunk = line[5:].strip()
+                if chunk in ("", "[DONE]"):
+                    continue
+                try:
+                    event = json.loads(chunk)
+                except json.JSONDecodeError:
+                    continue
+                piece = _delta_text(event)
+                if not piece:
+                    continue
+                if not started:
+                    self.begin_stream()
+                    for head in _stream_open(shape, model):
+                        self.write_event(head[0], head[1])
+                    started = True
+                sent.append(piece)
+                for ev in _stream_delta(shape, piece):
+                    self.write_event(ev[0], ev[1])
+            if not started:
+                # The upstream answered with nothing streamable. Emit an
+                # empty-but-well-formed stream rather than nothing, so the
+                # client sees a completed response instead of a dropped
+                # connection it has to guess about.
+                self.begin_stream()
+                for ev in _stream_open(shape, model):
+                    self.write_event(ev[0], ev[1])
+                for ev in _stream_close(shape, ""):
+                    self.write_event(ev[0], ev[1])
+                return None
+            for ev in _stream_close(shape, "".join(sent)):
+                self.write_event(ev[0], ev[1])
+        except Exception as exc:
+            log("relay stream broke mid-flight: %s" % exc)
+        finally:
+            try:
+                resp.close()
+            except Exception:
+                pass
+        return None
+
+    def validate(self, body, shape, model, messages):
+        """Refuse what the vendor would refuse, in the vendor's own words.
+
+        A simulator that answers 200 to a malformed request is worse than one
+        that answers nothing: the client passes here and fails in production,
+        and the test that should have caught it is the one that gave false
+        comfort. Each check below is a real 4xx from a real API.
+
+        All of it is switchable, because strictness that cannot be turned off
+        is a simulator that eventually blocks a setup somebody needs working.
+        """
+        fid = CONFIG.get("fidelity", {})
+        if not fid.get("validate", True):
+            return None
+
+        if not isinstance(messages, list) or not messages:
+            # Anthropic and OpenAI both reject an empty conversation.
+            return self.refuse(400, "invalid_request_error",
+                               "messages: at least one message is required.")
+
+        for i, msg in enumerate(messages):
+            if not isinstance(msg, dict) or "role" not in msg:
+                return self.refuse(400, "invalid_request_error",
+                                   "messages.%d: role is required." % i)
+            if msg["role"] not in ("user", "assistant", "system", "tool", "developer"):
+                return self.refuse(400, "invalid_request_error",
+                                   "messages.%d.role: %r is not a valid role." % (i, msg["role"]))
+
+        # max_tokens is required by Anthropic and optional everywhere else —
+        # one of the few places the vendors genuinely disagree.
+        if shape == "anthropic":
+            if body.get("max_tokens") is None:
+                return self.refuse(400, "invalid_request_error",
+                                   "max_tokens: field required.")
+            try:
+                want = int(body["max_tokens"])
+            except (TypeError, ValueError):
+                return self.refuse(400, "invalid_request_error",
+                                   "max_tokens: must be an integer.")
+            if want < 1:
+                return self.refuse(400, "invalid_request_error",
+                                   "max_tokens: must be greater than 0.")
+            if fid.get("limits", True) and want > model_limits(model)["maxOutput"]:
+                return self.refuse(400, "invalid_request_error",
+                                   "max_tokens: %d is more than %s can return (%d)."
+                                   % (want, model, model_limits(model)["maxOutput"]))
+
+        if fid.get("unknownModel", False) and not known_model(self.provider, model):
+            return self.refuse(404, "not_found_error", "model: %r does not exist." % model)
+
+        if fid.get("limits", True):
+            # Rough, and honest about it: the token count is synthetic, so
+            # this catches a caller that sends a novel, not one that is a
+            # hundred tokens over.
+            size = rough_tokens(json.dumps(messages))
+            window = model_limits(model)["context"]
+            if size > window:
+                return self.refuse(400, "invalid_request_error",
+                                   "prompt is too long: %d tokens > %d maximum for %s."
+                                   % (size, window, model))
+        return None
+
     def handle_chat(self, body, shape):
         model = body.get("model") or (MODELS[self.provider][0])
         messages = responses_to_messages(body) if shape == "responses" else (body.get("messages") or [])
         stream = bool(body.get("stream"))
         declared = declared_tools(body)
+
+        bad = self.validate(body, shape, model, messages)
+        if bad:
+            return bad
 
         # Per model, not per process. A demo can point one model at a real
         # cheap one and leave every other model offline and free, which is
@@ -1189,6 +2149,13 @@ class Handler(BaseHTTPRequestHandler):
         started = time.time()
         if route == "relay":
             try:
+                # A streamed relay is passed through token by token rather
+                # than fetched whole and replayed. Replaying is the right
+                # shape and the wrong experience: a demo of an agent typing
+                # is the thing being demonstrated, and one long pause
+                # followed by everything at once is not that.
+                if stream:
+                    return self.relay_stream(shape, model, messages, body.get("tools"), entry_started=started)
                 turn = upstream_turn(messages, declared, body.get("tools"))
                 name = "relay:" + CONFIG["upstream"]["model"]
             except UpstreamError as exc:
@@ -1216,6 +2183,10 @@ class Handler(BaseHTTPRequestHandler):
                 "prompt": subject(messages)[:400],
                 "reply": (turn.get("text") or "")[:400],
                 "tools": [c.get("name") for c in (turn.get("tool_calls") or [])],
+                # Real when it came from an upstream, absent when the answer
+                # was scripted — a demo should never be able to mistake a
+                # synthetic number for a bill.
+                "usage": turn.get("usage"),
                 "error": None})
 
         log("%s %s model=%s stream=%s turns=%d -> rule '%s'%s" % (
@@ -1299,6 +2270,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
         self.send_header("Connection", "close")
+        self.vendor_headers(200)
         self.end_headers()
         self.close_connection = True
 
@@ -1321,6 +2293,9 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     log("listening on http://localhost:%d" % PORT)
     log("script: %s (%d rules)" % (SCRIPT_PATH, len(SCRIPT.get("rules", []))))
+    ensure_suite_file()
+    log("suite:  %s (%d case(s), %d plan(s))"
+        % (SUITE_PATH, len(CONFIG.get("tests", [])), len(CONFIG.get("plans", []))))
     up, routing = CONFIG["upstream"], CONFIG["routing"]
     log("default: %s%s" % (routing["default"],
         ("  (%d model(s) routed individually)" % len(routing["models"])) if routing["models"] else ""))
@@ -1332,8 +2307,7 @@ def main():
             log("          no upstream key set — the upstream will almost certainly refuse")
     else:
         log("upstream: none — scripted answers only, nothing leaves this machine")
-    log("console: http://localhost:%d/ui%s"
-        % (PORT, ("  (sign in as %s)" % UI_USER) if UI_AUTH else "  (no sign-in)"))
+    log("console: http://localhost:%d/ui" % PORT)
     for name in sorted(API_KEYS):
         log("  %-9s http://localhost:%d/%s   key %s" % (name, PORT, name, API_KEYS[name]))
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()

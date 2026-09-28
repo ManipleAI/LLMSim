@@ -133,7 +133,81 @@ out as a control plane:
 | **Models** | Every model the simulator advertises. Pick one to set what it answers — fixed text, a failure status, a delay — and where its traffic goes. |
 | **Routing** | The default route, and the upstream everything relayed goes to. |
 | **Logs** | Every request as it arrives: model, route taken, what was asked, what came back, how long it took. |
+| **Test Execution** | Functional test cases that drive the simulator to check the **caller**. |
 | **Integrations** | Empty for now. |
+
+### Test Execution
+
+The simulator answers; these check that whatever is calling it behaves. A
+case is an ordered list of steps, each one a prompt in and an expectation
+about what comes back — so an agent loop is written as the sequence it
+actually is:
+
+```
+Code generation: writes the file it was asked for     claude-sonnet-5
+  1  Create a file called HELLO.md...  → calls Write, says "create"
+  2  HELLO.md written, 1 line.         → contains "HELLO.md is written"
+     (sent as tool output)
+```
+
+**Tick "sent as tool output" for a step that is a tool reporting back rather
+than a person speaking.** It matters more than it looks: `subject()`
+deliberately ignores tool output when deciding what a conversation is about,
+so an agent loop keeps the rule its opening ask chose. A step sent as plain
+user text reads as a new question and pulls the conversation elsewhere —
+which is exactly how the two-step case above failed the first time it was
+written.
+
+Six cases ship, and they pass on a fresh install:
+
+| | |
+|---|---|
+| Code generation | Writes the file it was asked for, then reports it done |
+| Code generation, OpenAI-shaped | The same ask from an agent declaring `exec_command` rather than `Write` — the harness follows the caller, not one vendor's spelling |
+| Planning | Asks for `SAP.Invoice.Read` and files a dependency **rather than inventing invoice data** — and asserts no currency figure appears anywhere, in the answer or in a tool call |
+| Back-pressure, 429 | The caller is handed a rate limit |
+| Back-pressure, 529 | The vendor is overloaded |
+| Patience | An eight-second answer must not be abandoned |
+
+#### What a step can assert
+
+All of these are optional and they compose.
+
+| | |
+|---|---|
+| **Text** | `contains`, `regex` or `equals` against the answer. |
+| **Tool** | A tool the caller was offered and should have called. |
+| **Tool arguments** | `file_path=HELLO.md`, one per line, by dotted path (`edits.0.new_string`). This is usually the real question: *"Write was called"* passes just as happily when the agent writes to `/tmp`. |
+| **HTTP status** | So *"this key is over its quota and must answer 429"* is a test rather than a note. |
+| **Must NOT contain** | The one that can only be a negative. *"Never invents a figure it could not read"* has no positive form, and an agent that answers with a total it could not have fetched looks like success. Checked against the answer **and every tool argument** — a made-up number inside a `Bash` command is just as fabricated. |
+| **Must NOT be called** | A tool the step forbids. Blocked on a capability it does not hold, an agent should stop rather than reach for the shell again. |
+| **Answer within (ms)** | A deadline. The `llmsim:slow` case proves a late answer still arrives; this is the other half — a path that is meant to be quick staying quick, which is what regresses silently. |
+
+Steps run **in order, in one conversation**, and stop at the first failure,
+because a later step normally assumes the one before it worked.
+
+#### Plans
+
+A plan is an **ordered** list of cases, run and reported together. Order is
+information: put the quick cases first, so a run that is going to fail fails
+early. Add, remove and reorder on the page; a new plan starts empty.
+
+#### Where a suite lives
+
+Cases and plans are written to **`llmsim.tests.json`**, beside the code and
+**not** gitignored — commit it, review it in a diff, put it on a branch. It
+is the one file here meant to be shared; `llmsim.config.json` stays
+machine-local because it holds the upstream key.
+
+**Export** downloads that file; **Import** takes one somebody else wrote,
+merging into yours by default (an id that already exists is updated, so
+re-importing an edited suite does not double it) or replacing it outright if
+you say so.
+
+Cases execute against this server over HTTP on the real vendor routes, with
+the real keys — not through a shortcut into the internals. The point is to
+exercise the whole path the caller uses, so that a passing test means the
+caller's own request would have worked.
 
 ### A model's own answer
 
@@ -153,12 +227,12 @@ A status becomes that vendor's own error envelope, so a client's retry and
 backoff handling is exercised rather than bypassed. Leave a model unset and
 it falls through to the script exactly as before.
 
-Sign-in is `Admin` / `Admin`, changed with `LLMSIM_UI_USER` and
-`LLMSIM_UI_PASSWORD`, or switched off entirely with `LLMSIM_UI_AUTH=off`.
-On by default even on localhost, for one reason: this console can point every
-model at a real upstream and spend real money, which is not a thing to leave
-open by accident. The upstream key is never sent to the browser — the page is
-told whether one is stored, and nothing more.
+There is no sign-in. This runs on a developer's machine or a test box, holds
+nothing worth taking, and a password in front of it was friction on the one
+path everybody uses — the same posture the vendor endpoints already have,
+since their keys are published in this file. Bind the port somewhere
+reachable and the console is reachable too. The upstream key is still never
+sent to the browser: the page is told whether one is stored, and no more.
 
 ## Two modes: scripted, or one real model behind every name
 
@@ -241,13 +315,36 @@ docker compose up --build
 Serves on the same port, with `responses.json` bind-mounted so edits take
 effect on restart without a rebuild.
 
+## Fidelity
+
+How closely the vendors are imitated, set in the console or in
+`llmsim.config.json`. Each is separate because each carries different risk to
+a setup that currently works.
+
+| | Default | |
+|---|---|---|
+| `validate` | on | Refuses a malformed request the way the vendor does — missing `max_tokens`, empty `messages`, an invalid role. A simulator that answers 200 to a bad request is worse than none: the client passes here and fails in production. |
+| `limits` | on | Enforces each model's context window and maximum output. |
+| `headers` | on | `request-id`, the rate-limit trio, and **`retry-after` on a 429** — without which a 429 is a dead end and every backoff is a guess. |
+| `unknownModel` | **off** | 404s a model that is not in the catalogue. Off deliberately: a gateway may route an upstream name this list has never heard of — Maniple's own sends `claude-sonnet-4-5` — so turning it on without checking breaks a working deployment. |
+
+Responses carry what a real one carries: Anthropic's `cache_creation_input_tokens`
+and `cache_read_input_tokens`, OpenAI's `system_fingerprint`, `service_tier`,
+`logprobs`, `refusal` and the `*_tokens_details` breakdowns, and the Responses
+envelope's `reasoning`, `previous_response_id`, `tool_choice` and the rest —
+absent as `null` rather than missing, so a client that tests for the key can
+tell the difference.
+
 ## Limits, stated plainly
 
-- **Token counts are synthetic.** Roughly four characters per token. Cost
-  and budget arithmetic can be exercised, but the numbers are not the
-  vendors' numbers. Real accounting is the one thing a simulator cannot
-  honestly provide, and rounding that off would make cost tests lie rather
-  than fail.
+- **Token counts are synthetic** when the answer is scripted — roughly four
+  characters per token. Cost arithmetic can be exercised, but the numbers are
+  not the vendors'. In **relay** mode the upstream's own counts are carried
+  through instead and shown in the log, because those really were billed.
+- **Streaming in relay mode is real.** The upstream is asked for a stream and
+  its deltas are forwarded as they land, re-framed for whatever format the
+  client asked in — so the pauses are the model's. Scripted answers still
+  stream from a finished turn, which is the right shape and a made-up rhythm.
 - **It has no idea what it is saying.** Answers are scripted. It proves a
   pipeline carries a response of a given shape; it proves nothing about
   whether a model would produce that response.

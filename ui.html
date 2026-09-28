@@ -542,7 +542,8 @@ function renderCase() {
 
     <div class="card">
       <h2>Steps</h2>
-      <p class="help">Run in order, in one conversation, and stopped at the first failure — a later step usually assumes the one before it worked.</p>
+      <p class="help">Run in order, in one conversation, and stopped at the first failure — a later step usually assumes the one before it worked.
+        Tick <b>sent as tool output</b> for a step that is a tool reporting back rather than a person speaking: that is what comes next in a real agent loop, and it keeps the conversation on the rule its opening ask chose.</p>
       <div id="steps">${(t.steps || []).map(stepRow).join("")}</div>
       <button class="btn ghost" style="margin-top:12px" onclick="addStep()">Add step</button>
     </div>
@@ -561,7 +562,11 @@ function renderCase() {
 const stepRow = (s, i) => `
   <div class="step" style="border:1px solid var(--border-soft); border-radius:8px; padding:12px; margin-top:10px">
     <div style="display:flex; align-items:center; gap:8px">
-      <span class="tag">step ${i + 1}</span><span style="flex:1"></span>
+      <span class="tag">step ${i + 1}</span>
+      <label style="margin:0; display:flex; align-items:center; gap:6px; font-size:11.5px">
+        <input type="checkbox" class="s-tr" style="width:auto" ${s.asToolResult ? "checked" : ""}> sent as tool output
+      </label>
+      <span style="flex:1"></span>
       <button class="btn ghost" style="padding:3px 9px; font-size:11px" onclick="dropStep(${i})">Remove</button>
     </div>
     <label>Input prompt</label>
@@ -607,6 +612,7 @@ function collectCase() {
       expect: row.querySelector(".s-expect").value,
       match: row.querySelector(".s-match").value,
     };
+    if (row.querySelector(".s-tr").checked) step.asToolResult = true;
     const tool = row.querySelector(".s-tool").value.trim();
     const status = row.querySelector(".s-status").value.trim();
     if (tool) step.expectTool = tool;

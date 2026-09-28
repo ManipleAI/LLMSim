@@ -186,8 +186,83 @@ DEFAULTS = {
     #               "expectTool": "Write", "expectStatus": 200}]}
     #
     # A plan is a named list of case ids, run together and reported together.
-    "tests": [],
-    "plans": [],
+    # Shipped with real cases rather than empty, because an empty harness
+    # teaches nothing about how to write one. Every case below asserts
+    # something responses.json actually does, so a fresh install opens on a
+    # suite that passes — and each one is a thing a coding agent is expected
+    # to get right.
+    "tests": [
+        {
+            "id": "codegen", "name": "Code generation: writes the file it was asked for",
+            "provider": "anthropic", "model": "claude-sonnet-5",
+            "tools": [{"name": "Write", "input_schema": {"type": "object", "properties": {
+                "file_path": {"type": "string"}, "content": {"type": "string"}}}}],
+            "steps": [
+                {"input": "Create a file called HELLO.md with a one-line heading.",
+                 "expect": "create", "match": "contains", "expectTool": "Write"},
+                # Sent as tool output, because that is what comes back next
+                # in a real loop — the file was written, and the agent reads
+                # the result rather than being asked a fresh question.
+                {"input": "HELLO.md written, 1 line.", "asToolResult": True,
+                 "expect": "HELLO.md is written", "match": "contains"},
+            ],
+        },
+        {
+            "id": "codegen-openai", "name": "Code generation: the same ask, an OpenAI-shaped agent",
+            "provider": "openai", "model": "gpt-5.4",
+            # A different agent declares a different tool for the same job.
+            # The case exists to prove the harness follows the caller rather
+            # than one vendor's spelling.
+            "tools": [{"type": "function", "function": {"name": "exec_command", "parameters": {
+                "type": "object", "properties": {"cmd": {"type": "string"}}}}}],
+            "steps": [
+                {"input": "Create a file called HELLO.md with a one-line heading.",
+                 "expect": "file", "match": "contains", "expectTool": "exec_command"},
+            ],
+        },
+        {
+            "id": "plan-first", "name": "Planning: asks for a capability instead of inventing data",
+            "provider": "anthropic", "model": "claude-sonnet-5",
+            "tools": [{"name": "Bash", "input_schema": {"type": "object", "properties": {
+                "command": {"type": "string"}}}}],
+            # The one worth having. An agent that fabricates invoice figures
+            # when it cannot reach SAP looks successful and is the worst
+            # outcome the whole platform exists to prevent.
+            "steps": [
+                {"input": "Reconcile this invoice against the SAP three-way match.",
+                 "expect": "SAP.Invoice.Read", "match": "contains", "expectTool": "Bash"},
+                {"input": "granted-capabilities.json: []", "asToolResult": True,
+                 "expect": "file the request", "match": "contains"},
+                {"input": "request filed: DEP-118", "asToolResult": True,
+                 "expect": "rather than invent", "match": "contains"},
+            ],
+        },
+        {
+            "id": "rate-limited", "name": "Back-pressure: the caller is handed a 429",
+            "provider": "anthropic", "model": "claude-sonnet-5",
+            "steps": [{"input": "llmsim:429 summarise this repository",
+                       "expectStatus": 429, "expect": "rate limit", "match": "contains"}],
+        },
+        {
+            "id": "overloaded", "name": "Back-pressure: the vendor is overloaded (529)",
+            "provider": "anthropic", "model": "claude-sonnet-5",
+            "steps": [{"input": "llmsim:529 summarise this repository", "expectStatus": 529}],
+        },
+        {
+            "id": "slow", "name": "Patience: a slow answer must not be abandoned",
+            "provider": "anthropic", "model": "claude-sonnet-5",
+            # Eight seconds, on purpose. A caller that gives up early passes
+            # every other case here and fails a real session.
+            "steps": [{"input": "llmsim:slow refactor this module",
+                       "expect": "eight seconds", "match": "contains"}],
+        },
+    ],
+    "plans": [
+        {"id": "agent", "name": "Coding agent — functional",
+         "testIds": ["codegen", "codegen-openai", "plan-first", "rate-limited", "overloaded", "slow"]},
+        {"id": "quick", "name": "Quick check (no slow case)",
+         "testIds": ["codegen", "plan-first", "rate-limited"]},
+    ],
     "upstream": {
         "url": os.environ.get("LLMSIM_UPSTREAM", "").rstrip("/"),
         "key": os.environ.get("LLMSIM_UPSTREAM_KEY", ""),
@@ -489,7 +564,22 @@ def run_case(case):
     # rather than a fresh one — which is the whole point of a multi-step case.
     messages, steps = [], []
     for step in case.get("steps") or []:
-        messages.append({"role": "user", "content": step.get("input") or ""})
+        # A step is either a person speaking or a tool reporting back, and the
+        # difference decides which rule answers it.
+        #
+        # subject() deliberately ignores tool output when it works out what a
+        # conversation is about, so that an agent loop keeps the rule its
+        # opening ask chose rather than being re-matched against whatever a
+        # tool printed. A harness that could only send plain user text
+        # therefore could not model a loop at all: step two would look like a
+        # new question and pull the conversation into a different rule. Found
+        # exactly that way — a two-step code-generation case failed on its
+        # second step for no reason visible in the case.
+        if step.get("asToolResult"):
+            messages.append({"role": "user", "content": [
+                {"type": "tool_result", "content": step.get("input") or ""}]})
+        else:
+            messages.append({"role": "user", "content": step.get("input") or ""})
         at = time.time()
         status, body = _self_request(provider, model, messages, tools)
         answer, called = _answer_of(body)

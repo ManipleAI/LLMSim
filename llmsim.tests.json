@@ -1,0 +1,191 @@
+{
+  "version": 1,
+  "_": "LLMSim test cases and plans. Commit this; llmsim.config.json is machine-local.",
+  "tests": [
+    {
+      "id": "codegen",
+      "name": "Code generation: writes the file it was asked for",
+      "provider": "anthropic",
+      "model": "claude-sonnet-5",
+      "tools": [
+        {
+          "name": "Write",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "file_path": {
+                "type": "string"
+              },
+              "content": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ],
+      "steps": [
+        {
+          "input": "Create a file called HELLO.md with a one-line heading.",
+          "expect": "create",
+          "match": "contains",
+          "expectTool": "Write",
+          "expectToolArgs": {
+            "file_path": "HELLO.md",
+            "content": "#"
+          }
+        },
+        {
+          "input": "HELLO.md written, 1 line.",
+          "asToolResult": true,
+          "expect": "HELLO.md is written",
+          "match": "contains"
+        }
+      ]
+    },
+    {
+      "id": "codegen-openai",
+      "name": "Code generation: the same ask, an OpenAI-shaped agent",
+      "provider": "openai",
+      "model": "gpt-5.4",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "exec_command",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "cmd": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "steps": [
+        {
+          "input": "Create a file called HELLO.md with a one-line heading.",
+          "expect": "file",
+          "match": "contains",
+          "expectTool": "exec_command",
+          "expectToolArgs": {
+            "cmd": "HELLO.md"
+          }
+        }
+      ]
+    },
+    {
+      "id": "plan-first",
+      "name": "Planning: asks for a capability instead of inventing data",
+      "provider": "anthropic",
+      "model": "claude-sonnet-5",
+      "tools": [
+        {
+          "name": "Bash",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "command": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ],
+      "steps": [
+        {
+          "input": "Reconcile this invoice against the SAP three-way match.",
+          "expect": "SAP.Invoice.Read",
+          "match": "contains",
+          "expectTool": "Bash",
+          "expectToolArgs": {
+            "command": "granted-capabilities"
+          },
+          "reject": "[$\u20ac\u00a3]\\s*[0-9]",
+          "rejectMatch": "regex"
+        },
+        {
+          "input": "granted-capabilities.json: []",
+          "asToolResult": true,
+          "expect": "file the request",
+          "match": "contains",
+          "reject": "[$\u20ac\u00a3]\\s*[0-9]",
+          "rejectMatch": "regex"
+        },
+        {
+          "input": "request filed: DEP-118",
+          "asToolResult": true,
+          "expect": "rather than invent",
+          "match": "contains",
+          "rejectTool": "Bash",
+          "reject": "[$\u20ac\u00a3]\\s*[0-9]",
+          "rejectMatch": "regex"
+        }
+      ]
+    },
+    {
+      "id": "rate-limited",
+      "name": "Back-pressure: the caller is handed a 429",
+      "provider": "anthropic",
+      "model": "claude-sonnet-5",
+      "steps": [
+        {
+          "input": "llmsim:429 summarise this repository",
+          "expectStatus": 429,
+          "expect": "rate limit",
+          "match": "contains",
+          "maxMs": 2000
+        }
+      ]
+    },
+    {
+      "id": "overloaded",
+      "name": "Back-pressure: the vendor is overloaded (529)",
+      "provider": "anthropic",
+      "model": "claude-sonnet-5",
+      "steps": [
+        {
+          "input": "llmsim:529 summarise this repository",
+          "expectStatus": 529
+        }
+      ]
+    },
+    {
+      "id": "slow",
+      "name": "Patience: a slow answer must not be abandoned",
+      "provider": "anthropic",
+      "model": "claude-sonnet-5",
+      "steps": [
+        {
+          "input": "llmsim:slow refactor this module",
+          "expect": "eight seconds",
+          "match": "contains"
+        }
+      ]
+    }
+  ],
+  "plans": [
+    {
+      "id": "agent",
+      "name": "Coding agent \u2014 functional",
+      "testIds": [
+        "codegen",
+        "codegen-openai",
+        "plan-first",
+        "rate-limited",
+        "overloaded",
+        "slow"
+      ]
+    },
+    {
+      "id": "quick",
+      "name": "Quick check (no slow case)",
+      "testIds": [
+        "codegen",
+        "plan-first",
+        "rate-limited"
+      ]
+    }
+  ]
+}

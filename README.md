@@ -164,18 +164,45 @@ Six cases ship, and they pass on a fresh install:
 |---|---|
 | Code generation | Writes the file it was asked for, then reports it done |
 | Code generation, OpenAI-shaped | The same ask from an agent declaring `exec_command` rather than `Write` — the harness follows the caller, not one vendor's spelling |
-| Planning | Asks for `SAP.Invoice.Read` and files a dependency **rather than inventing invoice data** |
+| Planning | Asks for `SAP.Invoice.Read` and files a dependency **rather than inventing invoice data** — and asserts no currency figure appears anywhere, in the answer or in a tool call |
 | Back-pressure, 429 | The caller is handed a rate limit |
 | Back-pressure, 529 | The vendor is overloaded |
 | Patience | An eight-second answer must not be abandoned |
 
-A step can assert on the text (`contains`, `regex`, `equals`), on a tool the
-caller was offered and should have called, or on the HTTP status — so "this
-model is over its quota and must answer 429" is a test rather than a note.
+#### What a step can assert
+
+All of these are optional and they compose.
+
+| | |
+|---|---|
+| **Text** | `contains`, `regex` or `equals` against the answer. |
+| **Tool** | A tool the caller was offered and should have called. |
+| **Tool arguments** | `file_path=HELLO.md`, one per line, by dotted path (`edits.0.new_string`). This is usually the real question: *"Write was called"* passes just as happily when the agent writes to `/tmp`. |
+| **HTTP status** | So *"this key is over its quota and must answer 429"* is a test rather than a note. |
+| **Must NOT contain** | The one that can only be a negative. *"Never invents a figure it could not read"* has no positive form, and an agent that answers with a total it could not have fetched looks like success. Checked against the answer **and every tool argument** — a made-up number inside a `Bash` command is just as fabricated. |
+| **Must NOT be called** | A tool the step forbids. Blocked on a capability it does not hold, an agent should stop rather than reach for the shell again. |
+| **Answer within (ms)** | A deadline. The `llmsim:slow` case proves a late answer still arrives; this is the other half — a path that is meant to be quick staying quick, which is what regresses silently. |
 
 Steps run **in order, in one conversation**, and stop at the first failure,
-because a later step normally assumes the one before it worked. A **plan** is
-a named set of cases, run and reported together.
+because a later step normally assumes the one before it worked.
+
+#### Plans
+
+A plan is an **ordered** list of cases, run and reported together. Order is
+information: put the quick cases first, so a run that is going to fail fails
+early. Add, remove and reorder on the page; a new plan starts empty.
+
+#### Where a suite lives
+
+Cases and plans are written to **`llmsim.tests.json`**, beside the code and
+**not** gitignored — commit it, review it in a diff, put it on a branch. It
+is the one file here meant to be shared; `llmsim.config.json` stays
+machine-local because it holds the upstream key.
+
+**Export** downloads that file; **Import** takes one somebody else wrote,
+merging into yours by default (an id that already exists is updated, so
+re-importing an edited suite does not double it) or replacing it outright if
+you say so.
 
 Cases execute against this server over HTTP on the real vendor routes, with
 the real keys — not through a shortcut into the internals. The point is to

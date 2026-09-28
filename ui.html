@@ -82,6 +82,9 @@
   .card + .card { margin-top:16px; }
   .card h2 { font:600 10px/1 var(--mono); letter-spacing:.14em; text-transform:uppercase; color:var(--muted); margin:0 0 5px; }
   .card p.help { color:var(--muted); font-size:12.5px; margin:0 0 14px; }
+  /* A label's second half: what the field is for, in the label rather than
+     in a paragraph nobody reads twice. */
+  label .hint { color:var(--faint); font-weight:400; text-transform:none; letter-spacing:0; }
 
   label { display:block; font-size:12px; color:var(--muted); margin:12px 0 5px; }
   input[type=text], input[type=password], input[type=number], select, textarea {
@@ -290,8 +293,12 @@
   <!-- ── Test Execution ─────────────────────────────────────────────── -->
   <section class="view" id="v-tests" hidden>
     <div class="head">
-      <div><h1>Test Execution</h1><p>Drive the simulator to check the caller. A case is a sequence of steps, run in order.</p></div>
+      <div><h1>Test Execution</h1><p>Drive the simulator to check the caller. A case is a sequence of steps, run in order.
+        Cases and plans are saved to <span class="mono">llmsim.tests.json</span> — commit it, or hand it over with Export.</p></div>
       <span class="spacer"></span>
+      <button class="btn ghost" onclick="exportSuite()">Export</button>
+      <button class="btn ghost" onclick="document.getElementById('importfile').click()">Import</button>
+      <input type="file" id="importfile" accept="application/json,.json" hidden onchange="importSuite(this)">
       <button class="btn ghost" onclick="newCase()">New case</button>
       <button class="btn" onclick="runAll()" id="runall">Run all</button>
     </div>
@@ -329,7 +336,7 @@
 
 <script>
 let CFG = null, MODELS = {}, ALL = [], REQS = [], SINCE = 0, VIEW = "models", PICKED = null;
-let CASE = null, RUN = null, RUNNING = false;
+let CASE = null, PLAN = null, RUN = null, RUNNING = false;
 
 // Built from the origin rather than used as a relative path: opening this as
 // http://user:pass@host/ui makes every relative fetch throw, and the page
@@ -362,6 +369,16 @@ async function load() {
   if (!PICKED) PICKED = ALL[0];
   renderChrome(); renderList(); renderDetail(); renderRouting(); renderLogs(); renderTests();
 }
+
+// The state poll repaints every panel every 1.5 seconds, which is right for
+// a log and wrong for a form: a panel rebuilt under someone's hands throws
+// away the half-typed field and the caret with it. So a panel holding the
+// focus is left alone until the focus leaves it.
+const editing = (sel) => {
+  const el = document.querySelector(sel);
+  const at = document.activeElement;
+  return !!(el && at && at !== document.body && el.contains(at));
+};
 
 function renderChrome() {
   const routed = Object.keys(CFG.routing.models).length;
@@ -397,7 +414,7 @@ function renderList() {
 const pick = (m) => { PICKED = m; renderList(); renderDetail(); };
 
 function renderDetail() {
-  if (!PICKED) return;
+  if (!PICKED || editing("#detail")) return;
   const m = PICKED, r = CFG.routing.models[m] || "", fixed = (CFG.responses || {})[m] || {};
   document.getElementById("detail").innerHTML = `
     <div class="card">
@@ -532,8 +549,12 @@ const tests = () => CFG.tests || [];
 const plans = () => CFG.plans || [];
 const lastFor = (id) => (RUN ? (RUN.results || []).find((r) => r.id === id) : null);
 
-function renderTests() {
-  if (!CASE && tests().length) CASE = tests()[0].id;
+// `force` is what the user just did; the bare call is the 1.5s poll. Only
+// the poll defers to the focus guard — a run whose results never appeared
+// because the Run button still had focus would be a worse bug than the one
+// the guard fixes.
+function renderTests(force) {
+  if (!CASE && !PLAN && tests().length) CASE = tests()[0].id;
   document.getElementById("caselist").innerHTML = tests().map((t) => {
     const r = lastFor(t.id);
     const tag = r ? `<span class="tag ${r.status === "passed" ? "set" : "err"}">${r.status === "passed" ? "pass" : "fail"}</span>` : "";
@@ -543,12 +564,90 @@ function renderTests() {
   }).join("") || '<div class="empty" style="padding:18px">No cases yet.</div>';
 
   document.getElementById("planlist").innerHTML = plans().map((p) =>
-    `<button class="item" onclick="runPlan('${p.id}')">
+    `<button class="item" aria-current="${p.id === PLAN}" onclick="pickPlan('${p.id}')">
       <span class="nm" style="font-family:inherit">${esc(p.name || p.id)}</span>
       <span class="tag">${(p.testIds || []).length}</span></button>`
   ).join("") || '<div class="empty" style="padding:14px">No plans yet.</div>';
 
-  renderCase();
+  if (!force && editing("#testdetail")) return;    // someone is typing in it
+  if (PLAN) renderPlan(); else renderCase();
+}
+
+// Selecting one puts the other down: the panel to the right shows a case or
+// a plan, never both. (pickCase was referenced by the list and never
+// defined, so clicking a case threw and the panel stayed on whatever was
+// selected first.)
+function pickCase(id) { CASE = id; PLAN = null; renderTests(true); }
+function pickPlan(id) { PLAN = id; renderTests(true); }
+
+// ── Plans ─────────────────────────────────────────────────────────────────
+//
+// A plan is an ordered list, and order is information: the quick cases
+// first, the eight-second one last, so a run that is going to fail usually
+// fails early. It was previously created by a browser prompt() containing
+// every case and could never be changed afterwards — which made the order
+// an accident and the membership a guess.
+function renderPlan() {
+  const el = document.getElementById("testdetail");
+  const p = plans().find((x) => x.id === PLAN);
+  if (!p) { PLAN = null; return renderCase(); }
+  const ids = p.testIds || [];
+  const members = ids.map((id) => tests().find((t) => t.id === id)).filter(Boolean);
+  const rest = tests().filter((t) => !ids.includes(t.id));
+
+  el.innerHTML = `
+    <div class="card">
+      <h2>Plan</h2>
+      <label for="p-name">Name</label>
+      <input id="p-name" type="text" value="${esc(p.name || "")}" onchange="renamePlan()" placeholder="What this run covers">
+      <p class="help" style="margin-top:14px">Runs in this order and reports together. Put the quick cases first: a plan that is going to fail is better off failing early.</p>
+      ${members.map((t, i) => `
+        <div style="display:flex; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid var(--border-soft)">
+          <span class="tag">${i + 1}</span>
+          <span style="flex:1">${esc(t.name || t.id)}</span>
+          <button class="btn ghost" style="padding:3px 8px" onclick="movePlan(${i}, -1)" ${i === 0 ? "disabled" : ""} aria-label="Move up">↑</button>
+          <button class="btn ghost" style="padding:3px 8px" onclick="movePlan(${i}, 1)" ${i === members.length - 1 ? "disabled" : ""} aria-label="Move down">↓</button>
+          <button class="btn ghost" style="padding:3px 9px; font-size:11px" onclick="dropFromPlan(${i})">Remove</button>
+        </div>`).join("") || '<div class="empty" style="padding:14px">Nothing in this plan yet.</div>'}
+      ${rest.length ? `<label for="p-add" style="margin-top:14px">Add a case</label>
+        <select id="p-add" onchange="addToPlan(this.value)">
+          <option value="">Choose a case…</option>
+          ${rest.map((t) => `<option value="${esc(t.id)}">${esc(t.name || t.id)}</option>`).join("")}
+        </select>` : ""}
+      <div style="display:flex; gap:9px; align-items:center; margin-top:16px">
+        <button class="btn" onclick="runPlan('${p.id}')" ${ids.length ? "" : "disabled"}>Run plan</button>
+        <button class="btn ghost" onclick="deletePlan('${p.id}')" style="color:var(--primary)">Delete</button>
+        <span id="testsaved" style="font-size:12px"></span>
+      </div>
+    </div>
+    ${RUN && RUN.label === (p.name || p.id) ? `<div class="card"><h2>Last run</h2>
+      <p class="help">${RUN.passed} passed, ${RUN.failed} failed · ${RUN.ms}ms</p>
+      ${RUN.results.map((r) => `<div style="display:flex; gap:9px; align-items:center; padding:6px 0">
+        <span class="tag ${r.status === "passed" ? "set" : "err"}">${esc(r.status)}</span>
+        <span style="flex:1">${esc(r.name)}</span>
+        <span style="color:var(--muted); font-size:12px">${r.ran}/${r.total} · ${r.ms}ms</span></div>`).join("")}
+    </div>` : ""}`;
+}
+
+const savePlans = (rows) => post({ plans: rows }, "testsaved").then(() => renderTests(true));
+const withPlan = (fn) => savePlans(plans().map((p) => (p.id === PLAN ? fn({ ...p, testIds: [...(p.testIds || [])] }) : p)));
+
+function renamePlan() {
+  const name = document.getElementById("p-name").value.trim();
+  withPlan((p) => ({ ...p, name: name || p.id }));
+}
+function addToPlan(id) { if (id) withPlan((p) => { p.testIds.push(id); return p; }); }
+function dropFromPlan(i) { withPlan((p) => { p.testIds.splice(i, 1); return p; }); }
+function movePlan(i, by) {
+  withPlan((p) => {
+    const [row] = p.testIds.splice(i, 1);
+    p.testIds.splice(i + by, 0, row);
+    return p;
+  });
+}
+function deletePlan(id) {
+  PLAN = null;
+  savePlans(plans().filter((p) => p.id !== id));
 }
 
 function renderCase() {
@@ -612,8 +711,34 @@ const stepRow = (s, i) => `
       </select></div>
       <div><label>Tool called</label><input class="s-tool mono" type="text" value="${esc(s.expectTool || "")}" placeholder="none"></div>
       <div><label>HTTP status</label><input class="s-status mono" type="number" value="${s.expectStatus || ""}" placeholder="200"></div>
+      <div><label>Answer within (ms)</label><input class="s-ms mono" type="number" value="${s.maxMs || ""}" placeholder="no deadline"></div>
     </div>
+    <label>Arguments that tool must carry <span class="hint">one per line, <span class="mono">path=text</span> — <span class="mono">file_path=HELLO.md</span>, <span class="mono">edits.0.new_string=return</span></span></label>
+    <textarea class="s-args mono" style="min-height:40px" placeholder="Proves it wrote the right file, not just that it called Write">${esc(argLines(s.expectToolArgs))}</textarea>
+    <div class="row">
+      <div><label>Argument match</label><select class="s-argmatch">
+        ${["contains", "regex", "equals"].map((m) => `<option ${m === (s.argMatch || "contains") ? "selected" : ""}>${m}</option>`).join("")}
+      </select></div>
+      <div><label>Tool that must NOT be called</label><input class="s-rtool mono" type="text" value="${esc(s.rejectTool || "")}" placeholder="none"></div>
+      <div><label>Rejection match</label><select class="s-rmatch">
+        ${["contains", "regex", "equals"].map((m) => `<option ${m === (s.rejectMatch || "contains") ? "selected" : ""}>${m}</option>`).join("")}
+      </select></div>
+    </div>
+    <label>What the answer must NOT contain</label>
+    <textarea class="s-reject mono" style="min-height:40px" placeholder="&quot;Never invents a figure it could not read&quot; is only sayable here">${esc(s.reject || "")}</textarea>
   </div>`;
+
+// path=value lines, both ways. A table of two boxes per argument would be
+// more clicking for the same information.
+const argLines = (o) => Object.entries(o || {}).map(([k, v]) => k + "=" + v).join("\n");
+function argObject(text) {
+  const out = {};
+  for (const line of (text || "").split("\n")) {
+    const at = line.indexOf("=");
+    if (at > 0) out[line.slice(0, at).trim()] = line.slice(at + 1).trim();
+  }
+  return Object.keys(out).length ? out : null;
+}
 
 function resultBlock(r) {
   return `<div style="margin-top:16px; border-top:1px solid var(--border-soft); padding-top:14px">
@@ -625,6 +750,7 @@ function resultBlock(r) {
       <div style="border-left:3px solid ${s.ok ? "var(--green)" : "var(--primary)"}; padding:3px 0 3px 11px; margin-bottom:10px">
         <div style="font-size:12px; color:var(--muted)">step ${i + 1} · ${s.ok ? "passed" : "failed"} · ${s.ms}ms · HTTP ${s.status}</div>
         <div class="mono" style="margin:3px 0">${esc(s.input)}</div>
+        ${(s.calls || []).map((c) => `<div class="mono" style="font-size:11.5px; color:var(--muted)">→ ${esc(c.name)}(${esc(JSON.stringify(c.input))})</div>`).join("")}
         <div style="font-size:12px; color:${s.ok ? "var(--green)" : "var(--primary)"}">${esc(s.why)}</div>
         <div class="mono" style="font-size:11.5px; color:var(--faint); margin-top:3px">${esc(s.answer)}</div>
       </div>`).join("")}
@@ -648,8 +774,16 @@ function collectCase() {
     if (row.querySelector(".s-tr").checked) step.asToolResult = true;
     const tool = row.querySelector(".s-tool").value.trim();
     const status = row.querySelector(".s-status").value.trim();
+    const ms = row.querySelector(".s-ms").value.trim();
+    const args = argObject(row.querySelector(".s-args").value);
+    const reject = row.querySelector(".s-reject").value.trim();
+    const rtool = row.querySelector(".s-rtool").value.trim();
     if (tool) step.expectTool = tool;
     if (status) step.expectStatus = Number(status);
+    if (ms) step.maxMs = Number(ms);
+    if (args) { step.expectToolArgs = args; step.argMatch = row.querySelector(".s-argmatch").value; }
+    if (reject) { step.reject = reject; step.rejectMatch = row.querySelector(".s-rmatch").value; }
+    if (rtool) step.rejectTool = rtool;
     return step;
   });
   return t;
@@ -659,32 +793,35 @@ async function saveCase() {
   const t = collectCase();
   if (!t) return;
   await post({ tests: tests().map((x) => (x.id === t.id ? t : x)) }, "testsaved");
-  renderTests();
+  renderTests(true);
 }
 function newCase() {
   const t = { id: uid("case"), name: "New case", provider: "anthropic", steps: [{ input: "", expect: "", match: "contains" }] };
-  CASE = t.id;
-  post({ tests: [...tests(), t] }).then(renderTests);
+  CASE = t.id; PLAN = null;
+  post({ tests: [...tests(), t] }).then(() => renderTests(true));
   show("tests");
 }
 function deleteCase(id) {
   CASE = null;
-  post({ tests: tests().filter((t) => t.id !== id) }).then(renderTests);
+  post({ tests: tests().filter((t) => t.id !== id) }).then(() => renderTests(true));
 }
 function addStep() {
   const t = collectCase(); if (!t) return;
   t.steps.push({ input: "", expect: "", match: "contains" });
-  post({ tests: tests().map((x) => (x.id === t.id ? t : x)) }).then(renderTests);
+  post({ tests: tests().map((x) => (x.id === t.id ? t : x)) }).then(() => renderTests(true));
 }
 function dropStep(i) {
   const t = collectCase(); if (!t) return;
   t.steps.splice(i, 1);
-  post({ tests: tests().map((x) => (x.id === t.id ? t : x)) }).then(renderTests);
+  post({ tests: tests().map((x) => (x.id === t.id ? t : x)) }).then(() => renderTests(true));
 }
 function newPlan() {
-  const name = prompt("Name this plan");
-  if (!name) return;
-  post({ plans: [...plans(), { id: uid("plan"), name, testIds: tests().map((t) => t.id) }] }).then(renderTests);
+  // Empty, and named on the page like everything else. A plan that arrives
+  // holding every case is a claim about what you meant to run.
+  const p = { id: uid("plan"), name: "New plan", testIds: [] };
+  PLAN = p.id;
+  post({ plans: [...plans(), p] }).then(() => renderTests(true));
+  show("tests");
 }
 
 async function execute(body, label) {
@@ -699,12 +836,49 @@ async function execute(body, label) {
     const out = await r.json().catch(() => ({}));
     if (!r.ok) { alert(out.error || "could not run"); return; }
     RUN = out;
-    renderTests();
+    renderTests(true);
   } finally {
     RUNNING = false;
     if (btn) { btn.disabled = false; btn.textContent = "Run all"; }
   }
 }
+// ── Taking a suite somewhere else ─────────────────────────────────────────
+//
+// The server already writes llmsim.tests.json beside the code, which covers
+// committing one. These two cover the other half: handing a suite to
+// somebody whose checkout is not yours.
+function exportSuite() {
+  const a = document.createElement("a");
+  a.href = api("/api/ui/suite");
+  a.download = "llmsim.tests.json";
+  a.click();
+}
+
+async function importSuite(input) {
+  const file = input.files && input.files[0];
+  input.value = "";                    // so the same file can be picked twice
+  if (!file) return;
+  let doc;
+  try { doc = JSON.parse(await file.text()); } catch { return alert("That file is not valid JSON."); }
+  const cases = (doc.tests || []).length, incoming = (doc.plans || []).length;
+  // Replace is destructive and offered second, because merge is what people
+  // mean when they open somebody else's suite.
+  const merge = confirm(
+    `Import ${cases} case(s) and ${incoming} plan(s)?\n\n` +
+    "OK merges them into yours, keeping what you have.\n" +
+    "Cancel replaces your suite entirely.");
+  if (!merge && !confirm("Replace your whole suite? This cannot be undone.")) return;
+  const r = await fetch(api("/api/ui/suite"), {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ tests: doc.tests || [], plans: doc.plans || [], mode: merge ? "merge" : "replace" }),
+  });
+  const out = await r.json().catch(() => ({}));
+  if (!r.ok) return alert(out.error || "could not import");
+  CASE = null; PLAN = null; RUN = null;
+  await load();
+  renderTests(true);
+}
+
 const runAll = () => execute({}, "all");
 const runOne = (id) => execute({ testIds: [id] });
 const runPlan = (id) => execute({ planId: id });

@@ -144,6 +144,16 @@ MODELS = {
 # afterwards survives a restart without the environment having to change.
 CONFIG_PATH = os.environ.get("LLMSIM_CONFIG", os.path.join(HERE, "llmsim.config.json"))
 
+# Test cases and plans are kept apart from the rest of the settings, in a
+# file that is NOT gitignored.
+#
+# llmsim.config.json is machine-local by design — it holds the upstream key —
+# and a suite that lives in it cannot be committed, reviewed or handed to
+# anybody, which undoes most of the reason for writing one. A suite is source:
+# it belongs beside the code it tests, in a diff, on a branch.
+SUITE_PATH = os.environ.get("LLMSIM_SUITE", os.path.join(HERE, "llmsim.tests.json"))
+SUITE_KEYS = ("tests", "plans")
+
 # The console has no sign-in.
 #
 # This is a simulator: it runs on a developer's machine or a test box, it
@@ -199,7 +209,15 @@ DEFAULTS = {
     #
     #   {"id": "...", "name": "...", "provider": "anthropic", "model": "...",
     #    "steps": [{"input": "...", "expect": "...", "match": "contains",
-    #               "expectTool": "Write", "expectStatus": 200}]}
+    #               "expectTool": "Write", "expectToolArgs": {"file_path": "x"},
+    #               "reject": "...", "rejectTool": "Bash",
+    #               "expectStatus": 200, "maxMs": 2000}]}
+    #
+    # expectToolArgs reaches into the call's own arguments by dotted path, so
+    # a test can prove the agent wrote the right file rather than merely that
+    # it called Write. reject and rejectTool are the negatives — "never
+    # invents a figure it could not read" is only sayable as something that
+    # must not appear. maxMs is a deadline.
     #
     # A plan is a named list of case ids, run together and reported together.
     # Shipped with real cases rather than empty, because an empty harness
@@ -215,7 +233,10 @@ DEFAULTS = {
                 "file_path": {"type": "string"}, "content": {"type": "string"}}}}],
             "steps": [
                 {"input": "Create a file called HELLO.md with a one-line heading.",
-                 "expect": "create", "match": "contains", "expectTool": "Write"},
+                 "expect": "create", "match": "contains", "expectTool": "Write",
+                 # The point of the case. "Write was called" passes just as
+                 # happily when the agent writes to /tmp.
+                 "expectToolArgs": {"file_path": "HELLO.md", "content": "#"}},
                 # Sent as tool output, because that is what comes back next
                 # in a real loop — the file was written, and the agent reads
                 # the result rather than being asked a fresh question.
@@ -233,7 +254,8 @@ DEFAULTS = {
                 "type": "object", "properties": {"cmd": {"type": "string"}}}}}],
             "steps": [
                 {"input": "Create a file called HELLO.md with a one-line heading.",
-                 "expect": "file", "match": "contains", "expectTool": "exec_command"},
+                 "expect": "file", "match": "contains", "expectTool": "exec_command",
+                 "expectToolArgs": {"cmd": "HELLO.md"}},
             ],
         },
         {
@@ -246,18 +268,31 @@ DEFAULTS = {
             # outcome the whole platform exists to prevent.
             "steps": [
                 {"input": "Reconcile this invoice against the SAP three-way match.",
-                 "expect": "SAP.Invoice.Read", "match": "contains", "expectTool": "Bash"},
+                 "expect": "SAP.Invoice.Read", "match": "contains", "expectTool": "Bash",
+                 "expectToolArgs": {"command": "granted-capabilities"},
+                 # The assertion that matters, and it can only be a negative:
+                 # an agent that answers with a total it could not have read
+                 # looks like success.
+                 "reject": r"[$€£]\s*[0-9]", "rejectMatch": "regex"},
                 {"input": "granted-capabilities.json: []", "asToolResult": True,
-                 "expect": "file the request", "match": "contains"},
+                 "expect": "file the request", "match": "contains",
+                 "reject": r"[$€£]\s*[0-9]", "rejectMatch": "regex"},
                 {"input": "request filed: DEP-118", "asToolResult": True,
-                 "expect": "rather than invent", "match": "contains"},
+                 "expect": "rather than invent", "match": "contains",
+                 # Blocked on a capability it does not hold, it must stop —
+                 # not reach for the shell again and find another way in.
+                 "rejectTool": "Bash", "reject": r"[$€£]\s*[0-9]", "rejectMatch": "regex"},
             ],
         },
         {
             "id": "rate-limited", "name": "Back-pressure: the caller is handed a 429",
             "provider": "anthropic", "model": "claude-sonnet-5",
+            # A refusal has no model work behind it, so it has no excuse to
+            # be slow. The deadline is the half the slow case cannot cover:
+            # a fast path quietly becoming slow is what regresses.
             "steps": [{"input": "llmsim:429 summarise this repository",
-                       "expectStatus": 429, "expect": "rate limit", "match": "contains"}],
+                       "expectStatus": 429, "expect": "rate limit", "match": "contains",
+                       "maxMs": 2000}],
         },
         {
             "id": "overloaded", "name": "Back-pressure: the vendor is overloaded (529)",
@@ -296,27 +331,73 @@ def _merge(base, over):
     return out
 
 
-def load_config():
+def _read_json(path, what):
     try:
-        with open(CONFIG_PATH) as fh:
-            return _merge(DEFAULTS, json.load(fh))
+        with open(path) as fh:
+            return json.load(fh)
     except FileNotFoundError:
-        return json.loads(json.dumps(DEFAULTS))
+        return None
     except Exception as exc:
         # A broken file is worth saying out loud rather than silently
         # starting with defaults that are not what anyone configured.
-        log("config: %s is not readable (%s) — using defaults" % (CONFIG_PATH, exc))
-        return json.loads(json.dumps(DEFAULTS))
+        log("%s: %s is not readable (%s) — using defaults" % (what, path, exc))
+        return None
+
+
+def _write_json(path, data):
+    tmp = path + ".tmp"
+    with open(tmp, "w") as fh:
+        json.dump(data, fh, indent=2)
+        fh.write("\n")
+    os.replace(tmp, path)          # atomic, so a crash never leaves half a file
+
+
+def load_config():
+    config = _merge(DEFAULTS, _read_json(CONFIG_PATH, "config") or {})
+    # The suite file wins where it exists. An older config that still carries
+    # tests keeps working and is migrated on the next save, so nobody loses a
+    # suite to this change.
+    suite = _read_json(SUITE_PATH, "suite")
+    if isinstance(suite, dict):
+        for key in SUITE_KEYS:
+            if isinstance(suite.get(key), list):
+                config[key] = suite[key]
+    return config
 
 
 CONFIG = load_config()
 
 
 def save_config():
-    tmp = CONFIG_PATH + ".tmp"
-    with open(tmp, "w") as fh:
-        json.dump(CONFIG, fh, indent=2)
-    os.replace(tmp, CONFIG_PATH)   # atomic, so a crash never leaves half a file
+    settings = {k: v for k, v in CONFIG.items() if k not in SUITE_KEYS}
+    _write_json(CONFIG_PATH, settings)
+    save_suite()
+
+
+def ensure_suite_file():
+    """Write the suite out on first run, so there is something to commit.
+
+    A file that only appears after someone edits a case in the console is a
+    file most people never learn exists.
+    """
+    if os.path.exists(SUITE_PATH):
+        return
+    try:
+        save_suite()
+    except OSError as exc:              # a read-only checkout is not fatal
+        log("suite: cannot write %s (%s)" % (SUITE_PATH, exc))
+
+
+def save_suite():
+    """The suite, in a file meant to be committed."""
+    _write_json(SUITE_PATH, {
+        "version": 1,
+        # Said in the file itself, because the first person to open it in a
+        # diff will not have read this source.
+        "_": "LLMSim test cases and plans. Commit this; llmsim.config.json is machine-local.",
+        "tests": CONFIG.get("tests", []),
+        "plans": CONFIG.get("plans", []),
+    })
 
 
 
@@ -554,59 +635,178 @@ def _self_request(provider, model, messages, tools=None, timeout=180):
 
 
 def _answer_of(body):
-    """The assistant's words and tool names, whichever format answered."""
-    text, tools = [], []
+    """The assistant's words and tool calls, whichever format answered.
+
+    Calls carry their arguments, not just their names. "Write was called" is
+    half an answer: the question a test is really asking is whether the agent
+    wrote the right file, and a run that proves only the name passes happily
+    while the agent writes to /tmp.
+    """
+    text, calls = [], []
     for block in body.get("content") or []:
         if block.get("type") == "text":
             text.append(block.get("text") or "")
         elif block.get("type") == "tool_use":
-            tools.append(block.get("name") or "")
+            calls.append({"name": block.get("name") or "", "input": block.get("input") or {}})
     for choice in body.get("choices") or []:
         msg = choice.get("message") or {}
         if msg.get("content"):
             text.append(msg["content"])
         for call in msg.get("tool_calls") or []:
-            tools.append((call.get("function") or {}).get("name") or "")
+            fn = call.get("function") or {}
+            # OpenAI sends arguments as a JSON string. A caller that emitted
+            # something unparseable is itself worth asserting on, so the raw
+            # text is kept rather than dropped.
+            raw = fn.get("arguments")
+            try:
+                args = json.loads(raw) if isinstance(raw, str) else (raw or {})
+            except ValueError:
+                args = {"_raw": raw}
+            calls.append({"name": fn.get("name") or "", "input": args})
     if not text and body.get("error"):
         text.append(body["error"].get("message") or "")
-    return "\n".join(t for t in text if t), [t for t in tools if t]
+    return "\n".join(t for t in text if t), [c for c in calls if c["name"]]
 
 
-def _step_verdict(step, status, answer, tools):
-    """Why this step passed or failed, in words worth reading."""
+def _dig(value, path):
+    """A dotted path into a tool's arguments: file_path, edits.0.new_string."""
+    for part in str(path).split("."):
+        if isinstance(value, dict):
+            value = value.get(part)
+        elif isinstance(value, list) and part.isdigit() and int(part) < len(value):
+            value = value[int(part)]
+        else:
+            return None
+        if value is None:
+            return None
+    return value
+
+
+def _as_text(value):
+    return value if isinstance(value, str) else json.dumps(value, sort_keys=True)
+
+
+def _matches(how, want, text):
+    """One comparison, used by every expectation so they all behave alike.
+
+    A bad regex raises, and the caller turns that into a failed step naming
+    the pattern — a test that silently never matches is worse than one that
+    says the pattern is wrong.
+    """
+    if how == "regex":
+        return bool(re.search(want, text, re.I | re.S))
+    if how == "equals":
+        return text.strip() == want
+    return want.lower() in text.lower()
+
+
+def _step_verdict(step, status, answer, calls, ms):
+    """Why this step passed or failed, in words worth reading.
+
+    Every expectation is optional and they compose: a step can require a
+    status, a tool, an argument on that tool, words in the answer, words that
+    must NOT be in it, a tool that must NOT have been called, and a deadline.
+    The negatives matter as much as the positives — "never invents an invoice
+    number" is only expressible as something that must not appear, and it is
+    exactly the failure the whole platform exists to catch.
+    """
+    names = [c["name"] for c in calls]
+    met = []
+
     want_status = step.get("expectStatus")
     if want_status and int(want_status) != status:
         return False, "expected HTTP %s, got %s" % (want_status, status)
     if not want_status and status >= 400:
         return False, "HTTP %s: %s" % (status, answer[:120])
-
-    want_tool = (step.get("expectTool") or "").strip()
-    if want_tool and want_tool not in tools:
-        return False, "expected a %s tool call, got %s" % (want_tool, tools or "none")
-
-    # What was actually checked, named. "no expectation set" on a step that
-    # asserted a status or a tool call reads like the step proved nothing,
-    # which is the opposite of true and the sort of thing that gets a passing
-    # suite mistrusted.
-    met = []
     if want_status:
         met.append("HTTP %s" % want_status)
+
+    # A deadline. The slow case proves a late answer still arrives; this is
+    # the other half — a request that is meant to be quick staying quick,
+    # which is the thing that regresses silently.
+    max_ms = step.get("maxMs")
+    if max_ms:
+        if ms > int(max_ms):
+            return False, "expected an answer within %sms, took %dms" % (max_ms, ms)
+        met.append("within %sms" % max_ms)
+
+    want_tool = (step.get("expectTool") or "").strip()
     if want_tool:
+        if want_tool not in names:
+            return False, "expected a %s tool call, got %s" % (want_tool, names or "none")
         met.append("%s called" % want_tool)
+
+    reject_tool = (step.get("rejectTool") or "").strip()
+    if reject_tool:
+        if reject_tool in names:
+            return False, "%s must not have been called, and was" % reject_tool
+        met.append("no %s call" % reject_tool)
+
+    # Arguments, on the tool the step named. Checked against every call to
+    # that tool, because an agent may call it more than once and one of them
+    # being right is what was asked.
+    wanted_args = step.get("expectToolArgs") or {}
+    if wanted_args:
+        if not want_tool:
+            return False, "an argument expectation needs a tool to assert on"
+        candidates = [c for c in calls if c["name"] == want_tool]
+        for path, want in wanted_args.items():
+            hit = False
+            seen = []
+            for call in candidates:
+                found = _dig(call["input"], path)
+                if found is None:
+                    continue
+                text = _as_text(found)
+                seen.append(text[:80])
+                try:
+                    if _matches(step.get("argMatch") or "contains", str(want), text):
+                        hit = True
+                        break
+                except re.error as exc:
+                    return False, "%s is not a valid regex: %s" % (path, exc)
+            if not hit:
+                return False, "%s.%s expected %r, got %s" % (
+                    want_tool, path, want, (", ".join(seen) or "nothing"))
+        met.append("%s args" % want_tool)
+
+    # What must not appear — checked against the words AND the arguments of
+    # every tool call, which is where the dangerous version of this lives: an
+    # agent that cannot reach SAP and puts a made-up total into a Bash command
+    # has fabricated it just as surely as if it had said it out loud.
+    # Deliberately wider than `expect`, which stays on the answer: a positive
+    # match cares where it appeared, a prohibition does not.
+    #
+    # Run before the positive, so a step that asserts both reports the more
+    # alarming failure.
+    reject = (step.get("reject") or "").strip()
+    if reject:
+        how = step.get("rejectMatch") or "contains"
+        places = [("the answer", answer)]
+        for call in calls:
+            for key, value in (call["input"] or {}).items():
+                places.append(("%s.%s" % (call["name"], key), _as_text(value)))
+        for where, text in places:
+            try:
+                if _matches(how, reject, text):
+                    return False, "%s must not %s %r, and does" % (
+                        where, how.rstrip("s") if how == "contains" else how, reject[:80])
+            except re.error as exc:
+                return False, "the rejection is not a valid regex: %s" % exc
+        met.append("no %r anywhere" % reject[:40])
 
     want = (step.get("expect") or "").strip()
     if not want:
+        # What was actually checked, named. "no expectation set" on a step
+        # that asserted a status or a tool call reads like the step proved
+        # nothing, which is the opposite of true and the sort of thing that
+        # gets a passing suite mistrusted.
         return True, (", ".join(met) if met else "no expectation set — reached the caller and answered")
     how = step.get("match") or "contains"
-    if how == "regex":
-        try:
-            ok = bool(re.search(want, answer, re.I | re.S))
-        except re.error as exc:
-            return False, "the expectation is not a valid regex: %s" % exc
-    elif how == "equals":
-        ok = answer.strip() == want
-    else:
-        ok = want.lower() in answer.lower()
+    try:
+        ok = _matches(how, want, answer)
+    except re.error as exc:
+        return False, "the expectation is not a valid regex: %s" % exc
     return ok, (", ".join(met + ["matched"]) if ok else "expected %s %r" % (how, want[:80]))
 
 
@@ -640,13 +840,16 @@ def run_case(case):
             messages.append({"role": "user", "content": step.get("input") or ""})
         at = time.time()
         status, body = _self_request(provider, model, messages, tools)
-        answer, called = _answer_of(body)
-        ok, why = _step_verdict(step, status, answer, called)
+        # Measured before it is judged, because a deadline is one of the
+        # things that can be judged.
+        ms = int((time.time() - at) * 1000)
+        answer, calls = _answer_of(body)
+        ok, why = _step_verdict(step, status, answer, calls, ms)
         steps.append({
             "input": step.get("input") or "", "expect": step.get("expect") or "",
             "match": step.get("match") or "contains", "status": status,
-            "answer": answer[:600], "tools": called, "ok": ok, "why": why,
-            "ms": int((time.time() - at) * 1000),
+            "answer": answer[:600], "tools": [c["name"] for c in calls],
+            "calls": calls, "ok": ok, "why": why, "ms": ms,
         })
         messages.append({"role": "assistant", "content": answer})
         if not ok:
@@ -1416,6 +1619,56 @@ class Handler(BaseHTTPRequestHandler):
         log("  %d passed, %d failed in %dms" % (run["passed"], run["failed"], run["ms"]))
         return self.send_json(200, run)
 
+    def import_suite(self, body):
+        """Take a suite someone else wrote, and say what it did.
+
+        Merge by default rather than replace: the common case is picking up a
+        colleague's cases, and losing your own to that is a bad surprise. An
+        id that already exists is overwritten, because re-importing a suite
+        you edited should update it rather than double it.
+        """
+        mode = body.get("mode") or "merge"
+        if mode not in ("merge", "replace"):
+            return self.send_json(400, {"error": "mode must be merge or replace"})
+
+        incoming = {}
+        for key in SUITE_KEYS:
+            rows = body.get(key)
+            if rows is None:
+                rows = []
+            if not isinstance(rows, list):
+                return self.send_json(400, {"error": "%s must be a list" % key})
+            for row in rows:
+                if not isinstance(row, dict) or not row.get("id"):
+                    return self.send_json(400, {"error": "every %s entry needs an id" % key[:-1]})
+            incoming[key] = rows
+        if not incoming["tests"] and not incoming["plans"]:
+            return self.send_json(400, {"error": "that file holds no cases or plans"})
+
+        added, updated = 0, 0
+        for key in SUITE_KEYS:
+            if mode == "replace":
+                CONFIG[key] = incoming[key]
+                continue
+            existing = {r.get("id"): i for i, r in enumerate(CONFIG.get(key, []))}
+            merged = list(CONFIG.get(key, []))
+            for row in incoming[key]:
+                if row["id"] in existing:
+                    merged[existing[row["id"]]] = row
+                    updated += 1
+                else:
+                    merged.append(row)
+                    added += 1
+            CONFIG[key] = merged
+
+        save_config()
+        log("suite imported (%s): %d case(s), %d plan(s)"
+            % (mode, len(incoming["tests"]), len(incoming["plans"])))
+        return self.send_json(200, {
+            "ok": True, "mode": mode, "added": added, "updated": updated,
+            "tests": len(CONFIG.get("tests", [])), "plans": len(CONFIG.get("plans", [])),
+        })
+
     def save_ui_config(self, body):
         """Accept only the settings that exist, and say what changed.
 
@@ -1610,6 +1863,21 @@ class Handler(BaseHTTPRequestHandler):
                         since = 0
             return self.send_json(200, self.ui_state(since))
 
+        if path == "/api/ui/suite":
+            # Served as a download so a suite can leave this machine at all.
+            payload = json.dumps({
+                "version": 1,
+                "_": "LLMSim test cases and plans. Commit this; llmsim.config.json is machine-local.",
+                "tests": CONFIG.get("tests", []),
+                "plans": CONFIG.get("plans", []),
+            }, indent=2).encode()
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-disposition", 'attachment; filename="llmsim.tests.json"')
+            self.send_header("content-length", str(len(payload)))
+            self.end_headers()
+            return self.wfile.write(payload)
+
         if path in ("/", "/healthz"):
             return self.send_json(200, {
                 "ok": True, "service": "llmsim",
@@ -1660,6 +1928,9 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/ui/run":
             return self.run_tests(body)
+
+        if path == "/api/ui/suite":
+            return self.import_suite(body)
 
         expected = API_KEYS.get(self.provider)
         if not key:
@@ -2022,6 +2293,9 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     log("listening on http://localhost:%d" % PORT)
     log("script: %s (%d rules)" % (SCRIPT_PATH, len(SCRIPT.get("rules", []))))
+    ensure_suite_file()
+    log("suite:  %s (%d case(s), %d plan(s))"
+        % (SUITE_PATH, len(CONFIG.get("tests", [])), len(CONFIG.get("plans", []))))
     up, routing = CONFIG["upstream"], CONFIG["routing"]
     log("default: %s%s" % (routing["default"],
         ("  (%d model(s) routed individually)" % len(routing["models"])) if routing["models"] else ""))

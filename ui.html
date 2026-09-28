@@ -244,7 +244,10 @@
         </div>
       </div>
 
-      <div class="card">
+      <!-- Hidden while nothing relays: a form for an upstream that no route
+           will ever reach is an invitation to configure something that then
+           appears to do nothing. Choosing "Upstream — relay" brings it back. -->
+      <div class="card" id="upstreamcard" hidden>
         <h2>Upstream</h2>
         <p class="help">One real model answers for every model routed to it — whatever name the client asked for, and in the format it asked in.</p>
         <label for="url">Base URL</label>
@@ -452,6 +455,11 @@ function renderDetail() {
 
 function renderRouting() {
   const d = CFG.routing.default, up = CFG.upstream, routed = Object.keys(CFG.routing.models).length;
+  // Shown when anything could relay — the default, or a single model set to
+  // relay on its own page — and also when one is already configured, because
+  // hiding a stored upstream would leave it there with no way to change it.
+  const relays = d === "relay" || Object.values(CFG.routing.models).includes("relay") || !!up.url;
+  document.getElementById("upstreamcard").hidden = !relays;
   document.getElementById("def-scripted").setAttribute("aria-pressed", d === "scripted");
   document.getElementById("def-relay").setAttribute("aria-pressed", d === "relay");
   document.getElementById("nourl").hidden = !!up.url || d !== "relay";

@@ -222,6 +222,26 @@
       </div>
 
       <div class="card">
+        <h2>Fidelity</h2>
+        <p class="help">How closely the vendors are imitated. Each makes the simulator stricter, and each is separate because they carry different risk to a working setup.</p>
+        <label style="display:flex; align-items:center; gap:8px; color:var(--ink)">
+          <input id="f-validate" type="checkbox" style="width:auto" onchange="saveFidelity()"> Refuse a malformed request, as the vendor would
+        </label>
+        <label style="display:flex; align-items:center; gap:8px; color:var(--ink)">
+          <input id="f-limits" type="checkbox" style="width:auto" onchange="saveFidelity()"> Enforce each model's context window and max output
+        </label>
+        <label style="display:flex; align-items:center; gap:8px; color:var(--ink)">
+          <input id="f-headers" type="checkbox" style="width:auto" onchange="saveFidelity()"> Send request-id, rate-limit and retry-after headers
+        </label>
+        <label style="display:flex; align-items:center; gap:8px; color:var(--ink)">
+          <input id="f-unknownModel" type="checkbox" style="width:auto" onchange="saveFidelity()"> 404 a model that is not in the catalogue
+        </label>
+        <div class="note warn">
+          The last one is off by default and that is not an oversight: a gateway may route an upstream name this list has never heard of — Maniple's own sends <code>claude-sonnet-4-5</code> — so turning it on without checking breaks a working deployment.
+        </div>
+      </div>
+
+      <div class="card">
         <h2>Upstream</h2>
         <p class="help">One real model answers for every model routed to it — whatever name the client asked for, and in the format it asked in.</p>
         <label for="url">Base URL</label>
@@ -427,6 +447,11 @@ function renderRouting() {
   if (live !== "format") document.getElementById("format").value = up.format || "openai";
   if (live !== "fallback") document.getElementById("fallback").checked = !!up.fallback;
   document.getElementById("keyset").textContent = up.keySet ? "· stored" : "";
+  const fid = CFG.fidelity || {};
+  for (const k of ["validate", "limits", "headers", "unknownModel"]) {
+    const el = document.getElementById("f-" + k);
+    if (el && live !== el.id) el.checked = !!fid[k];
+  }
 }
 
 function renderLogs() {
@@ -482,6 +507,14 @@ function clearAnswer(model) {
   delete responses[model];
   post({ responses }, "answersaved");
 }
+const saveFidelity = () => post({
+  fidelity: {
+    validate: document.getElementById("f-validate").checked,
+    limits: document.getElementById("f-limits").checked,
+    headers: document.getElementById("f-headers").checked,
+    unknownModel: document.getElementById("f-unknownModel").checked,
+  },
+}, "saved");
 const saveUpstream = () => post({
   upstream: {
     url: document.getElementById("url").value.trim(),

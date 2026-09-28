@@ -173,6 +173,22 @@ DEFAULTS = {
     # status turns it into that vendor's error; text answers with those
     # words; delay_ms waits first. Any of the three may be set alone.
     "responses": {},
+    # ── How closely the vendors are imitated ─────────────────────────────
+    #
+    # Each of these makes the simulator stricter, and each is separate
+    # because they carry different risk to a working setup.
+    #
+    #   validate      reject a malformed request the way the vendor does.
+    #                 Safe: real clients send valid requests, and one that
+    #                 does not is exactly what this is for.
+    #   unknownModel  404 a model that is not in the catalogue. OFF by
+    #                 default, and not an oversight: a gateway may route an
+    #                 upstream name this list has never heard of — Maniple's
+    #                 own does, sending claude-sonnet-4-5 — and turning this
+    #                 on without checking breaks a working deployment.
+    #   headers       request-id, rate-limit and retry-after headers.
+    #   limits        refuse a request past the model's context window.
+    "fidelity": {"validate": True, "unknownModel": False, "headers": True, "limits": True},
     # ── Functional tests ─────────────────────────────────────────────────
     #
     # Test cases that drive this simulator to check the CALLER, not the
@@ -334,6 +350,48 @@ def route_for(model):
 def relaying():
     """Whether any route can reach an upstream at all."""
     return bool(CONFIG["upstream"]["url"])
+
+
+
+# ── What a model is, beyond its name ─────────────────────────────────────
+#
+# Keyed by family prefix rather than by the seventy names, because the names
+# change every release and the families do not. A model that matches nothing
+# gets the last row, which is deliberately unremarkable: a wrong-but-plausible
+# limit is better than pretending there is none, and a limit nobody set is the
+# reason a context-window test cannot exist.
+#
+# The numbers are the vendors' published ones where they are published, and
+# sane approximations where they are not. They are here to be *exceeded* — a
+# caller that never checks a context window is the thing this catches.
+MODEL_FAMILIES = [
+    ("claude-opus",   {"context": 200000, "maxOutput": 32000}),
+    ("claude-sonnet", {"context": 200000, "maxOutput": 64000}),
+    ("claude-haiku",  {"context": 200000, "maxOutput": 8192}),
+    ("claude-fable",  {"context": 200000, "maxOutput": 32000}),
+    ("gpt-6",         {"context": 400000, "maxOutput": 128000}),
+    ("gpt-5",         {"context": 400000, "maxOutput": 128000}),
+    ("gemini",        {"context": 1000000, "maxOutput": 65536}),
+    ("deepseek",      {"context": 128000, "maxOutput": 8192}),
+    ("grok",          {"context": 256000, "maxOutput": 32000}),
+    ("qwen",          {"context": 262144, "maxOutput": 32768}),
+    ("kimi",          {"context": 256000, "maxOutput": 32000}),
+    ("llama",         {"context": 128000, "maxOutput": 8192}),
+    ("mistral",       {"context": 128000, "maxOutput": 8192}),
+    ("",              {"context": 128000, "maxOutput": 8192}),
+]
+
+
+def model_limits(model):
+    name = (model or "").lower()
+    for prefix, limits in MODEL_FAMILIES:
+        if name.startswith(prefix):
+            return limits
+    return MODEL_FAMILIES[-1][1]
+
+
+def known_model(provider, model):
+    return model in MODELS.get(provider, [])
 
 
 def log(*parts):
@@ -631,6 +689,7 @@ def run_cases(cases, label):
 # that grows without limit is a memory leak with a nice name.
 REQUESTS = collections.deque(maxlen=int(os.environ.get("LLMSIM_LOG_SIZE", "300")))
 REQUEST_SEQ = itertools.count(1)
+REQUEST_SEQ_PEEK_COUNTER = itertools.count(1)
 _SEQ_SEEN = [0]
 
 
@@ -646,6 +705,73 @@ def record(entry):
     with REQUESTS_LOCK:
         REQUESTS.append(entry)
     return entry
+
+
+
+# ── Live stream framing, for the relay ───────────────────────────────────
+#
+# The scripted path builds a whole turn and hands it to the *_sse generators,
+# which is right when the answer is already known. A relayed answer is not:
+# it arrives a piece at a time and the pauses between pieces are the point,
+# so these emit the same events the generators do, split so the middle can be
+# driven by whatever the upstream sends.
+
+def _delta_text(event):
+    """The text in one upstream SSE event, whichever format sent it."""
+    # Anthropic
+    if event.get("type") == "content_block_delta":
+        return (event.get("delta") or {}).get("text") or ""
+    # OpenAI chat
+    for choice in event.get("choices") or []:
+        piece = (choice.get("delta") or {}).get("content")
+        if piece:
+            return piece
+    # Responses
+    if event.get("type") == "response.output_text.delta":
+        return event.get("delta") or ""
+    return ""
+
+
+def _stream_open(shape, model):
+    if shape == "anthropic":
+        shell = anthropic_body({"text": ""}, model)
+        shell["content"], shell["stop_reason"] = [], None
+        shell["usage"] = {"input_tokens": shell["usage"]["input_tokens"], "output_tokens": 0}
+        return [("message_start", {"type": "message_start", "message": shell}),
+                ("ping", {"type": "ping"}),
+                ("content_block_start", {"type": "content_block_start", "index": 0,
+                                         "content_block": {"type": "text", "text": ""}})]
+    if shape == "responses":
+        return [("response.created", {"type": "response.created",
+                                      "response": responses_body({"text": ""}, model)})]
+    return []
+
+
+def _stream_delta(shape, piece):
+    if shape == "anthropic":
+        return [("content_block_delta", {"type": "content_block_delta", "index": 0,
+                                         "delta": {"type": "text_delta", "text": piece}})]
+    if shape == "responses":
+        return [("response.output_text.delta", {"type": "response.output_text.delta", "delta": piece})]
+    return [("", {"id": rand_id("chatcmpl-", 20), "object": "chat.completion.chunk",
+                  "created": int(time.time()), "model": "relay",
+                  "choices": [{"index": 0, "delta": {"content": piece}, "finish_reason": None}]})]
+
+
+def _stream_close(shape, text):
+    if shape == "anthropic":
+        return [("content_block_stop", {"type": "content_block_stop", "index": 0}),
+                ("message_delta", {"type": "message_delta",
+                                   "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+                                   "usage": {"output_tokens": rough_tokens(text)}}),
+                ("message_stop", {"type": "message_stop"})]
+    if shape == "responses":
+        return [("response.completed", {"type": "response.completed",
+                                        "response": responses_body({"text": text}, "relay")})]
+    return [("", {"id": rand_id("chatcmpl-", 20), "object": "chat.completion.chunk",
+                  "created": int(time.time()), "model": "relay",
+                  "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}),
+            ("", "[DONE]")]
 
 
 # ── Relay: one real model answers for every model ────────────────────────
@@ -732,6 +858,21 @@ def _turn_from_upstream(body):
         turn["text"] = "\n".join(text_parts)
     if calls:
         turn["tool_calls"] = calls
+
+    # The upstream's own numbers, carried through instead of discarded.
+    #
+    # Relay exists so a demo has real answers; a demo that cannot say what it
+    # cost is missing the question everyone asks second. Synthetic counts are
+    # right for a scripted answer and wrong here — this one really was billed.
+    usage = body.get("usage") or {}
+    if usage:
+        turn["usage"] = {
+            "input": usage.get("input_tokens", usage.get("prompt_tokens", 0)),
+            "output": usage.get("output_tokens", usage.get("completion_tokens", 0)),
+            "cacheRead": usage.get("cache_read_input_tokens",
+                                   (usage.get("prompt_tokens_details") or {}).get("cached_tokens", 0)),
+            "model": CONFIG["upstream"]["model"],
+        }
     # A model that answered with neither is still an answer; saying so beats
     # an empty body the client has to guess about.
     if not turn:
@@ -799,6 +940,20 @@ def choose_turn(provider, model, messages, declared=None):
 
 # ── Anthropic: /v1/messages ──────────────────────────────────────────────
 
+
+def _anthropic_usage(input_tokens, output_tokens):
+    """input/output, with the cache split a real response carries."""
+    cached = int(input_tokens * 0.8)        # most of a harness prompt is reused
+    created = int(input_tokens * 0.1)
+    return {
+        "input_tokens": input_tokens - cached - created,
+        "cache_creation_input_tokens": created,
+        "cache_read_input_tokens": cached,
+        "output_tokens": output_tokens,
+        "service_tier": "standard",
+    }
+
+
 def anthropic_body(turn, model):
     content = []
     if turn.get("text"):
@@ -821,7 +976,14 @@ def anthropic_body(turn, model):
         "content": content,
         "stop_reason": stop,
         "stop_sequence": None,
-        "usage": {"input_tokens": turn.get("input_tokens", 1200), "output_tokens": rough_tokens(out_text)},
+        # The cache fields are not decoration. Claude Code reports them, and
+        # Maniple's own extractUsage reads cacheReadInputTokens and
+        # cacheCreationInputTokens — so a usage path that handles them could
+        # never be exercised while this returned two numbers.
+        #
+        # Split from the same synthetic total rather than invented on top of
+        # it, so the arithmetic a caller does still adds up.
+        "usage": _anthropic_usage(turn.get("input_tokens", 1200), rough_tokens(out_text)),
     }
 
 
@@ -877,7 +1039,7 @@ def anthropic_sse(turn, model):
 # ── OpenAI / DeepSeek: /v1/chat/completions ──────────────────────────────
 
 def openai_body(turn, model):
-    message = {"role": "assistant", "content": turn.get("text") or None}
+    message = {"role": "assistant", "content": turn.get("text") or None, "refusal": None}
     finish = turn.get("stop_reason", "stop")
 
     if turn.get("tool_calls"):
@@ -895,11 +1057,23 @@ def openai_body(turn, model):
         "object": "chat.completion",
         "created": int(time.time()),
         "model": model,
-        "choices": [{"index": 0, "message": message, "finish_reason": finish}],
+        # system_fingerprint and service_tier are read by clients that pin
+        # behaviour to a backend build; logprobs and refusal are absent from
+        # a real answer as null rather than missing, and a client that tests
+        # for the key rather than the value can tell the difference.
+        "system_fingerprint": "fp_llmsim0001",
+        "service_tier": "default",
+        "choices": [{"index": 0, "message": message, "finish_reason": finish,
+                     "logprobs": None}],
         "usage": {
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
             "total_tokens": prompt_tokens + completion_tokens,
+            "prompt_tokens_details": {"cached_tokens": int(prompt_tokens * 0.8),
+                                      "audio_tokens": 0},
+            "completion_tokens_details": {"reasoning_tokens": 0, "audio_tokens": 0,
+                                          "accepted_prediction_tokens": 0,
+                                          "rejected_prediction_tokens": 0},
         },
     }
 
@@ -1069,9 +1243,29 @@ def responses_body(turn, model):
         # Responses clients read output_text as the flattened convenience form;
         # omitting it makes a reply look empty to anything that trusts it.
         "output_text": turn.get("text") or "",
+        # The rest of the envelope a Responses client reads back. Most are
+        # null or a default in a plain answer — which is the point: a client
+        # that branches on `reasoning` or resumes from `previous_response_id`
+        # cannot be tested against a body where the key is simply absent.
+        "error": None,
+        "incomplete_details": None,
+        "instructions": None,
+        "max_output_tokens": None,
+        "previous_response_id": None,
+        "parallel_tool_calls": True,
+        "tool_choice": "auto",
+        "tools": [],
+        "temperature": 1.0,
+        "top_p": 1.0,
+        "truncation": "disabled",
+        "store": True,
+        "metadata": {},
+        "reasoning": {"effort": None, "summary": None},
         "usage": {
             "input_tokens": input_tokens,
+            "input_tokens_details": {"cached_tokens": int(input_tokens * 0.8)},
             "output_tokens": output_tokens,
+            "output_tokens_details": {"reasoning_tokens": 0},
             "total_tokens": input_tokens + output_tokens,
         },
     }
@@ -1288,6 +1482,11 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_json(400, {"error": "every %s entry needs an id" % key[:-1]})
             CONFIG[key] = rows
 
+        if "fidelity" in body:
+            for k, v in (body["fidelity"] or {}).items():
+                if k in CONFIG["fidelity"]:
+                    CONFIG["fidelity"][k] = bool(v)
+
         for field in ("url", "key", "model", "format", "fallback"):
             if field not in upstream:
                 continue
@@ -1310,11 +1509,45 @@ class Handler(BaseHTTPRequestHandler):
                len(CONFIG.get("responses") or {}), CONFIG["upstream"]["url"] or "none"))
         return self.send_json(200, {"ok": True, "config": public_config()})
 
+    def vendor_headers(self, status=200):
+        """The headers a real answer carries, which clients read.
+
+        A client that logs a request id, honours retry-after, or backs off as
+        a rate-limit budget runs down cannot be tested against a response
+        that has none of them — and "we return a 429" is not the same claim
+        as "we return a 429 a client can recover from".
+
+        The numbers walk downward across a process's life rather than being
+        fixed, so a caller watching the budget sees it move.
+        """
+        if not CONFIG.get("fidelity", {}).get("headers", True):
+            return
+        rid = rand_id("req_", 24)
+        remaining = max(0, 1000 - (next(REQUEST_SEQ_PEEK_COUNTER) % 1000))
+        reset = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 60))
+        if self.provider == "anthropic":
+            self.send_header("request-id", rid)
+            self.send_header("anthropic-ratelimit-requests-limit", "1000")
+            self.send_header("anthropic-ratelimit-requests-remaining", str(remaining))
+            self.send_header("anthropic-ratelimit-requests-reset", reset)
+        else:
+            self.send_header("x-request-id", rid)
+            self.send_header("x-ratelimit-limit-requests", "1000")
+            self.send_header("x-ratelimit-remaining-requests", str(remaining))
+            self.send_header("x-ratelimit-reset-requests", "60s")
+        # The one a client actually acts on. Without it a 429 is a dead end:
+        # nothing says when to try again, so every backoff is a guess.
+        if status == 429:
+            self.send_header("retry-after", "2")
+        elif status == 529 or status == 503:
+            self.send_header("retry-after", "5")
+
     def send_json(self, status, payload):
         raw = json.dumps(payload).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(raw)))
+        self.vendor_headers(status)
         self.end_headers()
         self.wfile.write(raw)
 
@@ -1446,11 +1679,197 @@ class Handler(BaseHTTPRequestHandler):
 
         return self.refuse(404, "not_found_error", "No such route: " + path)
 
+
+
+
+    def begin_stream(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "close")
+        self.vendor_headers(200)
+        self.end_headers()
+        self.close_connection = True
+
+    def write_event(self, event, data):
+        """One SSE frame, in the form this shape uses.
+
+        Anthropic and Responses name their events; OpenAI does not, and sends
+        a bare [DONE] sentinel at the end — so an empty name means "data
+        only", and a string payload is written verbatim.
+        """
+        try:
+            if isinstance(data, str):
+                self.wfile.write(("data: %s\n\n" % data).encode())
+            elif event:
+                self.wfile.write(("event: %s\ndata: %s\n\n" % (event, json.dumps(data))).encode())
+            else:
+                self.wfile.write(("data: %s\n\n" % json.dumps(data)).encode())
+            self.wfile.flush()
+        except BrokenPipeError:
+            log("client closed the stream early")
+            raise
+
+    def relay_stream(self, shape, model, messages, tools_body, entry_started):
+        """Forward the upstream's own stream, re-framed for this client.
+
+        Two streams, not one: the upstream speaks its format and the client
+        asked for theirs, so every delta is unwrapped and rewritten. What is
+        preserved is the timing — the pauses are the model's, which is the
+        only part of a streamed demo that cannot be faked convincingly.
+
+        On a failure before the first byte this falls back to the buffered
+        path, which can still answer with a proper error. After the first
+        byte it cannot: the status is already sent, so the stream is ended
+        and the reason goes to the log.
+        """
+        up = CONFIG["upstream"]
+        if up["format"] == "anthropic":
+            url, headers = up["url"] + "/v1/messages", {"x-api-key": up["key"], "anthropic-version": "2023-06-01"}
+            payload = {"model": up["model"], "max_tokens": 2048, "stream": True,
+                       "messages": [m for m in messages if m.get("role") in ("user", "assistant")]}
+        else:
+            url, headers = up["url"] + "/v1/chat/completions", {"Authorization": "Bearer " + up["key"]}
+            payload = {"model": up["model"], "messages": messages, "stream": True}
+        if tools_body:
+            payload["tools"] = tools_body
+        headers["content-type"] = "application/json"
+
+        req = urllib.request.Request(url, data=json.dumps(payload).encode(), headers=headers)
+        try:
+            resp = urllib.request.urlopen(req, timeout=180)
+        except Exception as exc:
+            log("relay stream failed before it began: %s" % exc)
+            if CONFIG["upstream"]["fallback"]:
+                name, turn = choose_turn(self.provider, model, messages, None)
+                self.begin_stream()
+                for ev in _stream_open(shape, model):
+                    self.write_event(ev[0], ev[1])
+                for ev in _stream_delta(shape, turn.get("text") or ""):
+                    self.write_event(ev[0], ev[1])
+                for ev in _stream_close(shape, turn.get("text") or ""):
+                    self.write_event(ev[0], ev[1])
+                return None
+            return self.refuse(502, "upstream_error",
+                               "LLMSim could not reach its upstream model: %s" % exc)
+
+        started, sent = False, []
+        try:
+            for raw in resp:
+                line = raw.decode("utf-8", "replace").strip()
+                if not line.startswith("data:"):
+                    continue
+                chunk = line[5:].strip()
+                if chunk in ("", "[DONE]"):
+                    continue
+                try:
+                    event = json.loads(chunk)
+                except json.JSONDecodeError:
+                    continue
+                piece = _delta_text(event)
+                if not piece:
+                    continue
+                if not started:
+                    self.begin_stream()
+                    for head in _stream_open(shape, model):
+                        self.write_event(head[0], head[1])
+                    started = True
+                sent.append(piece)
+                for ev in _stream_delta(shape, piece):
+                    self.write_event(ev[0], ev[1])
+            if not started:
+                # The upstream answered with nothing streamable. Emit an
+                # empty-but-well-formed stream rather than nothing, so the
+                # client sees a completed response instead of a dropped
+                # connection it has to guess about.
+                self.begin_stream()
+                for ev in _stream_open(shape, model):
+                    self.write_event(ev[0], ev[1])
+                for ev in _stream_close(shape, ""):
+                    self.write_event(ev[0], ev[1])
+                return None
+            for ev in _stream_close(shape, "".join(sent)):
+                self.write_event(ev[0], ev[1])
+        except Exception as exc:
+            log("relay stream broke mid-flight: %s" % exc)
+        finally:
+            try:
+                resp.close()
+            except Exception:
+                pass
+        return None
+
+    def validate(self, body, shape, model, messages):
+        """Refuse what the vendor would refuse, in the vendor's own words.
+
+        A simulator that answers 200 to a malformed request is worse than one
+        that answers nothing: the client passes here and fails in production,
+        and the test that should have caught it is the one that gave false
+        comfort. Each check below is a real 4xx from a real API.
+
+        All of it is switchable, because strictness that cannot be turned off
+        is a simulator that eventually blocks a setup somebody needs working.
+        """
+        fid = CONFIG.get("fidelity", {})
+        if not fid.get("validate", True):
+            return None
+
+        if not isinstance(messages, list) or not messages:
+            # Anthropic and OpenAI both reject an empty conversation.
+            return self.refuse(400, "invalid_request_error",
+                               "messages: at least one message is required.")
+
+        for i, msg in enumerate(messages):
+            if not isinstance(msg, dict) or "role" not in msg:
+                return self.refuse(400, "invalid_request_error",
+                                   "messages.%d: role is required." % i)
+            if msg["role"] not in ("user", "assistant", "system", "tool", "developer"):
+                return self.refuse(400, "invalid_request_error",
+                                   "messages.%d.role: %r is not a valid role." % (i, msg["role"]))
+
+        # max_tokens is required by Anthropic and optional everywhere else —
+        # one of the few places the vendors genuinely disagree.
+        if shape == "anthropic":
+            if body.get("max_tokens") is None:
+                return self.refuse(400, "invalid_request_error",
+                                   "max_tokens: field required.")
+            try:
+                want = int(body["max_tokens"])
+            except (TypeError, ValueError):
+                return self.refuse(400, "invalid_request_error",
+                                   "max_tokens: must be an integer.")
+            if want < 1:
+                return self.refuse(400, "invalid_request_error",
+                                   "max_tokens: must be greater than 0.")
+            if fid.get("limits", True) and want > model_limits(model)["maxOutput"]:
+                return self.refuse(400, "invalid_request_error",
+                                   "max_tokens: %d is more than %s can return (%d)."
+                                   % (want, model, model_limits(model)["maxOutput"]))
+
+        if fid.get("unknownModel", False) and not known_model(self.provider, model):
+            return self.refuse(404, "not_found_error", "model: %r does not exist." % model)
+
+        if fid.get("limits", True):
+            # Rough, and honest about it: the token count is synthetic, so
+            # this catches a caller that sends a novel, not one that is a
+            # hundred tokens over.
+            size = rough_tokens(json.dumps(messages))
+            window = model_limits(model)["context"]
+            if size > window:
+                return self.refuse(400, "invalid_request_error",
+                                   "prompt is too long: %d tokens > %d maximum for %s."
+                                   % (size, window, model))
+        return None
+
     def handle_chat(self, body, shape):
         model = body.get("model") or (MODELS[self.provider][0])
         messages = responses_to_messages(body) if shape == "responses" else (body.get("messages") or [])
         stream = bool(body.get("stream"))
         declared = declared_tools(body)
+
+        bad = self.validate(body, shape, model, messages)
+        if bad:
+            return bad
 
         # Per model, not per process. A demo can point one model at a real
         # cheap one and leave every other model offline and free, which is
@@ -1459,6 +1878,13 @@ class Handler(BaseHTTPRequestHandler):
         started = time.time()
         if route == "relay":
             try:
+                # A streamed relay is passed through token by token rather
+                # than fetched whole and replayed. Replaying is the right
+                # shape and the wrong experience: a demo of an agent typing
+                # is the thing being demonstrated, and one long pause
+                # followed by everything at once is not that.
+                if stream:
+                    return self.relay_stream(shape, model, messages, body.get("tools"), entry_started=started)
                 turn = upstream_turn(messages, declared, body.get("tools"))
                 name = "relay:" + CONFIG["upstream"]["model"]
             except UpstreamError as exc:
@@ -1486,6 +1912,10 @@ class Handler(BaseHTTPRequestHandler):
                 "prompt": subject(messages)[:400],
                 "reply": (turn.get("text") or "")[:400],
                 "tools": [c.get("name") for c in (turn.get("tool_calls") or [])],
+                # Real when it came from an upstream, absent when the answer
+                # was scripted — a demo should never be able to mistake a
+                # synthetic number for a bill.
+                "usage": turn.get("usage"),
                 "error": None})
 
         log("%s %s model=%s stream=%s turns=%d -> rule '%s'%s" % (
@@ -1569,6 +1999,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
         self.send_header("Connection", "close")
+        self.vendor_headers(200)
         self.end_headers()
         self.close_connection = True
 

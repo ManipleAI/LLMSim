@@ -288,13 +288,36 @@ docker compose up --build
 Serves on the same port, with `responses.json` bind-mounted so edits take
 effect on restart without a rebuild.
 
+## Fidelity
+
+How closely the vendors are imitated, set in the console or in
+`llmsim.config.json`. Each is separate because each carries different risk to
+a setup that currently works.
+
+| | Default | |
+|---|---|---|
+| `validate` | on | Refuses a malformed request the way the vendor does — missing `max_tokens`, empty `messages`, an invalid role. A simulator that answers 200 to a bad request is worse than none: the client passes here and fails in production. |
+| `limits` | on | Enforces each model's context window and maximum output. |
+| `headers` | on | `request-id`, the rate-limit trio, and **`retry-after` on a 429** — without which a 429 is a dead end and every backoff is a guess. |
+| `unknownModel` | **off** | 404s a model that is not in the catalogue. Off deliberately: a gateway may route an upstream name this list has never heard of — Maniple's own sends `claude-sonnet-4-5` — so turning it on without checking breaks a working deployment. |
+
+Responses carry what a real one carries: Anthropic's `cache_creation_input_tokens`
+and `cache_read_input_tokens`, OpenAI's `system_fingerprint`, `service_tier`,
+`logprobs`, `refusal` and the `*_tokens_details` breakdowns, and the Responses
+envelope's `reasoning`, `previous_response_id`, `tool_choice` and the rest —
+absent as `null` rather than missing, so a client that tests for the key can
+tell the difference.
+
 ## Limits, stated plainly
 
-- **Token counts are synthetic.** Roughly four characters per token. Cost
-  and budget arithmetic can be exercised, but the numbers are not the
-  vendors' numbers. Real accounting is the one thing a simulator cannot
-  honestly provide, and rounding that off would make cost tests lie rather
-  than fail.
+- **Token counts are synthetic** when the answer is scripted — roughly four
+  characters per token. Cost arithmetic can be exercised, but the numbers are
+  not the vendors'. In **relay** mode the upstream's own counts are carried
+  through instead and shown in the log, because those really were billed.
+- **Streaming in relay mode is real.** The upstream is asked for a stream and
+  its deltas are forwarded as they land, re-framed for whatever format the
+  client asked in — so the pauses are the model's. Scripted answers still
+  stream from a finished turn, which is the right shape and a made-up rhythm.
 - **It has no idea what it is saying.** Answers are scripted. It proves a
   pipeline carries a response of a given shape; it proves nothing about
   whether a model would produce that response.

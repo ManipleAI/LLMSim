@@ -140,18 +140,38 @@ out as a control plane:
 
 The simulator answers; these check that whatever is calling it behaves. A
 case is an ordered list of steps, each one a prompt in and an expectation
-about what comes back — so a multi-step exchange, the shape a card applet
-conversation has, is written as the sequence it actually is:
+about what comes back — so an agent loop is written as the sequence it
+actually is:
 
 ```
-VISA: select applet, then read balance      claude-sonnet-5
-  1  SELECT A0000000031010   → contains "9000"
-  2  GET DATA balance        → contains "SW=9000"
+Code generation: writes the file it was asked for     claude-sonnet-5
+  1  Create a file called HELLO.md...  → calls Write, says "create"
+  2  HELLO.md written, 1 line.         → contains "HELLO.md is written"
+     (sent as tool output)
 ```
+
+**Tick "sent as tool output" for a step that is a tool reporting back rather
+than a person speaking.** It matters more than it looks: `subject()`
+deliberately ignores tool output when deciding what a conversation is about,
+so an agent loop keeps the rule its opening ask chose. A step sent as plain
+user text reads as a new question and pulls the conversation elsewhere —
+which is exactly how the two-step case above failed the first time it was
+written.
+
+Six cases ship, and they pass on a fresh install:
+
+| | |
+|---|---|
+| Code generation | Writes the file it was asked for, then reports it done |
+| Code generation, OpenAI-shaped | The same ask from an agent declaring `exec_command` rather than `Write` — the harness follows the caller, not one vendor's spelling |
+| Planning | Asks for `SAP.Invoice.Read` and files a dependency **rather than inventing invoice data** |
+| Back-pressure, 429 | The caller is handed a rate limit |
+| Back-pressure, 529 | The vendor is overloaded |
+| Patience | An eight-second answer must not be abandoned |
 
 A step can assert on the text (`contains`, `regex`, `equals`), on a tool the
 caller was offered and should have called, or on the HTTP status — so "this
-issuer is over quota and must answer 429" is a test rather than a note.
+model is over its quota and must answer 429" is a test rather than a note.
 
 Steps run **in order, in one conversation**, and stop at the first failure,
 because a later step normally assumes the one before it worked. A **plan** is

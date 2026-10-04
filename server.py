@@ -563,6 +563,62 @@ def subject(messages):
     return best
 
 
+# ── Placeholders ─────────────────────────────────────────────────────────
+#
+# A scripted turn is fixed text, and two things about a conversation cannot
+# be written down in advance: what was asked, and what a tool printed. A
+# retrieval rule needs both — the search has to be *for the question*, and
+# the answer has to carry what came back, or a test of a grounded agent can
+# only assert that a tool was called, never that its result reached the
+# reader. So two placeholders, and no more than two:
+#
+#   {{ask}}          the opening ask — the same text the rule was matched on
+#   {{tool_output}}  what the most recent tool call printed
+#
+# Substituted in a turn's text and in the string arguments of its tool calls.
+
+TOOL_OUTPUT_LIMIT = 1200
+
+
+def last_tool_output(messages):
+    """What the most recent tool call printed, or "" if none has run."""
+    for msg in reversed(messages):
+        role = msg.get("role")
+        if role == "tool":
+            content = msg.get("content")
+            if isinstance(content, list):
+                content = "\n".join(b.get("text", "") for b in content if isinstance(b, dict))
+            return str(content or "")
+        if role == "user":
+            text, is_tool_result = flatten(msg)
+            if is_tool_result:
+                return text
+    return ""
+
+
+def fill(turn, messages):
+    """The turn with its placeholders filled in. The script is not touched."""
+    if "{{" not in json.dumps(turn):
+        return turn
+    values = {
+        "{{ask}}": subject(messages).strip(),
+        "{{tool_output}}": last_tool_output(messages).strip()[:TOOL_OUTPUT_LIMIT],
+    }
+
+    def walk(value):
+        if isinstance(value, str):
+            for key, replacement in values.items():
+                value = value.replace(key, replacement)
+            return value
+        if isinstance(value, list):
+            return [walk(v) for v in value]
+        if isinstance(value, dict):
+            return {k: walk(v) for k, v in value.items()}
+        return value
+
+    return walk(turn)
+
+
 def matches(rule, provider, model, text, declared=None):
     when = rule.get("when", {})
     if "provider" in when and when["provider"] != provider:
@@ -1136,7 +1192,7 @@ def choose_turn(provider, model, messages, declared=None):
             if not turns:
                 continue
             turn = turns[min(turns_taken, len(turns) - 1)]
-            return rule.get("name", "unnamed"), turn
+            return rule.get("name", "unnamed"), fill(turn, messages)
 
     return "default", SCRIPT.get("default", {"text": "LLMSim has no scripted answer for that."})
 

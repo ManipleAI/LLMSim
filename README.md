@@ -102,6 +102,14 @@ tool.
 all must hold. A turn takes `text`, `tool_calls`, `stop_reason`,
 `input_tokens`, `delay_ms`, and `error { status, type, message }`.
 
+Two placeholders are filled in a turn's `text` and in the string arguments of
+its tool calls: `{{ask}}` is the opening ask the rule was matched on, and
+`{{tool_output}}` is what the most recent tool call printed. They are what lets
+one rule drive a retrieval loop — search *for the question*, then answer *with
+what came back* — so a test of a grounded agent can assert that a passage
+reached the reader, not merely that a tool was called. The `knowledge-search`
+rule, keyed on the tool `search_context`, is the example.
+
 **Two decisions, kept apart.** *Which rule* comes from the conversation's
 opening ask. *Which turn within it* comes from how many assistant turns have
 already happened.

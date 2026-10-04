@@ -10,7 +10,12 @@
     "",
     "when:  contains | regex | provider | model   (all optional, all must hold)",
     "turn:  text, tool_calls[{name,input}], stop_reason, input_tokens,",
-    "       delay_ms, error{status,type,message}"
+    "       delay_ms, error{status,type,message}",
+    "",
+    "Two placeholders are filled in a turn's text and its tool arguments:",
+    "{{ask}} is the opening ask the rule was matched on, and {{tool_output}}",
+    "is what the most recent tool call printed. They are what lets a rule",
+    "search for the question and answer with what the search returned."
   ],
   "_ordering": [
     "Specific rules first, generic ones last, and prefer an anchored regex to",
@@ -36,6 +41,29 @@
     "argument is a worse failure than sending an unknown one."
   ],
   "rules": [
+    {
+      "name": "knowledge-search",
+      "_why": "A grounded agent is one that looks things up before it answers. Keyed on the tool Maniple's context server offers, so it only fires for an agent that was given the company's knowledge \u2014 the same question to an agent without it falls through, which is the behaviour being told apart. The search is for the question itself and the answer repeats what came back, so a test can assert that a passage reached the reader rather than that a tool was called.",
+      "when": {
+        "tool": "search_context"
+      },
+      "turns": [
+        {
+          "text": "Let me look that up in the company's knowledge.",
+          "tool_calls": [
+            {
+              "name": "search_context",
+              "input": {
+                "query": "{{ask}}"
+              }
+            }
+          ]
+        },
+        {
+          "text": "From the company's knowledge:\n\n{{tool_output}}"
+        }
+      ]
+    },
     {
       "name": "write-a-file (codex)",
       "_why": "Codex has no write tool at all \u2014 it shells out. Keyed on the tool it declares rather than its provider, because Codex and OpenCode can sit behind the same one.",

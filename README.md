@@ -327,6 +327,16 @@ at OpenAI; confirm access, and the console flips to *signed in*. Then pick
 the route — as the default, or per model on the Models page — and choose the
 plan model (the picker lists what the plan actually offers).
 
+**The plan model is the plan's own choice unless you make one.** Which models an
+account may use differs by plan and changes over time, so no name is built in —
+the first one, `gpt-5.4`, was a guess that an account without it was refused on.
+Left blank, LLMSim asks the plan for its list and uses its first *visible* model by
+the plan's own priority (hidden models are never picked for you, though you may
+name one). The list is cached for ten minutes and dropped on sign-in and sign-out.
+If nothing is chosen and the list cannot be read, the request fails and says so
+rather than guessing. A model you choose always wins. A config saved while
+`gpt-5.4` was the built-in default is read as "not chosen".
+
 ```
 curl localhost:8099/openai/v1/chat/completions \
   -H "Authorization: Bearer sk-llmsim-000000000000000000000000" \
@@ -372,7 +382,7 @@ script; *Answer here if the plan cannot be reached* is opt-in.
 
 | Variable | Default | |
 |---|---|---|
-| `LLMSIM_CHATGPT_MODEL` | `gpt-5.4` | The plan model that seeds the setting; the console wins after that. |
+| `LLMSIM_CHATGPT_MODEL` | *(empty)* | The plan model that seeds the setting; empty means the plan's own default, and the console wins after that. |
 | `LLMSIM_CHATGPT_AUTH` | `llmsim.chatgpt-auth.json` | Where the tokens are kept. |
 | `LLMSIM_CHATGPT_PORTS` | `1455,1457` | The redirect ports to try. |
 | `LLMSIM_CHATGPT_ISSUER` / `_BACKEND` | OpenAI's | Overridden by the tests to point at a stand-in. |

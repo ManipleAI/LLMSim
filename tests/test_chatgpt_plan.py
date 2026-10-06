@@ -98,6 +98,8 @@ class Stub:
         self.last = None                # the last /responses request: headers + json
         self.expire_next = False        # answer the next /responses with 401, once
         self.issued = 0
+        self.models_calls = 0           # how often the plan's model list was asked for
+        self.models_fail = False
 
     def mint(self):
         self.issued += 1
@@ -151,7 +153,15 @@ class Stub:
             return h.reply(200, {})
 
         if path == "/backend/models":
-            return h.reply(200, {"models": [{"slug": "gpt-5.4"}, {"slug": "gpt-5.4-mini"}]})
+            self.models_calls += 1
+            if self.models_fail:
+                return h.reply(500, {"error": {"message": "the model list is down"}})
+            # Out of order, and with the HIDDEN model holding the lowest priority number — the trap a naive
+            # "lowest priority wins" falls into. This is what the real backend's list looks like.
+            return h.reply(200, {"models": [
+                {"slug": "gpt-hidden", "visibility": "hide", "priority": 0},
+                {"slug": "gpt-5.4-mini", "visibility": "list", "priority": 2},
+                {"slug": "gpt-5.4", "visibility": "list", "priority": 1}]})
 
         if path == "/backend/responses":
             return self.responses(h)
@@ -473,12 +483,71 @@ def case_script_is_untouched_and_fallback_is_opt_in(sim, stub):
 def case_models_and_per_model_routing(sim, stub):
     sim.sign_in()
     status, body = sim.json("GET", "/api/ui/chatgpt/models")
-    assert status == 200 and body["models"] == ["gpt-5.4", "gpt-5.4-mini"], body
+    assert status == 200 and body["models"] == ["gpt-5.4", "gpt-5.4-mini", "gpt-hidden"], body
+    assert body["default"] == "gpt-5.4", "the default must be the plan's first VISIBLE model, not its lowest priority number"
     sim.configure(routing={"default": "scripted", "models": {"gpt-5": "chatgpt"}}, chatgpt={"model": "gpt-5.4-mini"})
     _, _, text = sim.post(CHAT, {"model": "gpt-5", "messages": [{"role": "user", "content": "hi"}]})
     assert text.count("Hello from the plan") == 1 and stub.last["json"]["model"] == "gpt-5.4-mini"
     status, _ = sim.json("POST", "/api/ui/config", {"routing": {"default": "nonsense"}})
     assert status == 400
+
+
+# ── Which plan model answers ─────────────────────────────────────────────
+
+def case_the_default_model_is_the_plans_own_first_visible_choice(sim, stub):
+    """gpt-5.4 was a guess, and an account without it was refused on its first request."""
+    sim.configure(routing={"default": "scripted", "models": {"gpt-5": "chatgpt"}}, chatgpt={"model": ""})
+    sim.json("POST", "/api/ui/chatgpt/logout")           # a new sign-in drops the cached list
+    sim.sign_in()
+    stub.models_calls = 0
+    status, headers, text = sim.call("POST", "/api/ui/chat", {"model": "gpt-5", "stream": False,
+                                                              "messages": [{"role": "user", "content": "hi"}]})
+    assert status == 200, text
+    assert stub.last["json"]["model"] == "gpt-5.4", "the hidden model, or none, was asked for: %s" % stub.last["json"]["model"]
+    assert headers.get("X-LLMSim-Rule") == "chatgpt:gpt-5.4", headers
+    sim.call("POST", "/api/ui/chat", {"model": "gpt-5", "stream": False, "messages": [{"role": "user", "content": "again"}]})
+    assert stub.models_calls == 1, "the plan's list was asked for on every request"
+    assert sim.json("GET", "/api/ui/chatgpt")[1]["default"] == "gpt-5.4"
+
+    sim.configure(chatgpt={"model": "gpt-5.4-mini"})     # a choice always wins
+    sim.call("POST", "/api/ui/chat", {"model": "gpt-5", "stream": False, "messages": [{"role": "user", "content": "x"}]})
+    assert stub.last["json"]["model"] == "gpt-5.4-mini"
+    sim.configure(chatgpt={"model": "gpt-hidden"})       # a hidden one is never picked for you, but may be named
+    sim.call("POST", "/api/ui/chat", {"model": "gpt-5", "stream": False, "messages": [{"role": "user", "content": "x"}]})
+    assert stub.last["json"]["model"] == "gpt-hidden"
+    sim.configure(chatgpt={"model": ""})
+    assert sim.json("GET", "/api/ui/state")[1]["config"]["chatgpt"]["model"] == "", "an empty model was refused or kept"
+
+
+def case_an_unreadable_plan_list_fails_loudly_rather_than_guessing(sim, stub):
+    sim.json("POST", "/api/ui/chatgpt/logout")
+    sim.sign_in()                                        # no cached list now
+    stub.models_fail, stub.last = True, None
+    try:
+        status, _, text = sim.call("POST", "/api/ui/chat", {"model": "gpt-5", "stream": False,
+                                                            "messages": [{"role": "user", "content": "hi"}]})
+        assert status == 502 and "plan" in json.loads(text)["error"]["message"].lower(), text
+        assert stub.last is None, "a model name was guessed and sent"
+        sim.configure(chatgpt={"model": "gpt-5.4"})      # chosen, so the list is not needed
+        status, _, text = sim.call("POST", "/api/ui/chat", {"model": "gpt-5", "stream": False,
+                                                            "messages": [{"role": "user", "content": "hi"}]})
+        assert status == 200, text
+    finally:
+        stub.models_fail = False
+        sim.configure(chatgpt={"model": ""})
+
+
+def case_a_config_that_holds_the_old_guess_is_read_as_unchosen(sim, stub):
+    path = os.path.join(sim.workdir, "config.json")
+    for stored, expected in (("gpt-5.4", ""), ("gpt-6-sol", "gpt-6-sol")):
+        sim.stop()
+        config = json.load(open(path))
+        config.setdefault("chatgpt", {})["model"] = stored
+        json.dump(config, open(path, "w"))
+        sim.start()
+        got = sim.json("GET", "/api/ui/state")[1]["config"]["chatgpt"]["model"]
+        assert got == expected, (stored, got)
+    sim.configure(chatgpt={"model": ""})
 
 
 def case_console_chat_goes_through_the_real_path(sim, stub):

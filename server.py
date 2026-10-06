@@ -324,7 +324,10 @@ DEFAULTS = {
     # their own owner-only file — so this block is safe to show the console.
     #
     #   model         the one plan model that answers every model routed here,
-    #                 whatever name the client asked for (as relay does)
+    #                 whatever name the client asked for (as relay does). Empty
+    #                 means the plan's own first choice, read from the plan: which
+    #                 models an account may use differs by plan and changes over
+    #                 time, so a name written here goes stale.
     #   instructions  sent when the client supplied no system prompt; the plan
     #                 backend refuses a request that has none
     #   fallback      answer from the script when the plan cannot be reached
@@ -339,7 +342,7 @@ DEFAULTS = {
     #            timestamps and never repeats.
     "session": {"onMiss": "fail", "strict": False},
     "chatgpt": {
-        "model": os.environ.get("LLMSIM_CHATGPT_MODEL", "gpt-5.4"),
+        "model": os.environ.get("LLMSIM_CHATGPT_MODEL", ""),
         "instructions": "You are a helpful assistant.",
         "fallback": False,
     },
@@ -391,6 +394,13 @@ def load_config():
         for key in SUITE_KEYS:
             if isinstance(suite.get(key), list):
                 config[key] = suite[key]
+    # gpt-5.4 was this file's built-in guess at a plan model, written into every
+    # config that was saved while it was the default, and a ChatGPT account does
+    # not offer it. Nobody chose it, so it is not a choice to keep: it becomes
+    # "the plan's own default" like a fresh install. A model somebody did choose
+    # is anything else and is left alone.
+    if config.get("chatgpt", {}).get("model") == "gpt-5.4":
+        config["chatgpt"]["model"] = ""
     return config
 
 
@@ -2012,6 +2022,7 @@ def chatgpt_finish_login(code, state, error=""):
     with CHATGPT_LOCK:
         CHATGPT["auth"], CHATGPT["dead"], CHATGPT["error"] = auth, False, None
         _save_chatgpt_auth(auth)
+        _forget_plan_models()
     log("chatgpt: signed in as %s (%s)" % (auth["email"] or "unknown", auth["plan"] or "unknown plan"))
     return True, "LLMSim can now answer with %s's ChatGPT plan." % (auth["email"] or "your")
 
@@ -2036,6 +2047,7 @@ def chatgpt_logout():
         auth, CHATGPT["auth"], CHATGPT["dead"], CHATGPT["error"] = CHATGPT["auth"], None, False, None
         _stop_pending_login()
         _forget_chatgpt_auth()
+        _forget_plan_models()
     revoked = False
     if auth:
         try:
@@ -2066,11 +2078,24 @@ def chatgpt_status():
             "listening": bool(pending and pending.get("listener")),
             "redirectUri": pending["redirect_uri"] if pending else None,
             "error": CHATGPT["error"],
+            "default": _plan_default_known(),
         }
 
 
-def chatgpt_models():
-    """The models this plan offers, as the backend lists them."""
+# The plan lists the models an account may use, each with a `visibility` ("list"
+# or "hide") and a `priority` (lower is preferred). Which models those are
+# differs by plan and by month — the built-in default of gpt-5.4 was a guess, and
+# an account that does not offer it was refused on its first request. So the
+# default is the plan's own first visible choice, read from the plan.
+PLAN_MODELS = {"rows": None, "at": 0.0}
+PLAN_MODELS_TTL = 600           # seconds; the list changes rarely and every request would otherwise ask
+
+
+def _plan_rows(refresh=False):
+    """The plan's own list of models, as the backend sends it. Cached briefly."""
+    with CHATGPT_LOCK:
+        if not refresh and PLAN_MODELS["rows"] is not None and time.time() - PLAN_MODELS["at"] < PLAN_MODELS_TTL:
+            return PLAN_MODELS["rows"]
     token, account = chatgpt_access()
     req = urllib.request.Request(
         "%s/models?client_version=%s" % (CHATGPT_BACKEND, urllib.parse.quote(CHATGPT_CLIENT_VERSION)),
@@ -2082,8 +2107,75 @@ def chatgpt_models():
         raise _chatgpt_http_error(exc)
     except Exception as exc:
         raise ChatGPTError(502, "upstream_error", "Could not list the plan's models: %s" % exc)
-    rows = body.get("models") if isinstance(body, dict) else body
-    return sorted({m.get("slug") or m.get("id") for m in rows or [] if isinstance(m, dict) and (m.get("slug") or m.get("id"))})
+    rows = [m for m in (body.get("models") if isinstance(body, dict) else body) or []
+            if isinstance(m, dict) and (m.get("slug") or m.get("id"))]
+    with CHATGPT_LOCK:
+        PLAN_MODELS.update(rows=rows, at=time.time())
+    return rows
+
+
+def _forget_plan_models():
+    """A different sign-in may be a different plan, and so a different list."""
+    with CHATGPT_LOCK:
+        PLAN_MODELS.update(rows=None, at=0.0)
+
+
+def _slug(row):
+    return row.get("slug") or row.get("id")
+
+
+def _ranked(rows):
+    """Slugs, the plan's visible choices first and by its own priority, then the rest.
+
+    Hidden models are not offered by the plan's own clients, so they are never
+    chosen for you — but they are not refused, and a person may name one.
+    """
+    def key(row):
+        priority = row.get("priority")
+        return (row.get("visibility") not in (None, "list"), priority if isinstance(priority, (int, float)) else 10 ** 6, _slug(row))
+    return [_slug(m) for m in sorted(rows, key=key)]
+
+
+def plan_default(rows):
+    """The model the plan itself would pick: its first visible one."""
+    visible = [m for m in rows if m.get("visibility") in (None, "list")]
+    return _ranked(visible)[0] if visible else None
+
+
+def plan_model():
+    """The model to ask for: the one that was chosen, else the plan's default.
+
+    Raises ChatGPTError when nothing was chosen and the plan's list cannot be
+    read, saying so — not guessing a name that may be refused.
+    """
+    chosen = CONFIG["chatgpt"]["model"]
+    if chosen:
+        return chosen
+    try:
+        default = plan_default(_plan_rows())
+    except ChatGPTError as exc:
+        # Say which step failed and what to do. "ChatGPT refused the request"
+        # would send somebody looking at their prompt.
+        raise ChatGPTError(exc.status if exc.status == 429 else 502, exc.kind,
+                           "No plan model is chosen, and the plan's own list of models could not be read, so there is "
+                           "nothing to pick from (%s). Choose a model on the Routing page." % exc.message)
+    if not default:
+        raise ChatGPTError(502, "upstream_error", "No plan model is chosen and the plan lists no model to pick one from. "
+                           "Choose one on the Routing page.")
+    return default
+
+
+def chatgpt_models():
+    """(slugs, default): what this plan offers, best first, and what it would pick."""
+    rows = _plan_rows(refresh=True)
+    return _ranked(rows), plan_default(rows)
+
+
+def _plan_default_known():
+    """The default if the list is already in hand — for the status the console polls, which must not make a request."""
+    with CHATGPT_LOCK:
+        rows = PLAN_MODELS["rows"]
+    return plan_default(rows) if rows else None
 
 
 # -- the canonical request ----------------------------------------------------
@@ -2452,7 +2544,7 @@ def chatgpt_events(resp):
     raise ChatGPTError(502, "upstream_error", "ChatGPT closed the stream before the answer was finished.")
 
 
-def _collect(events):
+def _collect(events, plan):
     """The whole answer as the {text, tool_calls} turn the script produces, so
     a client that did not ask for a stream is served by the builders every
     other route already uses."""
@@ -2479,7 +2571,7 @@ def _collect(events):
     turn.update(input_tokens=usage.get("input", 0), output_tokens=usage.get("output", 0),
                 cached_tokens=usage.get("cached", 0), reasoning_tokens=usage.get("reasoning", 0))
     turn["usage"] = {"input": usage.get("input", 0), "output": usage.get("output", 0),
-                     "cacheRead": usage.get("cached", 0), "model": CONFIG["chatgpt"]["model"]}
+                     "cacheRead": usage.get("cached", 0), "model": plan}
     return turn
 
 
@@ -3331,9 +3423,9 @@ class Handler(BaseHTTPRequestHandler):
         for field, limit in (("model", 100), ("instructions", 2000)):
             if field in plan:
                 value = str(plan[field] or "").strip()[:limit]
-                if field == "model" and not value:
-                    return self.send_json(400, {"error": "chatgpt.model cannot be empty"})
-                CONFIG["chatgpt"][field] = value or CONFIG["chatgpt"][field]
+                # An empty model is a choice — the plan's own default — not an
+                # omission; an empty prompt keeps the stored one, as it always did.
+                CONFIG["chatgpt"][field] = value if field == "model" else (value or CONFIG["chatgpt"][field])
         if "fallback" in plan:
             CONFIG["chatgpt"]["fallback"] = bool(plan["fallback"])
 
@@ -3479,7 +3571,8 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/ui/chatgpt/models":
             try:
-                return self.send_json(200, {"models": chatgpt_models()})
+                models, default = chatgpt_models()
+                return self.send_json(200, {"models": models, "default": default})
             except ChatGPTError as exc:
                 return self.send_json(exc.status, {"error": exc.message})
 
@@ -3507,7 +3600,7 @@ class Handler(BaseHTTPRequestHandler):
                 "upstream": ({"model": CONFIG["upstream"]["model"],
                               "format": CONFIG["upstream"]["format"],
                               "fallback": CONFIG["upstream"]["fallback"]} if relaying() else None),
-                "chatgpt": {"signedIn": chatgpt_status()["signedIn"], "model": CONFIG["chatgpt"]["model"]},
+                "chatgpt": {"signedIn": chatgpt_status()["signedIn"], "model": CONFIG["chatgpt"]["model"] or "auto"},
                 "session": {"mode": SESSION["mode"], "name": SESSION["name"]},
                 "rules": [r.get("name") for r in SCRIPT.get("rules", [])],
             })
@@ -3902,7 +3995,7 @@ class Handler(BaseHTTPRequestHandler):
                 pass
         return None
 
-    def chatgpt_serve(self, resp, shape, model, stream, body, messages, started):
+    def chatgpt_serve(self, resp, shape, model, stream, body, messages, started, plan):
         """Answer from an open ChatGPT stream, in the shape the client asked.
 
         Whole when the client did not ask for a stream, and otherwise piece by
@@ -3911,12 +4004,11 @@ class Handler(BaseHTTPRequestHandler):
         reported inside the stream in the client's own error form, since
         nothing else is left to say it with.
         """
-        cg = CONFIG["chatgpt"]
         entry = record({"provider": self.provider, "shape": shape, "model": model, "route": "chatgpt",
-                        "rule": "chatgpt:" + cg["model"], "stream": stream, "status": 200, "ms": 0,
+                        "rule": "chatgpt:" + plan, "stream": stream, "status": 200, "ms": 0,
                         "prompt": subject(messages)[:400], "reply": "", "tools": [], "usage": None, "error": None})
-        self.trace["Rule"] = "chatgpt:" + cg["model"]
-        log("%s %s model=%s stream=%s -> chatgpt:%s" % (self.provider, shape, model, stream, cg["model"]))
+        self.trace["Rule"] = "chatgpt:" + plan
+        log("%s %s model=%s stream=%s -> chatgpt:%s" % (self.provider, shape, model, stream, plan))
 
         def settle(**fields):
             entry.update(fields, ms=int((time.time() - started) * 1000))
@@ -3925,8 +4017,8 @@ class Handler(BaseHTTPRequestHandler):
         begun = False
         try:
             if not stream:
-                turn = _collect(events)
-                session_capture(self.ctx, "chatgpt", "chatgpt:" + cg["model"], turn, int((time.time() - started) * 1000))
+                turn = _collect(events, plan)
+                session_capture(self.ctx, "chatgpt", "chatgpt:" + plan, turn, int((time.time() - started) * 1000))
                 settle(reply=(turn.get("text") or "")[:400], usage=turn["usage"],
                        tools=[c["name"] for c in turn.get("tool_calls") or []])
                 build = (anthropic_body if shape == "anthropic"
@@ -3951,12 +4043,12 @@ class Handler(BaseHTTPRequestHandler):
                         made.append({"id": data["id"], "name": data["name"], "input": {"_raw": data["arguments"]}})
                 elif kind == "end":
                     u = data["usage"]
-                    session_capture(self.ctx, "chatgpt", "chatgpt:" + cg["model"], {
+                    session_capture(self.ctx, "chatgpt", "chatgpt:" + plan, {
                         "text": "".join(said), "tool_calls": made,
                         "usage": {"input": u["input"], "output": u["output"], "cacheRead": u["cached"], "reasoning": u["reasoning"]}},
                         int((time.time() - started) * 1000))
                     settle(reply="".join(said)[:400],
-                           usage={"input": u["input"], "output": u["output"], "cacheRead": u["cached"], "model": cg["model"]})
+                           usage={"input": u["input"], "output": u["output"], "cacheRead": u["cached"], "model": plan})
         except ChatGPTError as exc:
             log("chatgpt failed %s: %s" % ("mid-stream" if begun else "before the first word", exc.message))
             settle(status=exc.status, error=exc.message)
@@ -4111,9 +4203,9 @@ class Handler(BaseHTTPRequestHandler):
                 name = "fallback:" + name
         elif route == "chatgpt":
             canon = canon_request(shape, body)
-            payload = chatgpt_payload(canon, CONFIG["chatgpt"]["model"])
             try:
-                resp = chatgpt_open(payload)
+                plan = plan_model()
+                resp = chatgpt_open(chatgpt_payload(canon, plan))
             except ChatGPTError as exc:
                 log("chatgpt failed before it began: %s" % exc.message)
                 if not CONFIG["chatgpt"]["fallback"]:
@@ -4128,7 +4220,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 if canon["dropped"]:
                     log("   not sent to ChatGPT, which does not take them: %s" % ", ".join(canon["dropped"]))
-                return self.chatgpt_serve(resp, shape, model, stream, body, messages, started)
+                return self.chatgpt_serve(resp, shape, model, stream, body, messages, started, plan)
         else:
             name, turn = choose_turn(self.provider, model, messages, declared)
 
@@ -4278,7 +4370,7 @@ def main():
     if CHATGPT["auth"]:
         log("chatgpt: signed in as %s%s — answers with %s%s"
             % (CHATGPT["auth"]["email"] or "an account", " (%s)" % CHATGPT["auth"]["plan"] if CHATGPT["auth"]["plan"] else "",
-               plan["model"], " for the default route" if CONFIG["routing"]["default"] == "chatgpt" else ""))
+               plan["model"] or "the plan's own default model", " for the default route" if CONFIG["routing"]["default"] == "chatgpt" else ""))
         # Said out loud because the README's old promise — nothing here is
         # worth taking — stops being true once a subscription is signed in.
         log("          anyone who can reach this port can spend that plan; keep it off a shared network")

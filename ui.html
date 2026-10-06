@@ -310,8 +310,8 @@
         <div id="cg-msg" style="font-size:12px; margin-top:8px"></div>
 
         <div class="row" style="margin-top:14px">
-          <div><label for="cg-model">Plan model</label>
-            <input id="cg-model" class="mono" type="text" list="cg-models" placeholder="gpt-5.4">
+          <div><label for="cg-model">Plan model <span class="hint">· leave blank for the plan's own default</span></label>
+            <input id="cg-model" class="mono" type="text" list="cg-models" placeholder="the plan's own default">
             <datalist id="cg-models"></datalist></div>
         </div>
         <label for="cg-instr">System prompt when the client sends none</label>
@@ -855,7 +855,7 @@ function renderChat() {
   } else if (r === "chatgpt") {
     kind = CG.signedIn ? "ok" : "warn";
     text = CG.signedIn
-      ? `<span class="tag plan">plan</span> Answered by the ChatGPT plan (<code>${esc(CFG.chatgpt.model)}</code>), signed in as ${esc(CG.email || "a ChatGPT account")}. This spends the plan.`
+      ? `<span class="tag plan">plan</span> Answered by the ChatGPT plan (<code>${esc(CFG.chatgpt.model || CG.default || "its own default model")}</code>), signed in as ${esc(CG.email || "a ChatGPT account")}. This spends the plan.`
       : `<span class="tag err">not signed in</span> This model is routed to the ChatGPT plan and will fail until you sign in. ${go}`;
   } else if (r === "relay") {
     kind = CFG.upstream.url ? "ok" : "warn";
@@ -1048,7 +1048,12 @@ function renderChatGPT() {
   if (st.error && !st.needsSignIn && !st.signedIn) say(st.error, true);
   if (st.signedIn && !CG_LISTED) { CG_LISTED = true; chatgptModels(); }
   if (!st.signedIn) CG_LISTED = false;
-  if (live !== "cg-model") document.getElementById("cg-model").value = plan.model || "";
+  if (live !== "cg-model") {
+    const box = document.getElementById("cg-model");
+    box.value = plan.model || "";
+    // Blank is a choice, and the plan's pick is shown rather than hidden behind it.
+    box.placeholder = st.default ? "auto — currently " + st.default : "the plan's own default";
+  }
   if (live !== "cg-instr") document.getElementById("cg-instr").value = plan.instructions || "";
   if (live !== "cg-fallback") document.getElementById("cg-fallback").checked = !!plan.fallback;
 }
@@ -1094,6 +1099,7 @@ async function chatgptModels() {
     const out = await r.json();
     if (!r.ok) return;
     document.getElementById("cg-models").innerHTML = (out.models || []).map((m) => `<option value="${esc(m)}">`).join("");
+    if (out.default) CG.default = out.default;
   } catch { /* the list is a convenience; the field still takes a typed name */ }
 }
 

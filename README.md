@@ -300,6 +300,235 @@ fall back to the script: a demo that silently serves canned answers looks
 like it is working and proves nothing. `LLMSIM_UPSTREAM_FALLBACK=1` opts
 into the other behaviour.
 
+## A third mode: a ChatGPT subscription
+
+Relay answers with a real model through an API key. This answers with one
+through a **ChatGPT plan** — the person signs in with OpenAI, and every model
+routed to it is answered by their subscription, in whichever format the
+client asked in.
+
+```
+client (Chat Completions | Anthropic Messages | Responses)
+        │  canon_request()
+        ▼
+CanonicalRequest ── chatgpt_payload() ──▶ POST {backend}/responses
+        ▲                                   store:false, stream:true
+        │                                          │
+ encoders ◀── CanonicalEvents ◀── chatgpt_events() ┘
+ (the client's own wire format, whole or streamed)
+```
+
+The middle is the one format the plan backend speaks. Every client format
+goes in and out through the same two seams, so a fourth client format is one
+translator rather than another copy of the whole path.
+
+**To use it:** Routing → *ChatGPT plan* → **Sign in with ChatGPT**. A tab opens
+at OpenAI; confirm access, and the console flips to *signed in*. Then pick
+the route — as the default, or per model on the Models page — and choose the
+plan model (the picker lists what the plan actually offers).
+
+```
+curl localhost:8099/openai/v1/chat/completions \
+  -H "Authorization: Bearer sk-llmsim-000000000000000000000000" \
+  -d '{"model":"claude-sonnet-5","messages":[{"role":"user","content":"hi"}]}'
+```
+
+**What crosses the seam.** Text, system prompts, tool declarations, tool calls
+and their results, images, JSON-schema output and reasoning effort all
+translate, and tool-call ids round-trip so an agent loop works. Sampling
+controls — `max_tokens`, `temperature`, `top_p`, `stop` — are *not sent*,
+because the plan backend rejects them; each request that carried one logs
+which were dropped. Usage is the plan's own, cache hits included. A tool call
+is passed on whole when the backend finishes it, not argument-fragment by
+fragment, so streamed text is live but a streamed call arrives in one piece.
+Anthropic's `message_start` carries zero input tokens, since they are not
+known until the end; the real figures are on `message_delta`.
+
+**How the sign-in works.** It is the OAuth + PKCE flow OpenAI's open-source
+Codex client uses, with that client's registered id — read from its source,
+not guessed. That is why the redirect must land on `127.0.0.1:1455` (or
+`1457`): LLMSim listens there, on loopback only, for the length of the
+sign-in. If it is running on another machine, or Codex holds the port, the
+console asks you to paste the address the browser ended up on instead. The
+`state` is checked, a code is single-use, and a request from another site's
+origin cannot start, finish or cancel a sign-in.
+
+Tokens live in `llmsim.chatgpt-auth.json` — created owner-only, replaced
+atomically, gitignored — and are never sent to the console, which is told only
+whether somebody is signed in and as whom. The access token is refreshed
+before it lapses; if the refresh token is refused for good, LLMSim stops
+asking and says *sign in again* rather than retrying on every request.
+*Sign out* forgets the tokens and asks OpenAI to revoke the grant; if that
+call fails it says so, and the grant can be removed in ChatGPT's settings.
+
+**Failures are the client's own.** A reached plan limit is a **429** in the
+vendor's envelope with the reset time in the message and a `retry-after`; a
+bad request is a 400; an unreachable or refusing backend is a 502. A 401 from
+OpenAI is *not* passed on as one — it would tell a gateway its own key was
+wrong and send somebody to fix the wrong thing. After the first byte the
+status is already sent, so a failure is reported inside the stream in that
+format's error form. As with relay, nothing silently falls back to the
+script; *Answer here if the plan cannot be reached* is opt-in.
+
+| Variable | Default | |
+|---|---|---|
+| `LLMSIM_CHATGPT_MODEL` | `gpt-5.4` | The plan model that seeds the setting; the console wins after that. |
+| `LLMSIM_CHATGPT_AUTH` | `llmsim.chatgpt-auth.json` | Where the tokens are kept. |
+| `LLMSIM_CHATGPT_PORTS` | `1455,1457` | The redirect ports to try. |
+| `LLMSIM_CHATGPT_ISSUER` / `_BACKEND` | OpenAI's | Overridden by the tests to point at a stand-in. |
+| `LLMSIM_CHATGPT_CLIENT_ID` / `_ORIGINATOR` | Codex's | What the sign-in presents itself as. |
+
+**Read this before turning it on.** The rest of LLMSim holds nothing worth
+taking, and that is why the console has no sign-in. Signed in, this holds a
+subscription: anyone who can reach the port can spend it, through the vendor
+routes with their published keys. Keep it on your own machine or a network you
+trust. The sign-in presents as the Codex client, which is what makes it work;
+whether a given use of a plan that way is permitted is OpenAI's to say, not
+this file's. Usage counts against the plan's own limits.
+
+**What is and is not verified.** `tests/test_chatgpt_plan.py` runs the whole
+route against a stand-in for OpenAI — no network, no account — and checks the
+contract strictly: the PKCE verifier against its challenge, `store:false`,
+`stream:true`, the account header, rotating refresh tokens, a revoked token
+refreshed once and retried, a dead one not retried, tool-call round trips in
+all three formats, and every failure path. That proves LLMSim speaks the
+contract it read. It cannot prove OpenAI still honours it today; only a real
+sign-in does, and the first one is the real test.
+
+```
+python3 tests/test_chatgpt_plan.py
+```
+
+## Recording a session, and replaying it exactly
+
+Scripted answers are written by hand, and relayed ones differ every time. A
+**session recording** is the third thing: run a real session once — a Maniple
+agent going through the gateway to a real model, say — keep every answer, and
+from then on answer that same run with exactly those words. Offline, free, and
+identical every time, which is what a regression test of an agent needs and a
+live model can never give.
+
+```
+Sessions → name it → Start recording → run the session → Stop and save
+Sessions → Replay
+```
+
+### The API a test harness drives
+
+Plain HTTP, so a harness needs nothing but a client. Maniple's suite drives it
+this way (`test/system/llmsim.py`, with `--llmsim-record` / `--llmsim-replay`).
+
+| | |
+|---|---|
+| `GET /api/sessions` | What is running, its counts, and every cassette LLMSim holds. |
+| `POST /api/sessions/record` | `{name, masks?, overwrite?}` — start recording. An existing name is a 409 unless `overwrite`. |
+| `POST /api/sessions/replay` | `{name, masks?, onMiss?, strict?}` — start replaying. |
+| `POST /api/sessions/auto` | `{name, …}` — replay if the cassette exists, otherwise record it: the first run of a test makes the recording and every run after it uses it. |
+| `POST /api/sessions/stop` | Stop, and return the **summary**: `entries`, `hits`, `misses`, `diverged`, and `unmatched` — each ask with no recording, and why. |
+| `GET /api/sessions/<name>` | The cassette, as a file. |
+| `PUT /api/sessions/<name>` | Upload one (the same JSON); `?overwrite=1` replaces. |
+| `DELETE /api/sessions/<name>` | Delete one. |
+
+Status codes say what went wrong so a caller need not read a sentence: **400**
+it asked wrongly (a bad name, a mask that is not a pattern), **404** there is no
+such cassette, **409** the state forbids it (something is already running, the
+name exists, nothing is running to stop), **403** the request came from another
+website's page. One session runs at a time.
+
+```
+curl -X POST localhost:8099/api/sessions/record -d '{"name":"login-flow","masks":["\\d{8}-\\d{6}"]}'
+…run the session…
+curl -X POST localhost:8099/api/sessions/stop        # → summary
+curl localhost:8099/api/sessions/login-flow > login-flow.json
+
+curl -X PUT 'localhost:8099/api/sessions/login-flow?overwrite=1' -d @login-flow.json
+curl -X POST localhost:8099/api/sessions/replay -d '{"name":"login-flow"}'
+…run it again…
+curl -X POST localhost:8099/api/sessions/stop        # → hits, misses, unmatched
+
+LLMSIM_REPLAY=login-flow python3 server.py           # or start already replaying
+```
+
+**The cassette is a file the caller keeps.** LLMSim's own directory is
+machine-local, and a test should not depend on what an earlier run left there. So
+a harness downloads the cassette after recording, keeps it in its own repository,
+and uploads it again before a replay.
+
+**Masks.** A request is matched on its ask, and an ask can carry text that is
+different every run — a run id made from the clock, say, which Maniple puts in
+every prompt it sends. Left alone, a replay asks for something the recording
+never held. A *mask* is a regular expression whose matches are removed from the
+ask, in the recording **and again in the replay**:
+
+```
+"masks": ["\\d{8}-\\d{6}"]        # "system test 20261006-153012 verified …"  →  "system test <*> verified …"
+```
+
+Masks are stored in the cassette, so a replay applies the ones the recording
+used and any the caller adds. They are bounded (20, each up to 200 characters)
+and checked when the call is made.
+
+**A replay's settings are its own.** `onMiss` and `strict` on a replay apply to
+that replay and no other. They default to the console's settings but are not
+those settings: a test that wants strictness for one run must not change what the
+next run, or the console, does.
+
+**The functional cases are exempt.** The cases on *Test Execution* check a
+*caller* against the script's rules. LLMSim answers them from the script whatever
+the default route is — a relay or the ChatGPT plan would spend something and say
+something else, and the cases would fail — and leaves them out of any recording,
+so they neither pollute a cassette nor fail a replay. The marker is a header the
+runner sets on its own requests, honoured only from this machine.
+
+**What is recorded is the answer, not the request.** Its text, its tool calls
+with their arguments and their ids, and the token counts the route reported.
+Not the request: a harness request is megabytes of system prompt and file
+contents, none of it needed to answer the next identical one. An answer can
+still quote one, so a cassette is written owner-only to `cassettes/` and is not
+committed. Whatever route produced the answer — the script, a relay, the ChatGPT
+plan — is kept, so the usual way to make one is to record a session through the
+plan and replay it for free from then on. A refusal, a rate limit or a failure
+is never recorded as an answer.
+
+**How a request is matched.** Not by the whole request. That cannot work: turn
+three carries turns one and two inside it, tool output included — timestamps,
+ids, directory listings — so it never repeats. This is the same reason the
+script advances by counting assistant turns. A request is its **ask** — the last
+thing a person said that was not tool output, the same text a script rule is
+matched on — plus **how far into the conversation it is**. Harnesses prepend
+`<system-reminder>` blocks carrying the date and the like; they are not the ask
+and change daily, so they are removed first.
+
+That is lenient on purpose: the same ask at the same point gets the same answer
+even if a tool printed something different this time. The difference is counted
+and shown (*last message differed*), not swallowed. **Strict** turns it into a
+miss, for the cases where the tool output is what is being tested.
+
+- **A request the recording cannot answer** fails with a 404 naming the cassette,
+  the ask and the turn, and appears in the console under *Not in the recording*.
+  Failing is the default because a run that has wandered off its recording should
+  be loud, not quietly talking to something else. Set it to *take its normal
+  route* when the harness makes side calls that are not worth recording.
+- **A replay comes before routing.** A recorded question is answered from the
+  cassette whatever the model is routed to, so the run no longer depends on
+  anything that route reaches.
+- **Any wire format.** A recording made through one vendor's format replays
+  through another's — the answer is stored once and built per caller. The one
+  place that is not exact is a parallel tool call, which Chat Completions sends as
+  one assistant message and Responses as several: they count turns differently.
+- **One answer per ask and turn.** A retry, or the same step of a second run,
+  replaces the earlier one.
+
+A cassette is a JSON file. **Download** and **Import** move one between machines;
+an imported file is checked, and the keys in it are worked out again rather than
+believed, since a key decides which request is given which answer.
+
+**What is not verified.** The matching has been tested against the script, the
+plan stand-in and all three wire formats. It has not been tried against a real
+Maniple session, whose requests carry more than any test here does. The first
+recording will say: if requests that should match show as *no recording*, the
+console lists the ask each one arrived with.
+
 ## Testing the unhappy paths
 
 The rules shipped in `responses.json` include ones no live API key will give
@@ -359,11 +588,12 @@ tell the difference.
 - **Scripts go stale on purpose.** Change a prompt or a harness and a script
   written for the old one no longer fits. That is information, but it means
   scripts need maintaining alongside the thing they test.
-- **No recording yet.** Scripts are written by hand. Capturing real sessions
-  and replaying them — the cassette approach, as in
-  [cs-vcr](https://github.com/codesweep-ai/vcr) — would give real tool
-  sequences instead of imagined ones. The `turns` format was designed to
-  accept them: a recorder can emit this shape directly.
+- **A recording is only as general as its matching.** Scripts are written by
+  hand; real sessions can be captured and replayed (see *Recording a session*
+  above), which gives real tool sequences instead of imagined ones. A replay
+  answers a request by its ask and how far into the conversation it is, so it
+  follows a run that makes the same asks in the same order. It does not
+  generalise: change the prompt and there is, correctly, nothing recorded for it.
 
 ## Pointing LiteLLM at it
 

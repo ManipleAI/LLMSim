@@ -77,6 +77,8 @@
   .head .spacer { flex:1; }
   .body { padding:22px 28px 40px; max-width:1100px; }
   .view[hidden] { display:none; }
+  /* A layout rule such as .row sets display and would otherwise beat the hidden attribute. */
+  .body [hidden] { display:none !important; }
 
   .card { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:17px 18px; }
   .card + .card { margin-top:16px; }
@@ -123,8 +125,40 @@
     padding:3px 6px; border-radius:4px; background:var(--subtle); color:var(--faint); white-space:nowrap;
   }
   .tag.relay { background:var(--primary-tint); color:var(--primary); }
+  .tag.plan { background:var(--green-tint); color:var(--green); }
+  .tag.replay { background:var(--amber-tint); color:var(--amber); }
+  .tag.rec { background:var(--primary-tint); color:var(--primary); }
   .tag.set { background:var(--green-tint); color:var(--green); }
   .tag.err { background:var(--amber-tint); color:var(--amber); }
+
+  /* ── sessions ────────────────────────────────────────────────────── */
+  .sess-table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  .sess-table th { text-align:left; font:600 10px/1 var(--mono); letter-spacing:.12em; text-transform:uppercase; color:var(--faint); padding:0 10px 8px 0; }
+  .sess-table td { padding:8px 10px 8px 0; border-top:1px solid var(--border-soft); vertical-align:top; }
+  .sess-table td.ask { max-width:340px; overflow-wrap:anywhere; }
+  .sess-table .act { white-space:nowrap; text-align:right; }
+  .sess-table .act button { margin-left:6px; padding:5px 10px; }
+  .stat { display:inline-flex; flex-direction:column; margin-right:26px; }
+  .stat b { font:600 20px/1.1 var(--mono); }
+  .stat span { font:600 9.5px/1 var(--mono); letter-spacing:.12em; text-transform:uppercase; color:var(--faint); margin-top:4px; }
+  nav button .n:empty { display:none; }
+
+  /* ── chat ────────────────────────────────────────────────────────── */
+  .chat-log { min-height:260px; max-height:54vh; overflow:auto; display:flex; flex-direction:column; gap:14px; padding:2px 2px 14px; }
+  .chat-log .none { margin:auto; color:var(--faint); font-size:12.5px; text-align:center; max-width:34ch; }
+  .msg { max-width:82%; padding:9px 12px; border-radius:10px; font-size:13.5px; white-space:pre-wrap; overflow-wrap:anywhere; }
+  .msg.user { align-self:flex-end; background:var(--primary-tint); }
+  .msg.assistant { align-self:flex-start; background:var(--subtle); border:1px solid var(--border-soft); }
+  .msg.assistant.err { background:var(--amber-tint); border-color:transparent; color:var(--amber); }
+  .msg.pending:empty::after, .msg.pending .t:empty::after { content:"…"; color:var(--faint); }
+  .msg .calls { margin-top:7px; display:flex; flex-direction:column; gap:5px; white-space:normal; }
+  .msg .call { font:12px/1.4 var(--mono); background:#fff; border:1px solid var(--border); border-radius:6px; padding:5px 8px; overflow-wrap:anywhere; }
+  .msg .call b { color:var(--primary); }
+  .msg .meta { margin-top:7px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; font:11px/1.3 var(--mono); color:var(--faint); white-space:normal; }
+  .chat-compose { display:flex; gap:10px; align-items:flex-end; border-top:1px solid var(--border-soft); padding-top:14px; }
+  .chat-compose textarea { min-height:46px; max-height:170px; }
+  details.more { margin-top:12px; }
+  details.more summary { cursor:pointer; color:var(--muted); font-size:12px; }
 
   /* ── models: list beside detail ──────────────────────────────────── */
   .split { display:grid; grid-template-columns:300px 1fr; gap:16px; align-items:start; }
@@ -179,6 +213,8 @@
   <button data-view="logs" onclick="show('logs')"><span>Logs</span><span class="n" id="n-logs">0</span></button>
 
   <div class="group">Verify</div>
+  <button data-view="chat" onclick="show('chat')"><span>Chat</span></button>
+  <button data-view="sessions" onclick="show('sessions')"><span>Sessions</span><span class="n" id="n-sessions"></span></button>
   <button data-view="tests" onclick="show('tests')"><span>Test Execution</span><span class="n" id="n-tests">0</span></button>
 
   <div class="group">Connect</div>
@@ -217,12 +253,15 @@
         <div class="seg" role="group" aria-label="Default route">
           <button id="def-scripted" onclick="setDefault('scripted')" aria-pressed="false">No upstream — answer here</button>
           <button id="def-relay" onclick="setDefault('relay')" aria-pressed="false">Upstream — relay</button>
+          <button id="def-chatgpt" onclick="setDefault('chatgpt')" aria-pressed="false">ChatGPT plan</button>
         </div>
         <div id="nourl" class="note warn" hidden>
           Nothing is configured to relay to, so relay routes answer here instead. Set an upstream below.
         </div>
         <div id="routed" class="note ok" hidden></div>
       </div>
+
+      <div id="cfg-home"></div>
 
       <div class="card">
         <h2>Fidelity</h2>
@@ -244,10 +283,52 @@
         </div>
       </div>
 
-      <!-- Hidden while nothing relays: a form for an upstream that no route
-           will ever reach is an invitation to configure something that then
-           appears to do nothing. Choosing "Upstream — relay" brings it back. -->
-      <div class="card" id="upstreamcard" hidden>
+    </div>
+  </section>
+
+  <!-- The two route cards live here when no route needs them, and are moved to
+       where one does: under Default on Routing, or under a model's own route on
+       the Models page. One card each, so a half-typed field is never in two places. -->
+  <div id="cfg-park" hidden>
+      <div class="card" id="chatgptcard">
+        <h2>ChatGPT plan</h2>
+        <p class="help">Answer with a ChatGPT subscription instead of an API key. Sign in with OpenAI once; every model routed to the plan is then answered by it, in whichever format the client asked in.</p>
+        <div id="cg-status" style="font-size:13px; margin-bottom:10px"></div>
+        <div style="display:flex; gap:9px; align-items:center; flex-wrap:wrap">
+          <button class="btn" id="cg-signin" onclick="chatgptSignIn()">Sign in with ChatGPT</button>
+          <button class="btn ghost" id="cg-signout" onclick="chatgptSignOut()" hidden>Sign out</button>
+          <a id="cg-link" href="#" target="_blank" rel="noopener" hidden style="font-size:12px">Open the OpenAI sign-in page</a>
+        </div>
+        <!-- Only when nothing is listening for the redirect: LLMSim is on another
+             machine than this browser, so the redirect lands on a page that cannot
+             load. Its address bar is what carries the code. -->
+        <div id="cg-paste" hidden style="margin-top:12px">
+          <label for="cg-redirect">After you confirm, the browser lands on a page that will not load. Paste its address here.</label>
+          <input id="cg-redirect" class="mono" type="text" placeholder="http://127.0.0.1:1455/auth/callback?code=…&state=…">
+          <div style="margin-top:10px"><button class="btn" onclick="chatgptPaste()">Finish sign-in</button></div>
+        </div>
+        <div id="cg-msg" style="font-size:12px; margin-top:8px"></div>
+
+        <div class="row" style="margin-top:14px">
+          <div><label for="cg-model">Plan model</label>
+            <input id="cg-model" class="mono" type="text" list="cg-models" placeholder="gpt-5.4">
+            <datalist id="cg-models"></datalist></div>
+        </div>
+        <label for="cg-instr">System prompt when the client sends none</label>
+        <textarea id="cg-instr" style="min-height:54px" placeholder="You are a helpful assistant."></textarea>
+        <label style="display:flex; align-items:center; gap:8px; margin-top:14px; color:var(--ink)">
+          <input id="cg-fallback" type="checkbox" style="width:auto"> Answer here if the plan cannot be reached
+        </label>
+        <div style="margin-top:14px; display:flex; gap:9px; align-items:center">
+          <button class="btn" onclick="saveChatGPT()">Save</button>
+          <span id="cg-saved" style="font-size:12px"></span>
+        </div>
+        <div class="note warn">
+          Anyone who can reach this port can spend this plan. Until now nothing here was worth taking; signed in, something is. Keep it on your own machine or a network you trust. Usage counts against the plan's own limits, and a limit reached comes back as a 429.
+        </div>
+      </div>
+
+      <div class="card" id="upstreamcard">
         <h2>Upstream</h2>
         <p class="help">One real model answers for every model routed to it — whatever name the client asked for, and in the format it asked in.</p>
         <label for="url">Base URL</label>
@@ -268,8 +349,7 @@
           <span id="saved" style="font-size:12px"></span>
         </div>
       </div>
-    </div>
-  </section>
+  </div>
 
   <!-- ── Logs ───────────────────────────────────────────────────────── -->
   <section class="view" id="v-logs" hidden>
@@ -294,6 +374,94 @@
 
 
   <!-- ── Test Execution ─────────────────────────────────────────────── -->
+  <!-- ── Sessions ───────────────────────────────────────────────────── -->
+  <section class="view" id="v-sessions" hidden>
+    <div class="head">
+      <div><h1>Sessions</h1><p>Record a real run once — a Maniple session, say — and replay it exactly, offline and free.</p></div>
+    </div>
+    <div class="body">
+      <div class="card">
+        <h2>Session</h2>
+        <div id="sess-status" style="font-size:13px; margin-bottom:12px"></div>
+        <div id="sess-start" class="row" style="align-items:flex-end">
+          <div><label for="sess-name" style="margin-top:0">Name <span class="hint">· letters, digits, dot, dash, underscore</span></label>
+            <input id="sess-name" class="mono" type="text" placeholder="login-flow"
+              onkeydown="if (event.key === 'Enter') sessRecord()"></div>
+          <div style="flex:0 0 auto"><button class="btn" onclick="sessRecord()">Start recording</button></div>
+        </div>
+        <div id="sess-stop" hidden><button class="btn" onclick="sessStop()">Stop</button></div>
+        <div id="sess-msg" style="font-size:12px; margin-top:10px"></div>
+        <div id="sess-live" style="margin-top:14px"></div>
+        <div class="note warn" id="sess-warn" hidden>
+          Recording keeps the model's <b>answers</b> — its text and tool calls — in <code>cassettes/</code> on this machine, owner-only and not committed. It does not keep the requests, but an answer can quote one.
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Cassettes</h2>
+        <div id="sess-list"></div>
+        <div style="margin-top:12px">
+          <button class="btn ghost" onclick="document.getElementById('sess-import').click()">Import</button>
+          <input type="file" id="sess-import" accept="application/json,.json" hidden onchange="sessImport(this)">
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>How a replay answers</h2>
+        <p class="help">A request is matched on <b>what was asked</b> and <b>how far into the conversation it is</b> — not on the whole request, which carries timestamps and tool output that never repeat. A recording made through one vendor's format replays through another's.</p>
+        <label for="sess-miss">A request the recording cannot answer</label>
+        <select id="sess-miss" onchange="sessSettings()">
+          <option value="fail">Fail with a 404 that says what was missing</option>
+          <option value="route">Take its normal route instead</option>
+        </select>
+        <label style="display:flex; align-items:center; gap:8px; margin-top:14px; color:var(--ink)">
+          <input id="sess-strict" type="checkbox" style="width:auto" onchange="sessSettings()"> Strict: the last message must match too
+        </label>
+        <div class="note warn">Strict is off by default because the last message is usually a tool's output, with timestamps in it. Off, a different one is still answered and counted as <i>differs</i>. Failing is the default because a run that has left its recording should be loud, not quietly talking to something else.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Chat ───────────────────────────────────────────────────────── -->
+  <section class="view" id="v-chat" hidden>
+    <div class="head">
+      <div><h1>Chat</h1><p>Talk to a model through LLMSim, on whatever route it is set to. It goes the same way a client's request does, and shows up in Logs.</p></div>
+      <span class="spacer"></span>
+      <button class="btn ghost" onclick="chatClear()">New conversation</button>
+    </div>
+    <div class="body">
+      <div class="card">
+        <label for="chat-model" style="margin-top:0">Model</label>
+        <select id="chat-model" onchange="renderChat()"></select>
+        <div id="chat-route" class="note"></div>
+        <details class="more">
+          <summary>System prompt, and a tool to offer</summary>
+          <label for="chat-system">System prompt</label>
+          <textarea id="chat-system" style="min-height:54px" placeholder="Optional"></textarea>
+          <div class="row">
+            <div><label for="chat-tool">Tool name</label><input id="chat-tool" class="mono" type="text" placeholder="get_weather"></div>
+            <div><label for="chat-tooldesc">Description</label><input id="chat-tooldesc" type="text" placeholder="Current weather for a city"></div>
+          </div>
+          <label for="chat-toolschema">Parameters <span class="hint">(JSON schema)</span></label>
+          <textarea id="chat-toolschema" class="mono" style="min-height:54px" placeholder='{"type":"object","properties":{"city":{"type":"string"}}}'></textarea>
+          <p class="help" style="margin:8px 0 0">The model may call it, and the call is shown. It is not run, and no result goes back.</p>
+        </details>
+      </div>
+
+      <div class="card">
+        <div id="chat-log" class="chat-log"></div>
+        <div class="chat-compose">
+          <textarea id="chat-input" placeholder="Say something… Enter sends, Shift+Enter starts a new line."
+            onkeydown="if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); chatSend(); }"></textarea>
+          <button class="btn" id="chat-send" onclick="chatSend()">Send</button>
+        </div>
+        <label style="display:flex; align-items:center; gap:8px; margin:10px 0 0; color:var(--muted)">
+          <input id="chat-stream" type="checkbox" checked style="width:auto"> Stream the answer
+        </label>
+      </div>
+    </div>
+  </section>
+
   <section class="view" id="v-tests" hidden>
     <div class="head">
       <div><h1>Test Execution</h1><p>Drive the simulator to check the caller. A case is a sequence of steps, run in order.
@@ -339,6 +507,9 @@
 
 <script>
 let CFG = null, MODELS = {}, ALL = [], REQS = [], SINCE = 0, VIEW = "models", PICKED = null;
+let CG = { signedIn: false }, CG_URL = null, CG_LISTED = false;
+let CHAT = { turns: [], busy: false, abort: null };
+let SESS = { mode: "off", cassettes: [], settings: {} };
 let CASE = null, PLAN = null, RUN = null, RUNNING = false;
 
 // Built from the origin rather than used as a relative path: opening this as
@@ -351,6 +522,7 @@ function show(v) {
   VIEW = v;
   for (const s of document.querySelectorAll(".view")) s.hidden = s.id !== "v-" + v;
   for (const b of document.querySelectorAll("nav button[data-view]")) b.setAttribute("aria-current", b.dataset.view === v);
+  if (CFG) { renderDetail(); placeCards(); renderChatGPT(); renderChat(); renderSessions(); }
 }
 
 async function load() {
@@ -366,11 +538,11 @@ async function load() {
   }
   document.getElementById("dot").className = "dot";
   document.getElementById("conn").textContent = "connected";
-  CFG = s.config; MODELS = s.models; ALL = s.allModels;
+  CFG = s.config; MODELS = s.models; ALL = s.allModels; CG = s.chatgpt || CG; SESS = s.session || SESS;
   for (const row of s.requests) { REQS.unshift(row); SINCE = Math.max(SINCE, row.n); }
   if (REQS.length > 300) REQS.length = 300;
   if (!PICKED) PICKED = ALL[0];
-  renderChrome(); renderList(); renderDetail(); renderRouting(); renderLogs(); renderTests();
+  renderChrome(); renderList(); renderDetail(); renderRouting(); renderChatGPT(); renderChat(); renderSessions(); renderLogs(); renderTests();
 }
 
 // The state poll repaints every panel every 1.5 seconds, which is right for
@@ -387,14 +559,44 @@ function renderChrome() {
   const routed = Object.keys(CFG.routing.models).length;
   const answers = Object.keys(CFG.responses || {}).length;
   document.getElementById("n-models").textContent = ALL.length;
-  document.getElementById("n-routing").textContent = routed ? routed + " set" : CFG.routing.default === "relay" ? "relay" : "local";
+  document.getElementById("n-routing").textContent = routed ? routed + " set" : CFG.routing.default === "scripted" ? "local" : CFG.routing.default;
   document.getElementById("n-logs").textContent = REQS.length;
   document.getElementById("n-tests").textContent = (CFG.tests || []).length;
   document.getElementById("footmode").textContent =
-    CFG.routing.default + (routed ? " · " + routed + " routed" : "") + (answers ? " · " + answers + " answered" : "");
+    CFG.routing.default + (routed ? " · " + routed + " routed" : "") + (answers ? " · " + answers + " answered" : "")
+    + (SESS.mode === "record" ? " · recording " + SESS.name : SESS.mode === "replay" ? " · replaying " + SESS.name : "");
+}
+
+// Where the two route cards belong right now, and which of them.
+//
+// A card is shown only for the route being looked at: under Default on the
+// Routing page, or under a model's own route on its page. Nothing else — a
+// ChatGPT form beside "No upstream" is a setting for something that is not
+// selected. The cards are moved rather than duplicated, so ids stay unique and
+// a half-typed field is never in two places.
+function parkCards() {
+  const park = document.getElementById("cfg-park");
+  for (const id of ["chatgptcard", "upstreamcard"]) {
+    const card = document.getElementById(id);
+    if (card && card.parentNode !== park) park.appendChild(card);
+  }
+}
+function placeCards() {
+  if (!CFG) return;
+  const onModel = VIEW === "models" && PICKED;
+  const route = onModel ? routeOf(PICKED) : CFG.routing.default;
+  const home = document.getElementById(onModel ? "cfg-slot" : "cfg-home");
+  for (const [id, wants] of [["chatgptcard", "chatgpt"], ["upstreamcard", "relay"]]) {
+    const card = document.getElementById(id);
+    const shown = !!home && route === wants && (onModel || VIEW === "routing");
+    if (shown && card.parentNode !== home) home.appendChild(card);
+    if (!shown && card.parentNode !== document.getElementById("cfg-park")) document.getElementById("cfg-park").appendChild(card);
+  }
 }
 
 function routeOf(m) { return CFG.routing.models[m] || CFG.routing.default; }
+const routeName = (r) => ({ relay: "upstream", chatgpt: "ChatGPT plan" }[r] || "no upstream");
+const routeTag = (r) => `<span class="tag ${({ relay: "relay", chatgpt: "plan", replay: "replay" })[r] || ""}">${({ relay: "up", chatgpt: "plan", replay: "replay" })[r] || "local"}</span>`;
 
 function renderList() {
   const q = (document.getElementById("filter").value || "").toLowerCase();
@@ -408,7 +610,7 @@ function renderList() {
       html += `<button class="item" aria-current="${m === PICKED}" onclick="pick('${esc(m)}')">
         <span class="nm">${esc(m)}</span>
         ${fixed ? `<span class="tag ${fixed.status ? "err" : "set"}">${fixed.status || "set"}</span>` : ""}
-        <span class="tag ${r === "relay" ? "relay" : ""}">${r === "relay" ? "up" : "local"}</span></button>`;
+        ${routeTag(r)}</button>`;
     }
   }
   document.getElementById("list").innerHTML = html || '<div class="empty">No model matches that.</div>';
@@ -418,6 +620,7 @@ const pick = (m) => { PICKED = m; renderList(); renderDetail(); };
 
 function renderDetail() {
   if (!PICKED || editing("#detail")) return;
+  parkCards();      // before the panel is rebuilt, or the cards go with it
   const m = PICKED, r = CFG.routing.models[m] || "", fixed = (CFG.responses || {})[m] || {};
   document.getElementById("detail").innerHTML = `
     <div class="card">
@@ -425,11 +628,13 @@ function renderDetail() {
       <p class="help" style="font-family:var(--mono); color:var(--ink); font-size:13px; margin-bottom:14px">${esc(m)}</p>
       <label>Where its traffic goes</label>
       <div class="seg" role="group">
-        <button onclick="setRoute('${esc(m)}','')" aria-pressed="${r === ""}">Default (${esc(CFG.routing.default === "relay" ? "upstream" : "no upstream")})</button>
+        <button onclick="setRoute('${esc(m)}','')" aria-pressed="${r === ""}">Default (${esc(routeName(CFG.routing.default))})</button>
         <button onclick="setRoute('${esc(m)}','scripted')" aria-pressed="${r === "scripted"}">No upstream</button>
         <button onclick="setRoute('${esc(m)}','relay')" aria-pressed="${r === "relay"}">Upstream</button>
+        <button onclick="setRoute('${esc(m)}','chatgpt')" aria-pressed="${r === "chatgpt"}">ChatGPT plan</button>
       </div>
     </div>
+    <div id="cfg-slot"></div>
 
     <div class="card">
       <h2>Its answer</h2>
@@ -451,17 +656,16 @@ function renderDetail() {
         <span id="answersaved" style="font-size:12px"></span>
       </div>
     </div>`;
+  placeCards();
 }
 
 function renderRouting() {
   const d = CFG.routing.default, up = CFG.upstream, routed = Object.keys(CFG.routing.models).length;
-  // Shown when anything could relay — the default, or a single model set to
-  // relay on its own page — and also when one is already configured, because
-  // hiding a stored upstream would leave it there with no way to change it.
-  const relays = d === "relay" || Object.values(CFG.routing.models).includes("relay") || !!up.url;
-  document.getElementById("upstreamcard").hidden = !relays;
+  // Which settings show is placeCards()'s call: only those of the route being looked at.
+  placeCards();
   document.getElementById("def-scripted").setAttribute("aria-pressed", d === "scripted");
   document.getElementById("def-relay").setAttribute("aria-pressed", d === "relay");
+  document.getElementById("def-chatgpt").setAttribute("aria-pressed", d === "chatgpt");
   document.getElementById("nourl").hidden = !!up.url || d !== "relay";
   const r = document.getElementById("routed");
   r.hidden = !routed;
@@ -487,7 +691,7 @@ function renderLogs() {
     const tools = (x.tools || []).length ? ` <span class="tag">${esc(x.tools.join(", "))}</span>` : "";
     return `<tr class="${bad ? "bad" : ""}">
       <td class="mono">${t}</td>
-      <td><span class="tag ${x.route === "relay" ? "relay" : ""}">${x.route === "relay" ? "up" : "local"}</span></td>
+      <td>${routeTag(x.route)}</td>
       <td class="mono">${esc(x.model)}<br><span style="color:var(--faint)">${esc(x.provider)}/${esc(x.shape)}${x.stream ? " · stream" : ""}</span></td>
       <td class="truncate" title="${esc(x.prompt)}">${esc(x.prompt)}</td>
       <td class="truncate" title="${esc(x.error || x.reply)}">
@@ -506,7 +710,7 @@ async function post(body, flash) {
   if (!r.ok) { if (el) { el.textContent = out.error || "could not save"; el.style.color = "var(--primary)"; } return; }
   CFG = out.config;
   if (el) { el.textContent = "saved"; el.style.color = "var(--green)"; setTimeout(() => (el.textContent = ""), 1800); }
-  renderChrome(); renderList(); renderDetail(); renderRouting();
+  renderChrome(); renderList(); renderDetail(); renderRouting(); renderChatGPT();
 }
 
 const setDefault = (d) => post({ routing: { default: d } });
@@ -549,6 +753,357 @@ const saveUpstream = () => post({
     fallback: document.getElementById("fallback").checked,
   },
 }, "saved");
+
+
+// ── Sessions ──────────────────────────────────────────────────────────────
+const when = (t) => (t ? new Date(t * 1000).toLocaleString([], { hour12: false, dateStyle: "short", timeStyle: "short" }) : "—");
+const sessMsg = (text, bad) => {
+  const el = document.getElementById("sess-msg");
+  el.textContent = text || ""; el.style.color = bad ? "var(--primary)" : "var(--green)";
+};
+
+function renderSessions() {
+  const st = SESS, el = (id) => document.getElementById(id);
+  el("n-sessions").textContent = st.mode === "record" ? "rec" : st.mode === "replay" ? "replay" : "";
+  el("sess-start").hidden = st.mode !== "off";
+  el("sess-stop").hidden = st.mode === "off";
+  el("sess-stop").firstElementChild.textContent = st.mode === "record" ? "Stop and save" : "Stop replay";
+  el("sess-warn").hidden = st.mode !== "record";
+  el("sess-status").innerHTML =
+    st.mode === "record" ? `<span class="tag rec">recording</span> to <b>${esc(st.name)}</b> — everything answered from now on is kept`
+    : st.mode === "replay" ? `<span class="tag replay">replaying</span> <b>${esc(st.name)}</b> — recorded questions get their recorded answers`
+    : `<span class="tag">idle</span> Name a recording, press Start, then run the session. Every answer that comes back — from the script, a relay or the ChatGPT plan — is kept.`;
+
+  let live = "";
+  if (st.mode === "record") {
+    live = `<div class="stat"><b>${st.entries}</b><span>exchanges kept</span></div>` + (st.recent.length ? `
+      <table class="sess-table" style="margin-top:12px"><tr><th>Asked</th><th>Turn</th><th>Answered by</th><th>Calls</th></tr>
+      ${st.recent.map((e) => `<tr><td class="ask">${esc(e.ask || "(no text)")}</td><td class="mono">${e.turn}</td>
+        <td>${routeTag(e.route)} <span class="mono">${esc(e.model)}</span></td><td class="mono">${esc((e.tools || []).join(", "))}</td></tr>`).join("")}</table>`
+      : `<p class="help" style="margin-top:12px">Nothing yet. Run the session; each answer appears here.</p>`);
+  } else if (st.mode === "replay") {
+    live = `<div class="stat"><b>${st.hits}</b><span>answered</span></div>
+      <div class="stat"><b>${st.diverged}</b><span>last message differed</span></div>
+      <div class="stat"><b style="${st.misses ? "color:var(--primary)" : ""}">${st.misses}</b><span>no recording</span></div>` + (st.unmatched.length ? `
+      <table class="sess-table" style="margin-top:12px"><tr><th>Not in the recording</th><th>Turn</th><th>Why</th></tr>
+      ${st.unmatched.map((u) => `<tr><td class="ask">${esc(u.ask || "(no text)")}</td><td class="mono">${u.turn}</td><td>${esc(u.why)}</td></tr>`).join("")}</table>` : "");
+  }
+  el("sess-live").innerHTML = live;
+
+  const busy = st.mode !== "off";
+  el("sess-list").innerHTML = st.cassettes.length ? `<table class="sess-table"><tr><th>Name</th><th>Exchanges</th><th>Models</th><th>Recorded</th><th></th></tr>
+    ${st.cassettes.map((c) => `<tr><td class="mono">${esc(c.name)}${c.broken ? ' <span class="tag err">unreadable</span>' : ""}</td><td class="mono">${c.entries}</td>
+      <td class="mono">${esc((c.models || []).join(", "))}</td><td>${when(c.recordedAt)}</td>
+      <td class="act"><button class="btn" ${busy || c.broken ? "disabled" : ""} onclick="sessReplay('${esc(c.name)}')">Replay</button>
+        <button class="btn ghost" onclick="location.href=api('/api/ui/session/${esc(c.name)}')">Download</button>
+        <button class="btn ghost" ${busy && st.name === c.name ? "disabled" : ""} onclick="sessDelete('${esc(c.name)}')">Delete</button></td></tr>`).join("")}</table>`
+    : `<p class="help" style="margin:0">No recordings yet.</p>`;
+
+  const live2 = document.activeElement ? document.activeElement.id : "";
+  if (live2 !== "sess-miss") el("sess-miss").value = (st.settings || {}).onMiss || "fail";
+  if (live2 !== "sess-strict") el("sess-strict").checked = !!(st.settings || {}).strict;
+}
+
+async function sessCall(body) {
+  const r = await fetch(api("/api/ui/session"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const out = await r.json().catch(() => ({}));
+  if (out.status) SESS = out.status;
+  sessMsg(out.message || (r.ok ? "" : "could not do that"), !out.ok);
+  renderSessions(); renderChrome(); renderChat();
+  return out;
+}
+const sessRecord = () => sessCall({ action: "record", name: document.getElementById("sess-name").value.trim() })
+  .then((o) => { if (o.ok) document.getElementById("sess-name").value = ""; });
+const sessReplay = (name) => sessCall({ action: "replay", name });
+const sessStop = () => sessCall({ action: "stop" });
+const sessDelete = (name) => { if (confirm("Delete the recording " + name + "? This cannot be undone.")) sessCall({ action: "delete", name }); };
+const sessSettings = () => sessCall({ action: "settings", onMiss: document.getElementById("sess-miss").value, strict: document.getElementById("sess-strict").checked });
+async function sessImport(input) {
+  const file = input.files[0];
+  input.value = "";
+  if (!file) return;
+  let cassette;
+  try { cassette = JSON.parse(await file.text()); } catch { return sessMsg("That file is not JSON.", true); }
+  const name = file.name.replace(/\.json$/i, "").replace(/[^A-Za-z0-9._-]/g, "-").replace(/^[^A-Za-z0-9]+/, "").slice(0, 64);
+  await sessCall({ action: "import", name, cassette });
+}
+
+
+// ── Chat ──────────────────────────────────────────────────────────────────
+const providerOf = (m) => Object.keys(MODELS).find((p) => MODELS[p].includes(m));
+const ago = (ms) => (ms < 1000 ? ms + " ms" : (ms / 1000).toFixed(1) + " s");
+
+function renderChat() {
+  if (!CFG) return;
+  const sel = document.getElementById("chat-model");
+  // Built once, and again only when the catalogue changes: a select rebuilt on
+  // the 1.5s poll would close its own dropdown under the person choosing from it.
+  if (sel.options.length !== ALL.length) {
+    const keep = sel.value;
+    sel.innerHTML = Object.keys(MODELS).map((p) =>
+      `<optgroup label="${esc(p)}">${MODELS[p].map((m) => `<option value="${esc(m)}">${esc(m)}</option>`).join("")}</optgroup>`).join("");
+    if (keep) sel.value = keep;
+  }
+  const m = sel.value, r = routeOf(m);
+  const note = document.getElementById("chat-route");
+  const go = `<a href="#" onclick="pick('${esc(m)}'); show('models'); return false">Set up on the model's page</a>`;
+  let text, kind = "ok";
+  if (SESS.mode === "replay") {
+    text = `<span class="tag replay">replay</span> Replaying <code>${esc(SESS.name)}</code>: a question it recorded gets the recorded answer, whatever this model is routed to.`;
+  } else if ((CFG.responses || {})[m]) {
+    text = `This model has a fixed answer set on its page, which wins over everything else. ${go}`;
+  } else if (r === "chatgpt") {
+    kind = CG.signedIn ? "ok" : "warn";
+    text = CG.signedIn
+      ? `<span class="tag plan">plan</span> Answered by the ChatGPT plan (<code>${esc(CFG.chatgpt.model)}</code>), signed in as ${esc(CG.email || "a ChatGPT account")}. This spends the plan.`
+      : `<span class="tag err">not signed in</span> This model is routed to the ChatGPT plan and will fail until you sign in. ${go}`;
+  } else if (r === "relay") {
+    kind = CFG.upstream.url ? "ok" : "warn";
+    text = CFG.upstream.url
+      ? `<span class="tag relay">up</span> Answered by <code>${esc(CFG.upstream.model)}</code> upstream. This spends the upstream's key.`
+      : `<span class="tag err">no upstream</span> Routed upstream but none is set, so it answers here instead. ${go}`;
+  } else {
+    text = `<span class="tag">local</span> Answered here from the script. Nothing leaves this machine.`;
+  }
+  note.className = "note " + kind;
+  note.style.marginTop = "10px";
+  note.innerHTML = text;
+  const log = document.getElementById("chat-log");
+  const stick = log.scrollTop + log.clientHeight >= log.scrollHeight - 40;
+  log.innerHTML = CHAT.turns.length ? CHAT.turns.map(chatBubble).join("")
+    : `<div class="none">Pick a model and say something. Each answer says which route produced it.</div>`;
+  if (stick) log.scrollTop = log.scrollHeight;
+  const send = document.getElementById("chat-send");
+  send.textContent = CHAT.busy ? "Stop" : "Send";
+  send.className = CHAT.busy ? "btn ghost" : "btn";
+}
+
+function chatBubble(t) {
+  if (t.role === "user") return `<div class="msg user">${esc(t.content)}</div>`;
+  const calls = (t.tools || []).map((c) =>
+    `<div class="call"><b>${esc(c.name)}</b> ${esc(c.args || "{}")}</div>`).join("");
+  const meta = [];
+  if (t.route) meta.push(routeTag(t.route));
+  if (t.rule) meta.push(esc(t.rule));
+  if (t.status && !t.pending) meta.push(String(t.status));
+  if (t.ms != null && !t.pending) meta.push(ago(t.ms));
+  if (t.usage) meta.push(`${t.usage.in ?? "?"} → ${t.usage.out ?? "?"} tokens`);
+  if (t.model) meta.push(esc(t.model));
+  const body = t.error ? esc(t.error) : esc(t.content);
+  return `<div class="msg assistant${t.error ? " err" : ""}${t.pending ? " pending" : ""}"><div class="t">${body}</div>${calls ? `<div class="calls">${calls}</div>` : ""}${meta.length ? `<div class="meta">${meta.join(" · ")}</div>` : ""}</div>`;
+}
+
+function chatTools(model) {
+  const name = document.getElementById("chat-tool").value.trim();
+  if (!name) return null;
+  let schema = { type: "object", properties: {} };
+  const raw = document.getElementById("chat-toolschema").value.trim();
+  if (raw) { try { schema = JSON.parse(raw); } catch { throw new Error("The tool's parameters are not valid JSON."); } }
+  const description = document.getElementById("chat-tooldesc").value.trim();
+  return providerOf(model) === "anthropic"
+    ? [{ name, description, input_schema: schema }]
+    : [{ type: "function", function: { name, description, parameters: schema } }];
+}
+
+// One event from either vendor's stream, folded into the turn being built.
+function chatApply(turn, ev, tools) {
+  if (ev.error) { turn.error = ev.error.message || JSON.stringify(ev.error); return; }
+  const choice = (ev.choices || [])[0];
+  if (choice && choice.delta) {                                     // Chat Completions
+    if (choice.delta.content) turn.content += choice.delta.content;
+    for (const c of choice.delta.tool_calls || []) {
+      const slot = (tools[c.index] ||= { name: "", args: "" });
+      if (c.function && c.function.name) slot.name = c.function.name;
+      if (c.function && c.function.arguments) slot.args += c.function.arguments;
+    }
+  }
+  if (ev.usage && ev.usage.prompt_tokens != null) turn.usage = { in: ev.usage.prompt_tokens, out: ev.usage.completion_tokens };
+  if (ev.type === "content_block_start" && ev.content_block.type === "tool_use") tools[ev.index] = { name: ev.content_block.name, args: "" };
+  if (ev.type === "content_block_delta") {                          // Anthropic Messages
+    if (ev.delta.type === "text_delta") turn.content += ev.delta.text;
+    if (ev.delta.type === "input_json_delta" && tools[ev.index]) tools[ev.index].args += ev.delta.partial_json;
+  }
+  if (ev.type === "message_delta" && ev.usage) turn.usage = { in: (turn.usage || {}).in ?? "?", out: ev.usage.output_tokens };
+  if (ev.type === "message_start" && ev.message.usage) {
+    const u = ev.message.usage;
+    turn.usage = { in: (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0), out: "?" };
+  }
+  if (ev.type === "error") turn.error = (ev.error || {}).message || "error";
+  turn.tools = Object.values(tools);
+}
+
+function chatWhole(turn, body) {
+  const tools = {};
+  const choice = (body.choices || [])[0];
+  if (choice) {
+    turn.content = (choice.message || {}).content || "";
+    ((choice.message || {}).tool_calls || []).forEach((c, i) => (tools[i] = { name: c.function.name, args: c.function.arguments }));
+    if (body.usage) turn.usage = { in: body.usage.prompt_tokens, out: body.usage.completion_tokens };
+  } else if (Array.isArray(body.content)) {
+    body.content.forEach((b, i) => {
+      if (b.type === "text") turn.content += b.text;
+      if (b.type === "tool_use") tools[i] = { name: b.name, args: JSON.stringify(b.input) };
+    });
+    const u = body.usage || {};
+    turn.usage = { in: (u.input_tokens || 0) + (u.cache_read_input_tokens || 0), out: u.output_tokens };
+  }
+  turn.tools = Object.values(tools);
+}
+
+async function chatSend() {
+  if (CHAT.busy) { if (CHAT.abort) CHAT.abort.abort(); return; }
+  const input = document.getElementById("chat-input");
+  const text = input.value.trim();
+  if (!text) return;
+  const model = document.getElementById("chat-model").value;
+  const stream = document.getElementById("chat-stream").checked;
+  let tools;
+  try { tools = chatTools(model); } catch (e) { CHAT.turns.push({ role: "assistant", error: e.message }); return renderChat(); }
+
+  // What the model is told: everything said so far that succeeded, then this.
+  // A failed exchange stays on screen but is not sent again with the next question.
+  const history = CHAT.turns.filter((t) => !t.failed && !t.pending && !t.error && t.content).map((t) => ({ role: t.role, content: t.content }));
+  history.push({ role: "user", content: text });
+  const ask = { role: "user", content: text };
+  const turn = { role: "assistant", content: "", pending: true, model, tools: [] };
+  CHAT.turns.push(ask, turn);
+  input.value = "";
+  CHAT.busy = true; CHAT.abort = new AbortController();
+  renderChat();
+
+  const started = performance.now();
+  try {
+    const r = await fetch(api("/api/ui/chat"), {
+      method: "POST", headers: { "content-type": "application/json" }, signal: CHAT.abort.signal,
+      body: JSON.stringify({ model, stream, messages: history, system: document.getElementById("chat-system").value, tools }),
+    });
+    turn.status = r.status;
+    turn.route = r.headers.get("X-LLMSim-Route"); turn.rule = r.headers.get("X-LLMSim-Rule");
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      turn.error = (body.error && (body.error.message || body.error)) || "HTTP " + r.status;
+    } else if (!stream) {
+      chatWhole(turn, await r.json());
+    } else {
+      const reader = r.body.getReader(), dec = new TextDecoder(), tool = {};
+      let buf = "";
+      const take = (block) => {
+        const line = block.split("\n").find((l) => l.startsWith("data:"));
+        if (!line || line.slice(5).trim() === "[DONE]") return;
+        try { chatApply(turn, JSON.parse(line.slice(5)), tool); } catch { /* a frame that is not JSON carries nothing to show */ }
+      };
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let at;
+        while ((at = buf.indexOf("\n\n")) >= 0) { take(buf.slice(0, at)); buf = buf.slice(at + 2); renderChat(); }
+      }
+      if (buf.trim()) take(buf);
+    }
+  } catch (e) {
+    if (e.name === "AbortError") turn.content += (turn.content ? "\n" : "") + "(stopped)";
+    else turn.error = "Could not reach LLMSim: " + e.message;
+  }
+  turn.ms = Math.round(performance.now() - started);
+  turn.pending = false;
+  if (turn.error) { ask.failed = true; if (!input.value) input.value = text; }   // so a retry is one keypress
+  CHAT.busy = false; CHAT.abort = null;
+  renderChat();
+  input.focus();
+}
+
+function chatClear() { if (CHAT.abort) CHAT.abort.abort(); CHAT.turns = []; renderChat(); }
+
+
+// ── ChatGPT plan ──────────────────────────────────────────────────────────
+const say = (text, bad) => {
+  const el = document.getElementById("cg-msg");
+  el.textContent = text || ""; el.style.color = bad ? "var(--primary)" : "var(--green)";
+};
+
+function renderChatGPT() {
+  if (!CFG || !CFG.chatgpt) return;
+  const plan = CFG.chatgpt, st = CG, live = document.activeElement ? document.activeElement.id : "";
+  placeCards();
+  if (document.getElementById("chatgptcard").parentNode.id === "cfg-park") return;
+  const line = document.getElementById("cg-status");
+  if (st.signedIn) {
+    line.innerHTML = `<span class="tag plan">signed in</span> ${esc(st.email || "ChatGPT account")}${st.plan ? " · " + esc(st.plan) : ""}`;
+  } else if (st.pending) {
+    line.innerHTML = `<span class="tag">waiting</span> for you to confirm access at OpenAI${st.listening ? "" : " — nothing is listening for the redirect"}`;
+  } else if (st.needsSignIn) {
+    line.innerHTML = `<span class="tag err">sign in again</span> ${esc(st.error || "the stored sign-in no longer works")}`;
+  } else {
+    line.innerHTML = `<span class="tag">not signed in</span> — routes point at the plan and will fail until you do`;
+  }
+  document.getElementById("cg-signin").textContent = st.signedIn ? "Sign in again" : "Sign in with ChatGPT";
+  document.getElementById("cg-signin").className = st.signedIn ? "btn ghost" : "btn";
+  document.getElementById("cg-signout").hidden = !(st.signedIn || st.needsSignIn);
+  document.getElementById("cg-paste").hidden = !(st.pending && !st.listening);
+  const link = document.getElementById("cg-link");
+  link.hidden = !(st.pending && CG_URL);
+  if (CG_URL) link.href = CG_URL;
+  if (!st.pending) CG_URL = null;
+  if (st.error && !st.needsSignIn && !st.signedIn) say(st.error, true);
+  if (st.signedIn && !CG_LISTED) { CG_LISTED = true; chatgptModels(); }
+  if (!st.signedIn) CG_LISTED = false;
+  if (live !== "cg-model") document.getElementById("cg-model").value = plan.model || "";
+  if (live !== "cg-instr") document.getElementById("cg-instr").value = plan.instructions || "";
+  if (live !== "cg-fallback") document.getElementById("cg-fallback").checked = !!plan.fallback;
+}
+
+async function chatgptCall(path, body) {
+  const r = await fetch(api("/api/ui/chatgpt/" + path), {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body || {}),
+  });
+  return { ok: r.ok, body: await r.json().catch(() => ({})) };
+}
+
+async function chatgptSignIn() {
+  say("");
+  // Opened now, on the click, and pointed at OpenAI afterwards: a window opened
+  // after an await is not the result of a click as far as the browser can
+  // tell, and is blocked.
+  const win = window.open("about:blank", "_blank");
+  const { ok, body } = await chatgptCall("login");
+  if (!ok) { if (win) win.close(); return say(body.error || "could not start the sign-in", true); }
+  CG_URL = body.url;
+  if (win) { win.opener = null; win.location = body.url; }
+  say(win ? "" : "The browser blocked the new tab. Use the link below.");
+  load();
+}
+
+async function chatgptPaste() {
+  const { ok, body } = await chatgptCall("complete", { redirect: document.getElementById("cg-redirect").value });
+  say(body.message || (ok ? "signed in" : "could not finish"), !ok);
+  if (ok) document.getElementById("cg-redirect").value = "";
+  load();
+}
+
+async function chatgptSignOut() {
+  const { body } = await chatgptCall("logout");
+  say(body.revoked ? "Signed out, and OpenAI was told to revoke the grant."
+    : "Signed out here. OpenAI could not be reached to revoke the grant; it can be removed in ChatGPT's settings.");
+  load();
+}
+
+async function chatgptModels() {
+  try {
+    const r = await fetch(api("/api/ui/chatgpt/models"));
+    const out = await r.json();
+    if (!r.ok) return;
+    document.getElementById("cg-models").innerHTML = (out.models || []).map((m) => `<option value="${esc(m)}">`).join("");
+  } catch { /* the list is a convenience; the field still takes a typed name */ }
+}
+
+const saveChatGPT = () => post({
+  chatgpt: {
+    model: document.getElementById("cg-model").value.trim(),
+    instructions: document.getElementById("cg-instr").value.trim(),
+    fallback: document.getElementById("cg-fallback").checked,
+  },
+}, "cg-saved");
 
 
 // ── Test Execution ────────────────────────────────────────────────────────

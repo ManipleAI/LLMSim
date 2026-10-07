@@ -15,9 +15,9 @@ That's the whole setup. Python 3.9+, standard library only, nothing to
 install.
 
 A task-by-task guide — point an agent at it, script the model, break it on
-purpose, check what the agent sent — is served by the same process at
-`http://localhost:8099/guide`, and linked from the console. This file is the
-reference and the reasons.
+purpose, check what the agent sent — is in [`docs/guide.md`](docs/guide.md). The
+same guide is served by the process itself at `http://localhost:8099/guide` and
+linked from the console. This file is the reference and the reasons.
 
 ## Why simulate the vendors and not the gateway
 
@@ -715,7 +715,7 @@ an agent does when the model does *that*; it does not say how good the agent is 
 real one.
 
 ```
-python3 tests/test_behaviors.py        # 43 cases: identity, captures, rules, faults, assertions, runs, the guide
+python3 tests/test_behaviors.py        # 44 cases: identity, captures, rules, faults, assertions, runs, the guide
 python3 tests/test_chatgpt_plan.py     # 38 cases: the ChatGPT route, recording, replay
 ```
 

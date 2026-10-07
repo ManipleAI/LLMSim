@@ -1104,6 +1104,23 @@ def case_the_guide_is_served_as_a_whole_document(sim):
         assert path in text, "the guide no longer mentions " + path
 
 
+def case_the_two_copies_of_the_guide_name_the_same_routes(sim):
+    """docs/guide.html is what LLMSim serves; docs/guide.md is the same guide for reading on GitHub, which shows
+    an .html file as source. Two copies drift, and the first thing to go stale is a route."""
+    import html
+    import re
+    docs = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "docs")
+    page = html.unescape(open(os.path.join(docs, "guide.html")).read())
+    page = re.sub(r"<span[^>]*>|</span>", "", page)                 # the page highlights parts of some commands
+    markdown = open(os.path.join(docs, "guide.md")).read()
+    routes = lambda text: set(re.findall(r"/api/[a-z-]+(?:/[a-z-]+|/<[a-z]+>)*", text))
+    in_page, in_markdown = routes(page), routes(markdown)
+    assert in_page and in_page == in_markdown, {"only in guide.html": sorted(in_page - in_markdown),
+                                                "only in guide.md": sorted(in_markdown - in_page)}
+    for heading in re.findall(r"<h2>(.*?)</h2>", page):
+        assert "## " + heading in markdown, "guide.md has no section called %r" % heading
+
+
 # ── The runner ───────────────────────────────────────────────────────────
 
 CASES = [v for k, v in sorted(globals().items(), key=lambda kv: list(globals()).index(kv[0])) if k.startswith("case_")]

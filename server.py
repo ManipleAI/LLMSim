@@ -44,7 +44,9 @@ import os
 import threading
 import random
 import re
+import socket
 import string
+import struct
 import sys
 import time
 import urllib.error
@@ -341,6 +343,34 @@ DEFAULTS = {
     #            default because it is usually tool output, which carries
     #            timestamps and never repeats.
     "session": {"onMiss": "fail", "strict": False},
+    # What each request was, kept in memory so it can be looked at and asserted on.
+    #
+    #   max        how many requests are kept (the newest)
+    #   maxBytes   the most of one request that is kept whole; a bigger one is
+    #              reduced to what assertions read and marked truncated
+    #   redact     applied on the way OUT — to the console, the API, an export —
+    #              never to what assertions are run on
+    "capture": {"enabled": True, "max": 300, "maxBytes": 262144,
+                "redact": {"headers": ["x-forwarded-for", "x-real-ip"], "patterns": []}},
+    # Where a request says who sent it. The base URL is always read
+    # (/run/<id>/agent/<name>/…); these are the rest, for a gateway that carries
+    # an identity through. Which header a given gateway forwards is a fact about
+    # that gateway, so it is configured here and not assumed.
+    "identity": {"rules": [
+        {"field": "run", "from": "header", "name": "x-llmsim-run"},
+        {"field": "agent", "from": "header", "name": "x-llmsim-agent"},
+        {"field": "app", "from": "header", "name": "x-llmsim-app"},
+    ]},
+    # Which credentials the vendor routes accept, and what the ones that arrive are called.
+    #   mode         published (the keys in this file), registered (those, plus
+    #                the fingerprints below) or any (witness mode: accept anything
+    #                and say which one came)
+    #   credentials  [{label, fingerprint}] — a fingerprint, never the key
+    "auth": {"mode": "published", "credentials": []},
+    # Fault rules (see the Faults section): things that go wrong, on purpose, when
+    # a condition holds. `paused` stops all of them at once without deleting any.
+    "faults": [],
+    "chaos": {"paused": False},
     "chatgpt": {
         "model": os.environ.get("LLMSIM_CHATGPT_MODEL", ""),
         "instructions": "You are a helpful assistant.",
@@ -646,7 +676,7 @@ def last_tool_output(messages):
     return ""
 
 
-def fill(turn, messages):
+def fill(turn, messages, view=None):
     """The turn with its placeholders filled in. The script is not touched."""
     if "{{" not in json.dumps(turn):
         return turn
@@ -654,6 +684,10 @@ def fill(turn, messages):
         "{{ask}}": subject(messages).strip(),
         "{{tool_output}}": last_tool_output(messages).strip()[:TOOL_OUTPUT_LIMIT],
     }
+    if view:
+        ident = view.get("identity") or {}
+        values.update({"{{run}}": ident.get("run", ""), "{{agent}}": ident.get("agent", ""), "{{app}}": ident.get("app", ""),
+                       "{{turn}}": str(view.get("turn", 0)), "{{model}}": view.get("model", "")})
 
     def walk(value):
         if isinstance(value, str):
@@ -1209,7 +1243,7 @@ def _error_type(status):
     }.get(status, "api_error")
 
 
-def choose_turn(provider, model, messages, declared=None):
+def choose_turn(provider, model, messages, declared=None, view=None):
     """Which scripted turn to serve.
 
     Two independent decisions, and keeping them apart is the whole trick.
@@ -1238,18 +1272,10 @@ def choose_turn(provider, model, messages, declared=None):
             turn["delay_ms"] = int(fixed["delay_ms"])
         return "model:" + model, turn
 
-    text = subject(messages)
-    turns_taken = sum(1 for m in messages if m.get("role") == "assistant")
-
-    for rule in SCRIPT.get("rules", []):
-        if matches(rule, provider, model, text, declared):
-            turns = rule.get("turns") or []
-            if not turns:
-                continue
-            turn = turns[min(turns_taken, len(turns) - 1)]
-            return rule.get("name", "unnamed"), fill(turn, messages)
-
-    return "default", SCRIPT.get("default", {"text": "LLMSim has no scripted answer for that."})
+    if view is None:
+        view = build_view({"provider": provider, "shape": "openai", "model": model}, {"model": model, "messages": messages})
+    name, _source, _index, turn, _checked = pick_scripted(view)
+    return name, fill(turn, messages, view)
 
 
 # ── Anthropic: /v1/messages ──────────────────────────────────────────────
@@ -1284,7 +1310,7 @@ def anthropic_body(turn, model):
             "type": "tool_use",
             "id": call.get("id") or rand_id("toolu_"),
             "name": call["name"],
-            "input": call.get("input", {}),
+            "input": call["raw_arguments"] if "raw_arguments" in call else call.get("input", {}),
         })
 
     stop = "tool_use" if turn.get("tool_calls") else turn.get("stop_reason", "end_turn")
@@ -1305,7 +1331,7 @@ def anthropic_body(turn, model):
         # Split from the same synthetic total rather than invented on top of
         # it, so the arithmetic a caller does still adds up.
         "usage": _anthropic_usage(turn.get("input_tokens", 1200),
-                                  turn.get("output_tokens") or rough_tokens(out_text),
+                                  turn["output_tokens"] if "output_tokens" in turn else rough_tokens(out_text),
                                   turn.get("cached_tokens")),
     }
 
@@ -1344,7 +1370,7 @@ def anthropic_sse(turn, model):
                 "type": "content_block_start", "index": index,
                 "content_block": {"type": "tool_use", "id": block["id"], "name": block["name"], "input": {}},
             }
-            for chunk in chunked(json.dumps(block["input"]), 24):
+            for chunk in chunked(block["input"] if isinstance(block["input"], str) else json.dumps(block["input"]), 24):
                 yield "content_block_delta", {
                     "type": "content_block_delta", "index": index,
                     "delta": {"type": "input_json_delta", "partial_json": chunk},
@@ -1369,12 +1395,12 @@ def openai_body(turn, model):
         message["tool_calls"] = [{
             "id": c.get("id") or rand_id("call_", 20),
             "type": "function",
-            "function": {"name": c["name"], "arguments": json.dumps(c.get("input", {}))},
+            "function": {"name": c["name"], "arguments": c["raw_arguments"] if "raw_arguments" in c else json.dumps(c.get("input", {}))},
         } for c in turn["tool_calls"]]
         finish = "tool_calls"
 
     prompt_tokens = turn.get("input_tokens", 1200)
-    completion_tokens = turn.get("output_tokens") or rough_tokens(json.dumps(message))
+    completion_tokens = turn["output_tokens"] if "output_tokens" in turn else rough_tokens(json.dumps(message))
     cached = turn.get("cached_tokens")
     return {
         "id": rand_id("chatcmpl-", 20),
@@ -1552,11 +1578,11 @@ def responses_body(turn, model):
     for call in turn.get("tool_calls", []):
         output.append({
             "type": "function_call", "id": rand_id("fc_"), "call_id": call.get("id") or rand_id("call_", 20),
-            "name": call["name"], "arguments": json.dumps(call.get("input", {})), "status": "completed",
+            "name": call["name"], "arguments": call["raw_arguments"] if "raw_arguments" in call else json.dumps(call.get("input", {})), "status": "completed",
         })
 
     input_tokens = turn.get("input_tokens", 1200)
-    output_tokens = turn.get("output_tokens") or rough_tokens(json.dumps(output))
+    output_tokens = turn["output_tokens"] if "output_tokens" in turn else rough_tokens(json.dumps(output))
     cached = turn.get("cached_tokens")
     return {
         "id": rand_id("resp_"),
@@ -2815,7 +2841,7 @@ def chatgpt_encoder(shape, model, body):
 
 CASSETTE_DIR = os.environ.get("LLMSIM_CASSETTES", os.path.join(HERE, "cassettes"))
 SESSION_LOCK = threading.RLock()
-SESSION = {
+_STATE_TEMPLATE = {
     "mode": "off",          # off | record | replay
     "name": None,
     "entries": [],          # what has been captured, or what is loaded
@@ -2828,6 +2854,31 @@ SESSION = {
     "onMiss": "fail", "strict": False,   # this session's own; see session_start
 }
 MAX_MASKS, MAX_MASK_LENGTH, MAX_UNMATCHED = 20, 200, 50
+
+
+def _new_state():
+    """A session that is doing nothing."""
+    return {k: (v.copy() if isinstance(v, (list, dict)) else v) for k, v in _STATE_TEMPLATE.items()}
+
+
+# One session for requests that name no run, and one per run that has started its
+# own. A request is handled under its run's session if that run has one, else
+# under the default — so two agents under two runs can be recorded or replayed at
+# the same time without seeing each other, and everything that never named a run
+# behaves exactly as it always did.
+SESSION = _new_state()
+SESSIONS = {}
+
+
+def _st(run=None):
+    """The session for a run, or the default. A run with none is "off"."""
+    if not run:
+        return SESSION
+    return SESSIONS.get(run) or _new_state()
+
+
+def _states():
+    return [SESSION] + list(SESSIONS.values())
 _REMINDER = re.compile(r"<system-reminder>.*?</system-reminder>", re.S)
 _CASSETTES_SEEN = {}        # path -> (mtime, size, summary), so the console poll does not re-read every file
 
@@ -2869,17 +2920,17 @@ def _compile_masks(patterns):
     return compiled, sources
 
 
-def _mask(text):
-    for rx in SESSION["masks"]:
+def _mask(text, st):
+    for rx in st["masks"]:
         text = rx.sub("<*>", text)
     return text
 
 
-def _clean(text):
-    return _mask(" ".join(_REMINDER.sub(" ", text or "").split()))
+def _clean(text, st):
+    return _mask(" ".join(_REMINDER.sub(" ", text or "").split()), st)
 
 
-def _last_text(messages):
+def _last_text(messages, st):
     """The final message in the conversation: what changed since the last turn."""
     if not messages:
         return ""
@@ -2888,15 +2939,16 @@ def _last_text(messages):
         content = last.get("content")
         if isinstance(content, list):
             content = "\n".join(b.get("text", "") for b in content if isinstance(b, dict))
-        return _clean(str(content or ""))
-    return _clean(flatten(last)[0])
+        return _clean(str(content or ""), st)
+    return _clean(flatten(last)[0], st)
 
 
-def exchange_key(messages):
+def exchange_key(messages, st=None):
     """(ask, turn, last, key) for a request. See the note above for why."""
-    ask = _clean(subject(messages))
+    st = st or SESSION
+    ask = _clean(subject(messages), st)
     turn = sum(1 for m in messages if m.get("role") == "assistant")
-    last = _last_text(messages)
+    last = _last_text(messages, st)
     key = hashlib.sha256(("%s\0%d" % (ask, turn)).encode()).hexdigest()[:16]
     return ask, turn, last, key
 
@@ -2920,58 +2972,60 @@ def _recorded_answer(turn):
     return answer
 
 
-def _flush_session():
+def _flush_session(st):
     """The recording so far, on disk. Written after every exchange, so a
     session that is killed halfway still leaves everything up to that point."""
     os.makedirs(CASSETTE_DIR, exist_ok=True)
-    path = _cassette_path(SESSION["name"])
+    path = _cassette_path(st["name"])
     fd = os.open(path + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as fh:
-        json.dump({"version": 1, "name": SESSION["name"], "recordedAt": SESSION["since"],
-                   "masks": SESSION["maskSources"], "entries": SESSION["entries"]}, fh, indent=1)
+        json.dump({"version": 1, "name": st["name"], "recordedAt": st["since"],
+                   "masks": st["maskSources"], "entries": st["entries"]}, fh, indent=1)
     os.replace(path + ".tmp", path)
 
 
 def session_capture(ctx, route, rule, turn, ms):
     """Keep one answered exchange, when a recording is running."""
-    if SESSION["mode"] != "record" or not ctx:
+    st = (ctx or {}).get("st") or SESSION
+    if st["mode"] != "record" or not ctx:
         return
     answer = _recorded_answer(turn)
     if not answer:
         return
-    ask, n, last, key = exchange_key(ctx["messages"])
+    ask, n, last, key = exchange_key(ctx["messages"], st)
     entry = {
         "key": key, "ask": ask, "turn": n, "last": _fingerprint(last), "lastText": last[:160],
         "model": ctx["model"], "provider": ctx["provider"], "shape": ctx["shape"],
         "route": route, "rule": rule, "tools": ctx["declared"], "at": time.time(), "ms": ms, "answer": answer,
     }
     with SESSION_LOCK:
-        if SESSION["mode"] != "record":
+        if st["mode"] != "record":
             return
         # The same ask at the same point, again: a retry, or the same step of a
         # second run. The latest is kept — there is one answer per key, because
         # replay can only give one.
-        SESSION["entries"] = [e for e in SESSION["entries"] if e["key"] != key] + [entry]
-        _flush_session()
+        st["entries"] = [e for e in st["entries"] if e["key"] != key] + [entry]
+        _flush_session(st)
 
 
-def session_replay(messages):
+def session_replay(messages, st=None):
     """(entry, differs) for a request the recording can answer, else None."""
-    ask, n, last, key = exchange_key(messages)
+    st = st or SESSION
+    ask, n, last, key = exchange_key(messages, st)
     with SESSION_LOCK:
-        entry = SESSION["index"].get(key)
+        entry = st["index"].get(key)
         differs = bool(entry) and _fingerprint(last) != entry["last"]
-        if entry and differs and SESSION["strict"]:
+        if entry and differs and st["strict"]:
             entry = None
             why = "the last message differs from the recording"
         else:
             why = "nothing was recorded for it"
         if not entry:
-            SESSION["misses"] += 1
-            SESSION["unmatched"] = ([{"ask": ask[:160], "turn": n, "why": why}] + SESSION["unmatched"])[:MAX_UNMATCHED]
+            st["misses"] += 1
+            st["unmatched"] = ([{"ask": ask[:160], "turn": n, "why": why}] + st["unmatched"])[:MAX_UNMATCHED]
             return None
-        SESSION["hits"] += 1
-        SESSION["diverged"] += 1 if differs else 0
+        st["hits"] += 1
+        st["diverged"] += 1 if differs else 0
         return entry, differs
 
 
@@ -3073,20 +3127,31 @@ def list_cassettes():
     return out
 
 
-def session_status():
+def _session_brief(st):
+    return {"mode": st["mode"], "name": st["name"], "entries": len(st["entries"]), "hits": st["hits"],
+            "misses": st["misses"], "diverged": st["diverged"], "since": st["since"]}
+
+
+def session_status(run=None):
+    """One session's status. With no run, the default session's, and a brief of
+    every run that has a session of its own."""
     with SESSION_LOCK:
+        st = _st(run)
         recent = [{"ask": e.get("ask", "")[:140], "turn": e.get("turn", 0), "route": e.get("route", ""),
                    "rule": e.get("rule", ""), "model": e.get("model", ""),
                    "tools": [c.get("name", "") for c in e.get("answer", {}).get("tool_calls", [])]}
-                  for e in SESSION["entries"][-25:]][::-1]
-        return {
-            "mode": SESSION["mode"], "name": SESSION["name"], "since": SESSION["since"],
-            "entries": len(SESSION["entries"]), "recent": recent,
-            "hits": SESSION["hits"], "misses": SESSION["misses"], "diverged": SESSION["diverged"],
-            "unmatched": SESSION["unmatched"][:10], "masks": SESSION["maskSources"],
-            "onMiss": SESSION["onMiss"], "strict": SESSION["strict"],
+                  for e in st["entries"][-25:]][::-1]
+        out = {
+            "run": run or "", "mode": st["mode"], "name": st["name"], "since": st["since"],
+            "entries": len(st["entries"]), "recent": recent,
+            "hits": st["hits"], "misses": st["misses"], "diverged": st["diverged"],
+            "unmatched": st["unmatched"][:10], "masks": st["maskSources"],
+            "onMiss": st["onMiss"], "strict": st["strict"],
             "settings": CONFIG["session"], "cassettes": list_cassettes(),
         }
+        if not run:
+            out["runs"] = {r: _session_brief(s_) for r, s_ in SESSIONS.items()}
+        return out
 
 
 # Every lifecycle call answers (ok, message, http status). The status is what a
@@ -3097,9 +3162,25 @@ def _no(code, message):
     return False, message, code
 
 
-def session_start(mode, name, masks=None, on_miss=None, strict=None, overwrite=False):
-    """Begin recording or replaying. One mode at a time, and never over somebody's
-    recording unless they said to.
+def _name_in_use(name, by_recording_only=False, except_state=None):
+    """Whether another live session is using this cassette. A cassette being
+    recorded is taken: nobody else may record it, replay it or delete it. One being
+    replayed may be replayed by others at the same time."""
+    for st in _states():
+        if st is except_state or st["mode"] == "off" or st["name"] != name:
+            continue
+        if st["mode"] == "record" or not by_recording_only:
+            return st
+    return None
+
+
+def session_start(mode, name, masks=None, on_miss=None, strict=None, overwrite=False, run=None):
+    """Begin recording or replaying. One mode at a time per session, and never over
+    somebody's recording unless they said to.
+
+    run scopes it: only requests that name that run (/run/<id>/…) are recorded or
+    replayed, so several runs can each have their own at once. With no run it is
+    the default session, which covers every request that names none.
 
     on_miss and strict belong to THIS replay. They default to the console's
     settings but are not those settings: a test that wants strictness for one
@@ -3107,6 +3188,8 @@ def session_start(mode, name, masks=None, on_miss=None, strict=None, overwrite=F
     """
     if not _cassette_name_ok(name):
         return _no(400, "A cassette name is letters, digits, dot, dash and underscore, and starts with a letter or digit.")
+    if run is not None and not (isinstance(run, str) and ID_RE.fullmatch(run)):
+        return _no(400, "A run id is letters, digits, dot, dash, underscore or colon, up to 64.")
     if on_miss not in (None, "fail", "route"):
         return _no(400, "onMiss must be fail or route.")
     if strict is not None and not isinstance(strict, bool):
@@ -3116,18 +3199,29 @@ def session_start(mode, name, masks=None, on_miss=None, strict=None, overwrite=F
     except ValueError as exc:
         return _no(400, str(exc))
     with SESSION_LOCK:
-        if SESSION["mode"] != "off":
-            return _no(409, "A %s is already running (%s). Stop it first." % (
-                "recording" if SESSION["mode"] == "record" else "replay", SESSION["name"]))
+        st = SESSIONS.get(run) if run else SESSION
+        if st is not None and st["mode"] != "off":
+            return _no(409, "A %s is already running%s (%s). Stop it first." % (
+                "recording" if st["mode"] == "record" else "replay", " for run %s" % run if run else "", st["name"]))
+        fresh = st is None
+        if fresh:
+            st = _new_state()
         exists = os.path.exists(_cassette_path(name))
+        taken = _name_in_use(name, by_recording_only=(mode == "replay"))
+        if taken is not None:
+            return _no(409, "%s is being %s by another session. Use another name, or wait for it." % (
+                name, "recorded" if taken["mode"] == "record" else "replayed"))
         if mode == "record":
             if exists and not overwrite:
                 return _no(409, "A cassette called %s already exists. Pick another name, delete it, or record with overwrite." % name)
-            SESSION.update(mode="record", name=name, entries=[], index={}, since=time.time(), hits=0, misses=0,
-                           diverged=0, unmatched=[], masks=compiled, maskSources=sources, onMiss="fail", strict=False)
-            _flush_session()               # the file exists from the first moment, even if nothing is said
-            log("session: recording to %s%s" % (_cassette_path(name), " (replacing it)" if exists else ""))
-            return True, "Recording to %s. Everything answered from now on is kept." % name, 200
+            st.update(mode="record", name=name, entries=[], index={}, since=time.time(), hits=0, misses=0,
+                      diverged=0, unmatched=[], masks=compiled, maskSources=sources, onMiss="fail", strict=False)
+            if run:
+                SESSIONS[run] = st
+            _flush_session(st)               # the file exists from the first moment, even if nothing is said
+            log("session: recording to %s%s%s" % (_cassette_path(name), " (replacing it)" if exists else "",
+                                                 " for run %s" % run if run else ""))
+            return True, "Recording to %s. Everything answered%s from now on is kept." % (name, " for run %s" % run if run else ""), 200
         if not exists:
             return _no(404, "There is no cassette called %s." % name)
         try:
@@ -3138,51 +3232,68 @@ def session_start(mode, name, masks=None, on_miss=None, strict=None, overwrite=F
             compiled, joined = _compile_masks(joined)
         except Exception as exc:
             return _no(409, "Could not read %s: %s" % (name, exc))
-        SESSION.update(mode="replay", name=name, entries=data["entries"], since=time.time(), hits=0, misses=0,
-                       diverged=0, unmatched=[], masks=compiled, maskSources=joined,
-                       onMiss=on_miss or CONFIG["session"]["onMiss"],
-                       strict=CONFIG["session"]["strict"] if strict is None else strict)
+        st.update(mode="replay", name=name, entries=data["entries"], since=time.time(), hits=0, misses=0,
+                  diverged=0, unmatched=[], masks=compiled, maskSources=joined,
+                  onMiss=on_miss or CONFIG["session"]["onMiss"],
+                  strict=CONFIG["session"]["strict"] if strict is None else strict)
         # Keyed under THIS session's masks, not trusted from the file: the key
         # decides which request gets which answer.
-        SESSION["index"] = {hashlib.sha256(("%s\0%d" % (_mask(e["ask"]), e["turn"])).encode()).hexdigest()[:16]: e
-                            for e in data["entries"]}
-        log("session: replaying %s (%d exchange(s), on miss: %s%s)" % (
-            name, len(data["entries"]), SESSION["onMiss"], ", strict" if SESSION["strict"] else ""))
-        return True, "Replaying %s: %d recorded exchange(s)." % (name, len(data["entries"])), 200
+        st["index"] = {hashlib.sha256(("%s\0%d" % (_mask(e["ask"], st), e["turn"])).encode()).hexdigest()[:16]: e
+                       for e in data["entries"]}
+        if run:
+            SESSIONS[run] = st
+        log("session: replaying %s%s (%d exchange(s), on miss: %s%s)" % (
+            name, " for run %s" % run if run else "", len(data["entries"]), st["onMiss"], ", strict" if st["strict"] else ""))
+        return True, "Replaying %s%s: %d recorded exchange(s)." % (name, " for run %s" % run if run else "", len(data["entries"])), 200
 
 
-def session_auto(name, masks=None, on_miss=None, strict=None):
+def session_auto(name, masks=None, on_miss=None, strict=None, run=None):
     """Replay the cassette if there is one, else record it: the first run of a
     test makes the recording and every run after it uses it."""
     if not _cassette_name_ok(name):
         return _no(400, "A cassette name is letters, digits, dot, dash and underscore, and starts with a letter or digit.")
     mode = "replay" if os.path.exists(_cassette_path(name)) else "record"
-    ok, message, code = session_start(mode, name, masks=masks, on_miss=on_miss, strict=strict)
-    return ok, message, code
+    return session_start(mode, name, masks=masks, on_miss=on_miss, strict=strict, run=run)
 
 
-def session_stop():
+def session_stop(run=None):
     """(ok, message, code, summary). Everything a harness needs to assert on."""
     with SESSION_LOCK:
-        if SESSION["mode"] == "off":
-            return False, "Nothing is running.", 409, None
-        was, name = SESSION["mode"], SESSION["name"]
-        summary = {"was": was, "name": name, "entries": len(SESSION["entries"]),
-                   "hits": SESSION["hits"], "misses": SESSION["misses"], "diverged": SESSION["diverged"],
-                   "unmatched": list(SESSION["unmatched"]), "masks": list(SESSION["maskSources"]),
-                   "onMiss": SESSION["onMiss"], "strict": SESSION["strict"]}
-        SESSION.update(mode="off", name=None, entries=[], index={}, since=None, masks=[], maskSources=[])
-    log("session: %s of %s stopped" % ("recording" if was == "record" else "replay", name))
+        st = SESSIONS.get(run) if run else SESSION
+        if st is None or st["mode"] == "off":
+            return False, ("Nothing is running for run %s." % run) if run else "Nothing is running.", 409, None
+        was, name = st["mode"], st["name"]
+        summary = {"run": run or "", "was": was, "name": name, "entries": len(st["entries"]),
+                   "hits": st["hits"], "misses": st["misses"], "diverged": st["diverged"],
+                   "unmatched": list(st["unmatched"]), "masks": list(st["maskSources"]),
+                   "onMiss": st["onMiss"], "strict": st["strict"]}
+        if run:
+            SESSIONS.pop(run, None)
+        else:
+            st.update(mode="off", name=None, entries=[], index={}, since=None, masks=[], maskSources=[])
+    log("session: %s of %s%s stopped" % ("recording" if was == "record" else "replay", name, " for run %s" % run if run else ""))
     message = ("Saved %d exchange(s) to %s." % (summary["entries"], name) if was == "record"
                else "Stopped replaying %s: %d answered, %d with no recording." % (name, summary["hits"], summary["misses"]))
     return True, message, 200, summary
+
+
+def run_session_status(run):
+    """What a run's own session is doing, or None when it has none."""
+    with SESSION_LOCK:
+        st = SESSIONS.get(run)
+        return _session_brief(st) if st else None
+
+
+def run_session_stop(run):
+    """Stop a run's session if it has one. True when there was one."""
+    return bool(SESSIONS.get(run)) and session_stop(run)[0]
 
 
 def session_delete(name):
     if not _cassette_name_ok(name):
         return _no(400, "That is not a cassette name.")
     with SESSION_LOCK:
-        if SESSION["name"] == name and SESSION["mode"] != "off":
+        if _name_in_use(name) is not None:
             return _no(409, "%s is in use. Stop it first." % name)
         try:
             os.remove(_cassette_path(name))
@@ -3196,7 +3307,7 @@ def session_import(name, data, overwrite=False):
     if not _cassette_name_ok(name):
         return _no(400, "A cassette name is letters, digits, dot, dash and underscore.")
     with SESSION_LOCK:
-        if SESSION["name"] == name and SESSION["mode"] != "off":
+        if _name_in_use(name) is not None:
             return _no(409, "%s is in use. Stop it first." % name)
         exists = os.path.exists(_cassette_path(name))
         if exists and not overwrite:
@@ -3216,6 +3327,1877 @@ def session_import(name, data, overwrite=False):
                        "masks": list(data.get("masks") or []), "entries": clean}, fh, indent=1)
         os.replace(path + ".tmp", path)
     return True, "%s %s: %d exchange(s)." % ("Replaced" if exists else "Imported", name, len(clean)), 200
+
+
+# ── Behaviors and evidence: the machinery they share ──────────────────────
+#
+# Four things sit on the same ground, and building them separately would have
+# built that ground four times:
+#
+#   rules that branch      "if the tool said granted, carry on; if it said
+#                           denied, stop" — a condition on the request
+#   faults                  "answer 20% of requests with a dropped stream" — a
+#                           condition on the request, and a thing to do
+#   identity                "this request came from agent B of run r1" — which
+#                           is a condition on the request too
+#   assertions              "no request of run r1 may carry a card number to the
+#                           model" — a check over the requests that were made
+#
+# So there is ONE description of a request (a *view*), ONE language for saying
+# something about it (a *condition*), and everything else is built on those.
+# A view is the same whether it is live, being matched against a rule, or a
+# capture read back a week later to be asserted on.
+
+ID_RE = re.compile(r"[A-Za-z0-9._:-]{1,64}")
+# Never kept. A credential's fingerprint says which one arrived; the credential
+# itself has no business being in a log or a capture.
+SENSITIVE_HEADERS = ("authorization", "x-api-key", "cookie", "set-cookie", "proxy-authorization")
+IDENTITY_FIELDS = ("run", "agent", "app")
+
+
+# -- settings: defaults and what a caller may change -------------------------
+
+def _settings_check(section, value):
+    """(clean, error) for one settings section. Settings come from whoever
+    calls the API, and a typo that silently becomes a new key is how a
+    capture limit ends up unlimited."""
+    if section == "capture":
+        if not isinstance(value, dict):
+            return None, "capture must be an object"
+        out = json.loads(json.dumps(CONFIG["capture"]))
+        for key in ("enabled",):
+            if key in value:
+                out[key] = bool(value[key])
+        for key, low, high in (("max", 1, 20000), ("maxBytes", 1024, 16 * 1024 * 1024)):
+            if key in value:
+                try:
+                    n = int(value[key])
+                except (TypeError, ValueError):
+                    return None, "capture.%s must be a number" % key
+                if not low <= n <= high:
+                    return None, "capture.%s must be between %d and %d" % (key, low, high)
+                out[key] = n
+        red = value.get("redact")
+        if red is not None:
+            if not isinstance(red, dict):
+                return None, "capture.redact must be an object"
+            if "headers" in red:
+                if not isinstance(red["headers"], list) or not all(isinstance(h, str) for h in red["headers"]):
+                    return None, "capture.redact.headers must be a list of header names"
+                out["redact"]["headers"] = [h.lower() for h in red["headers"]][:50]
+            if "patterns" in red:
+                pats = red["patterns"]
+                if not isinstance(pats, list) or len(pats) > 50:
+                    return None, "capture.redact.patterns must be a list of at most 50"
+                clean = []
+                for p in pats:
+                    if not isinstance(p, dict) or not isinstance(p.get("pattern"), str) or not p["pattern"] or len(p["pattern"]) > 300:
+                        return None, "each redaction is {pattern, replace?} with a pattern of 1 to 300 characters"
+                    try:
+                        re.compile(p["pattern"])
+                    except re.error as exc:
+                        return None, "redaction pattern %r is not valid: %s" % (p["pattern"], exc)
+                    clean.append({"pattern": p["pattern"], "replace": str(p.get("replace", "[redacted]"))[:100]})
+                out["redact"]["patterns"] = clean
+        return out, None
+    if section == "identity":
+        if not isinstance(value, dict) or not isinstance(value.get("rules", []), list) or len(value.get("rules", [])) > 30:
+            return None, "identity is {rules: [...]} with at most 30 rules"
+        rules = []
+        for r in value.get("rules", []):
+            if not isinstance(r, dict) or not ID_RE.fullmatch(str(r.get("field", ""))):
+                return None, "an identity rule needs a field name (letters, digits, dot, dash, underscore)"
+            if r.get("from") not in ("header", "body", "query", "credential"):
+                return None, "an identity rule's from is header, body, query or credential"
+            if r["from"] != "credential" and not isinstance(r.get("name"), str):
+                return None, "an identity rule from %s needs a name" % r["from"]
+            if r.get("pattern"):
+                try:
+                    if re.compile(r["pattern"]).groups < 1:
+                        return None, "an identity pattern needs one capture group, which is the value"
+                except re.error as exc:
+                    return None, "identity pattern %r is not valid: %s" % (r["pattern"], exc)
+            elif r["from"] == "credential":
+                return None, "an identity rule from credential needs a pattern with one capture group"
+            rules.append({k: r[k] for k in ("field", "from", "name", "pattern") if k in r})
+        return {"rules": rules}, None
+    if section == "auth":
+        if not isinstance(value, dict):
+            return None, "auth must be an object"
+        out = json.loads(json.dumps(CONFIG["auth"]))
+        if "mode" in value:
+            if value["mode"] not in ("published", "registered", "any"):
+                return None, "auth.mode is published, registered or any"
+            out["mode"] = value["mode"]
+        return out, None
+    return None, "unknown settings section %r" % section
+
+
+def settings_public():
+    """Everything a caller may read: credentials as labels and fingerprints, never keys."""
+    return {"capture": CONFIG["capture"], "identity": CONFIG["identity"],
+            "auth": {"mode": CONFIG["auth"]["mode"], "credentials": CONFIG["auth"]["credentials"]},
+            "session": CONFIG["session"]}
+
+
+# -- credential: which one arrived -------------------------------------------
+
+def credential_fingerprint(key):
+    return hashlib.sha256(key.encode()).hexdigest()[:12]
+
+
+def credential_of(handler):
+    """What a request presented, without keeping it: which header, a fingerprint,
+    and whether LLMSim knows it.
+
+    A fingerprint is enough to say "this is the platform token" or "this is a
+    minted virtual key" once somebody has registered what each one is, and it
+    cannot be turned back into the key.
+    """
+    key = handler.presented_key()
+    if not key:
+        return {"kind": "none", "fingerprint": "", "label": "", "known": False, "length": 0}
+    kind = "x-api-key" if handler.headers.get("x-api-key") else "bearer"
+    fp = credential_fingerprint(key)
+    label = ""
+    for provider, published in API_KEYS.items():
+        if key == published:
+            label = "published:" + provider
+    if not label:
+        for c in CONFIG["auth"]["credentials"]:
+            if c["fingerprint"] == fp:
+                label = c["label"]
+    return {"kind": kind, "fingerprint": fp, "label": label, "known": bool(label), "length": len(key)}
+
+
+def credential_accepted(cred):
+    """Whether this credential may use the vendor routes.
+
+    published   only the keys this file publishes — a wrong one is the vendor's
+                own 401, so a misconfigured client fails the way it would for real
+    registered  those, and any credential somebody has registered by fingerprint
+    any         anything non-empty. For witnessing: a gateway mints its own keys
+                and the question is WHICH one reached here, which a strict check
+                would answer by refusing every one.
+    """
+    if cred["kind"] == "none":
+        return False
+    mode = CONFIG["auth"]["mode"]
+    if mode == "any":
+        return True
+    if mode == "registered":
+        return cred["known"]
+    return cred["label"].startswith("published:")
+
+
+# -- identity: who sent it ----------------------------------------------------
+
+def _dig_path(value, path):
+    """A dotted path into nested dicts and lists. None when it is not there."""
+    for part in str(path).split("."):
+        if isinstance(value, dict):
+            value = value.get(part)
+        elif isinstance(value, list) and part.isdigit() and int(part) < len(value):
+            value = value[int(part)]
+        else:
+            return None
+    return value
+
+
+def identity_of(handler, body):
+    """{run, agent, app, …} for a request, from where the caller put it.
+
+    The reliable way is the base URL: /run/<id>/agent/<name>/openai/v1 needs
+    nothing of an agent platform except that it can be pointed at a URL, which
+    is the one thing every platform has to support. Headers and body fields are
+    for a gateway that carries an identity through for you; they are configured,
+    not assumed, because which header a given gateway forwards is a fact about
+    that gateway.
+    """
+    found = dict(getattr(handler, "path_identity", {}) or {})
+    query = urllib.parse.parse_qs(urllib.parse.urlsplit(handler.path).query)
+    key = handler.presented_key()
+    for rule in CONFIG["identity"]["rules"]:
+        field = rule["field"]
+        if field in found:
+            continue
+        source = rule["from"]
+        if source == "header":
+            raw = handler.headers.get(rule["name"])
+        elif source == "body":
+            raw = _dig_path(body, rule["name"]) if isinstance(body, dict) else None
+        elif source == "query":
+            raw = (query.get(rule["name"]) or [None])[0]
+        else:
+            raw = key
+        if raw is None or isinstance(raw, (dict, list)):
+            continue
+        raw = str(raw)
+        if rule.get("pattern"):
+            m = re.search(rule["pattern"], raw)
+            if not m:
+                continue
+            raw = m.group(1)
+        if ID_RE.fullmatch(raw):
+            found[field] = raw
+    return found
+
+
+# -- the view of a request ----------------------------------------------------
+
+def _message_parts(messages):
+    """[{role, text, tool}] — tool true when a message is a tool's output."""
+    out = []
+    for m in messages or []:
+        role = m.get("role")
+        text, as_tool = flatten(m) if role != "tool" else (_plain(m.get("content")), True)
+        out.append({"role": role, "text": text, "tool": bool(as_tool or role == "tool")})
+    return out
+
+
+def _system_text(request, shape, messages):
+    if shape == "anthropic":
+        return _plain(request.get("system"))
+    parts = []
+    if shape == "responses" and request.get("instructions"):
+        parts.append(_plain(request["instructions"]))
+    raw = request.get("input") if shape == "responses" else request.get("messages")
+    for item in raw if isinstance(raw, list) else []:
+        if isinstance(item, dict) and item.get("role") in ("system", "developer"):
+            parts.append(_plain(item.get("content")))
+    return "\n\n".join(p for p in parts if p)
+
+
+def build_view(meta, request, response=None):
+    """The one description of a request that rules, faults and assertions all read.
+
+    meta     what was around the request: provider, shape, model, path, stream,
+             identity, credential, headers, route
+    request  the body the client sent
+    response what was answered, once there is an answer
+    """
+    shape = meta.get("shape") or "openai"
+    request = request if isinstance(request, dict) else {}
+    messages = responses_to_messages(request) if shape == "responses" else (request.get("messages") or [])
+    if not isinstance(messages, list):
+        messages = []
+    parts = _message_parts(messages)
+    declared = declared_tools(request)
+    tool_outputs = [p["text"] for p in parts if p["tool"]]
+    view = {
+        "provider": meta.get("provider", ""), "shape": shape, "model": meta.get("model") or request.get("model") or "",
+        "path": meta.get("path", ""), "stream": bool(meta.get("stream", request.get("stream"))),
+        "route": meta.get("route", ""), "rule": meta.get("rule", ""),
+        "identity": dict(meta.get("identity") or {}), "credential": dict(meta.get("credential") or {}),
+        "headers": {k.lower(): v for k, v in (meta.get("headers") or {}).items()},
+        "turn": sum(1 for m in messages if m.get("role") == "assistant"),
+        "ask": subject(messages), "lastText": parts[-1]["text"] if parts else "",
+        "lastToolOutput": last_tool_output(messages), "toolOutputs": tool_outputs,
+        "system": _system_text(request, shape, messages),
+        "userText": "\n".join(p["text"] for p in parts if p["role"] == "user" and not p["tool"]),
+        "assistantText": "\n".join(p["text"] for p in parts if p["role"] == "assistant"),
+        "allText": "\n".join(p["text"] for p in parts),
+        "messageCount": len(parts), "messages": parts,
+        "tools": sorted(declared), "toolSpecs": request.get("tools") or [],
+    }
+    r = response or {}
+    view["response"] = {
+        "status": r.get("status"), "text": r.get("text") or "", "toolCalls": r.get("toolCalls") or [],
+        "toolNames": [c.get("name") for c in r.get("toolCalls") or []], "usage": r.get("usage") or {},
+        "error": r.get("error") or "", "fault": r.get("fault") or "", "ms": r.get("ms"), "present": response is not None,
+    }
+    view["status"], view["fault"] = r.get("status"), r.get("fault") or ""
+    return view
+
+
+# -- conditions: one language ------------------------------------------------
+
+def _text_ok(spec, text, label):
+    """(ok, why). A string is 'contains'; an object may say more. Case does not
+    matter unless {case: true}."""
+    text = "" if text is None else str(text)
+    if isinstance(spec, str):
+        spec = {"contains": spec}
+    if not isinstance(spec, dict):
+        return False, "%s: a text condition is a string or an object" % label
+    case = bool(spec.get("case"))
+    flags = 0 if case else re.I
+    hay = text if case else text.lower()
+    for key, want in spec.items():
+        if key == "case":
+            continue
+        try:
+            if key == "contains":
+                ok = (str(want) if case else str(want).lower()) in hay
+            elif key == "not_contains":
+                ok = (str(want) if case else str(want).lower()) not in hay
+            elif key == "regex":
+                ok = re.search(want, text, flags) is not None
+            elif key == "not_regex":
+                ok = re.search(want, text, flags) is None
+            elif key == "equals":
+                ok = hay == (str(want) if case else str(want).lower())
+            elif key == "not_equals":
+                ok = hay != (str(want) if case else str(want).lower())
+            elif key == "empty":
+                ok = (text == "") == bool(want)
+            else:
+                return False, "%s: unknown text condition %r" % (label, key)
+        except re.error as exc:
+            return False, "%s: %r is not a valid pattern (%s)" % (label, want, exc)
+        if not ok:
+            return False, "%s: %s %r" % (label, key, want if not isinstance(want, str) else want[:60])
+    return True, ""
+
+
+def _number_ok(spec, value, label):
+    if isinstance(spec, (int, float)) and not isinstance(spec, bool):
+        spec = {"eq": spec}
+    if not isinstance(spec, dict):
+        return False, "%s: a number condition is a number or {min, max}" % label
+    if value is None:
+        return False, "%s: there is no value" % label
+    for key, want in spec.items():
+        ok = {"eq": value == want, "ne": value != want, "min": value >= want, "max": value <= want,
+              "gt": value > want, "lt": value < want}.get(key)
+        if ok is None:
+            return False, "%s: unknown number condition %r" % (label, key)
+        if not ok:
+            return False, "%s is %s, wanted %s %s" % (label, value, key, want)
+    return True, ""
+
+
+def _field_op(view, field, op, want, case):
+    """(ok, why) for {field, op, value}."""
+    got = _dig_path(view, field)
+    label = "%s" % field
+    present = got not in (None, "", [], {})
+    if op == "exists":
+        want_present = True if want is None else bool(want)
+        return present == want_present, "%s is %s" % (label, "present" if present else "missing")
+    if op == "not_exists":
+        return not present, "%s is present" % label
+    if isinstance(got, list):
+        low = [str(x).lower() for x in got] if not case else [str(x) for x in got]
+        w = (str(want) if case else str(want).lower()) if not isinstance(want, list) else [str(x) if case else str(x).lower() for x in want]
+        if op in ("includes", "contains"):
+            return w in low, "%s does not include %r" % (label, want)
+        if op in ("excludes", "not_contains"):
+            return w not in low, "%s includes %r" % (label, want)
+        if op == "includes_all":
+            return all(x in low for x in w), "%s is missing some of %r" % (label, want)
+        if op == "includes_any":
+            return any(x in low for x in w), "%s has none of %r" % (label, want)
+        if op == "equals" or op == "eq":
+            return sorted(low) == sorted(w if isinstance(w, list) else [w]), "%s is %r, not %r" % (label, got, want)
+        if op == "empty":
+            return (not got) == bool(want if want is not None else True), "%s is %r" % (label, got)
+        if op in ("len", "count"):
+            return _number_ok(want, len(got), "length of " + label)
+        return False, "%s is a list; %r does not apply" % (label, op)
+    if op in ("gt", "gte", "lt", "lte", "min", "max"):
+        try:
+            number = float(got)
+        except (TypeError, ValueError):
+            return False, "%s is not a number" % label
+        return _number_ok({{"gte": "min", "lte": "max"}.get(op, op): want}, number, label)
+    if op in ("eq", "ne"):
+        same = got == want or str(got).lower() == str(want).lower() if not case else got == want
+        return (same if op == "eq" else not same), "%s is %r" % (label, got)
+    if op in ("in", "not_in"):
+        pool = want if isinstance(want, list) else [want]
+        hit = got in pool or (not case and str(got).lower() in [str(x).lower() for x in pool])
+        return (hit if op == "in" else not hit), "%s is %r" % (label, got)
+    spec = {"contains": "contains", "not_contains": "not_contains", "regex": "regex", "not_regex": "not_regex",
+            "equals": "equals", "not_equals": "not_equals", "empty": "empty"}.get(op)
+    if spec is None:
+        return False, "unknown operator %r" % op
+    return _text_ok({spec: want, "case": case}, got if isinstance(got, str) else ("" if got is None else json.dumps(got) if isinstance(got, (dict, list)) else str(got)), label)
+
+
+def cond_result(cond, view):
+    """(ok, why). Every key must hold. The same function answers a rule's `when`,
+    a fault's `match`, an assertion's scope and its checks, so a thing learned in
+    one place is true in all of them."""
+    if not isinstance(cond, dict):
+        return False, "a condition is an object"
+    for key, want in cond.items():
+        if key in ("op", "value", "case"):
+            continue
+        if key == "field":
+            ok, why = _field_op(view, want, cond.get("op", "eq"), cond.get("value"), bool(cond.get("case")))
+        else:
+            ok, why = _one_cond(key, want, view)
+        if not ok:
+            return False, why
+    return True, ""
+
+
+def _one_cond(key, want, view):
+    if key == "not":
+        ok, _ = cond_result(want, view)
+        return (not ok), "not: the condition held"
+    if key == "all":
+        for sub in want if isinstance(want, list) else []:
+            ok, why = cond_result(sub, view)
+            if not ok:
+                return False, why
+        return True, ""
+    if key == "any":
+        reasons = []
+        for sub in want if isinstance(want, list) else []:
+            ok, why = cond_result(sub, view)
+            if ok:
+                return True, ""
+            reasons.append(why)
+        return False, "any: none held (%s)" % "; ".join(reasons[:3])
+    if key in ("provider", "shape", "route"):
+        return _text_ok(want if isinstance(want, dict) else {"equals": want}, view.get(key), key)
+    if key == "path":
+        return _text_ok(want if isinstance(want, dict) else {"contains": want}, view.get("path"), "path")
+    if key == "stream":
+        return view.get("stream") == bool(want), "stream is %s" % view.get("stream")
+    if key == "model":
+        # A string is a substring, which is what rules have always meant by it.
+        return _text_ok(want if isinstance(want, dict) else {"contains": want}, view.get("model"), "model")
+    if key in ("tool", "tools"):
+        wanted = want if isinstance(want, list) else [want]
+        have = {t.lower() for t in view.get("tools") or []}
+        missing = [t for t in wanted if str(t).lower() not in have]
+        return (not missing), "the client did not declare %s" % ", ".join(map(str, missing))
+    if key == "contains":
+        return _text_ok({"contains": want}, view.get("ask"), "the ask")
+    if key == "regex":
+        return _text_ok({"regex": want}, view.get("ask"), "the ask")
+    if key == "turn":
+        return _number_ok(want, view.get("turn"), "turn")
+    if key == "toolOutput":
+        return _text_ok(want, view.get("lastToolOutput"), "the last tool output")
+    if key == "anyToolOutput":
+        outputs = view.get("toolOutputs") or []
+        for out in outputs:
+            if _text_ok(want, out, "")[0]:
+                return True, ""
+        return False, "no tool output satisfied %s" % json.dumps(want)[:60]
+    if key == "lastMessage":
+        return _text_ok(want, view.get("lastText"), "the last message")
+    if key == "system":
+        return _text_ok(want, view.get("system"), "the system prompt")
+    if key == "identity":
+        for field, spec in (want if isinstance(want, dict) else {}).items():
+            ok, why = _text_ok(spec if isinstance(spec, dict) else {"equals": spec}, (view.get("identity") or {}).get(field), "identity." + field)
+            if not ok:
+                return False, why
+        return True, ""
+    if key == "header":
+        for name, spec in (want if isinstance(want, dict) else {}).items():
+            ok, why = _text_ok(spec if isinstance(spec, dict) else {"equals": spec}, (view.get("headers") or {}).get(name.lower()), "header " + name)
+            if not ok:
+                return False, why
+        return True, ""
+    if key == "credential":
+        cred = view.get("credential") or {}
+        for field, spec in (want if isinstance(want, dict) else {}).items():
+            if field == "known":
+                if bool(cred.get("known")) != bool(spec):
+                    return False, "credential.known is %s" % cred.get("known")
+                continue
+            ok, why = _text_ok(spec if isinstance(spec, dict) else {"equals": spec}, cred.get(field), "credential." + field)
+            if not ok:
+                return False, why
+        return True, ""
+    if key in ("status", "fault"):
+        if not view["response"]["present"]:
+            return False, "there is no response yet"
+        if key == "status":
+            return _number_ok(want, view.get("status"), "status")
+        return _text_ok(want if isinstance(want, dict) else {"equals": want}, view.get("fault"), "fault")
+    return False, "unknown condition %r" % key
+
+
+COND_KEYS = {"not", "all", "any", "provider", "shape", "route", "path", "stream", "model", "tool", "tools", "contains",
+             "regex", "turn", "toolOutput", "anyToolOutput", "lastMessage", "system", "identity", "header", "credential",
+             "status", "fault", "field", "op", "value", "case"}
+
+
+def validate_cond(cond, where="when", depth=0):
+    """A list of problems with a condition, found when it is saved and not when
+    it first fails to match something in the middle of a run."""
+    problems = []
+    if not isinstance(cond, dict):
+        return ["%s must be an object" % where]
+    if depth > 6:
+        return ["%s is nested too deeply" % where]
+    for key, want in cond.items():
+        if key not in COND_KEYS:
+            problems.append("%s: unknown condition %r" % (where, key))
+            continue
+        if key in ("regex",) and isinstance(want, str):
+            try:
+                re.compile(want)
+            except re.error as exc:
+                problems.append("%s.regex is not a valid pattern: %s" % (where, exc))
+        if key == "not":
+            problems += validate_cond(want, where + ".not", depth + 1)
+        if key in ("all", "any"):
+            if not isinstance(want, list):
+                problems.append("%s.%s must be a list" % (where, key))
+            else:
+                for i, sub in enumerate(want):
+                    problems += validate_cond(sub, "%s.%s[%d]" % (where, key, i), depth + 1)
+        if key in ("toolOutput", "anyToolOutput", "lastMessage", "system") and isinstance(want, dict):
+            for sk, sv in want.items():
+                if sk in ("regex", "not_regex") and isinstance(sv, str):
+                    try:
+                        re.compile(sv)
+                    except re.error as exc:
+                        problems.append("%s.%s.%s is not a valid pattern: %s" % (where, key, sk, exc))
+                elif sk not in ("contains", "not_contains", "regex", "not_regex", "equals", "not_equals", "empty", "case"):
+                    problems.append("%s.%s: unknown text condition %r" % (where, key, sk))
+        if key == "field":
+            if not isinstance(want, str) or not want:
+                problems.append("%s.field must be a path such as system or response.text" % where)
+            op = cond.get("op", "eq")
+            known = {"eq", "ne", "equals", "not_equals", "contains", "not_contains", "regex", "not_regex", "in", "not_in", "gt",
+                     "gte", "lt", "lte", "min", "max", "exists", "not_exists", "includes", "excludes", "includes_all",
+                     "includes_any", "empty", "len", "count"}
+            if op not in known:
+                problems.append("%s.op %r is not an operator" % (where, op))
+            if op in ("regex", "not_regex") and isinstance(cond.get("value"), str):
+                try:
+                    re.compile(cond["value"])
+                except re.error as exc:
+                    problems.append("%s.value is not a valid pattern: %s" % (where, exc))
+    return problems
+
+
+# ── Captures: what each request was, and what answered it ─────────────────
+#
+# Kept in memory, bounded, and never written to disk: a capture holds what an
+# agent sent to a model, which is exactly the thing worth looking at and exactly
+# the thing not to leave lying around. Assertions run on what is held, so
+# "no request carried a card number" is checked against the request as it was,
+# not as it is shown. What is shown, exported or returned over the API has the
+# redactions applied on the way out.
+
+CAPTURES = collections.deque(maxlen=300)
+CAPTURE_LOCK = threading.Lock()
+CAPTURE_SEQ = itertools.count(1)
+
+
+def _resize_captures():
+    """Apply a new capture limit, keeping the newest."""
+    global CAPTURES
+    with CAPTURE_LOCK:
+        CAPTURES = collections.deque(list(CAPTURES)[-CONFIG["capture"]["max"]:], maxlen=CONFIG["capture"]["max"])
+
+
+def _compact_request(view, shape_budget):
+    """A request too big to keep whole, reduced to what assertions read.
+
+    Each message is cut to its share of the budget. The result is a Chat
+    Completions-shaped request, so a view of it reads exactly as one of the
+    original would — and it is marked, so an assertion can say it was made on a
+    truncated request rather than pass or fail as if it had seen everything.
+    """
+    share = max(256, shape_budget // max(1, view["messageCount"] + 1))
+    messages = [{"role": "system", "content": view["system"][:share]}] if view["system"] else []
+    for part in view["messages"]:
+        role = "tool" if part["tool"] else part["role"]
+        messages.append({"role": role, "content": part["text"][:share]})
+    return {"model": view["model"], "stream": view["stream"], "messages": messages,
+            "tools": [{"type": "function", "function": {"name": t}} for t in view["tools"]]}
+
+
+def capture_begin(handler, body, shape, model, stream):
+    """Start a capture for this request. None when capture is off or the request
+    is LLMSim's own runner, whose requests are no part of anything being observed."""
+    if not CONFIG["capture"]["enabled"] or getattr(handler, "internal", False):
+        return None
+    headers = {k.lower(): v for k, v in handler.headers.items() if k.lower() not in SENSITIVE_HEADERS}
+    return {"at": time.time(), "meta": {
+        "provider": handler.provider, "shape": shape, "model": model, "path": handler.path.split("?")[0],
+        "stream": stream, "identity": getattr(handler, "identity", {}), "credential": getattr(handler, "cred", {}),
+        "headers": headers, "route": "", "rule": ""}, "request": body, "response": {}}
+
+
+def _usage_of(turn):
+    """The token counts a turn reports, in one shape, or {} when it reports none."""
+    u = turn.get("usage") or {}
+    if "input_tokens" in turn or "output_tokens" in turn:
+        return {"input": turn.get("input_tokens", 0), "output": turn.get("output_tokens", 0),
+                "cacheRead": turn.get("cached_tokens", 0), "reasoning": turn.get("reasoning_tokens", 0)}
+    return {"input": u.get("input", 0), "output": u.get("output", 0), "cacheRead": u.get("cacheRead", 0),
+            "reasoning": u.get("reasoning", 0)} if u else {}
+
+
+def usage_from_body(shape, body):
+    """The token counts a built answer carries, in one shape.
+
+    Read from the answer itself rather than from the turn, because a scripted turn
+    names no counts and the builders make them up as they build — and what a
+    capture should hold is what was actually sent.
+    """
+    u = body.get("usage") or {}
+    if shape == "anthropic":
+        cached = u.get("cache_read_input_tokens", 0)
+        return {"input": u.get("input_tokens", 0) + cached + u.get("cache_creation_input_tokens", 0),
+                "output": u.get("output_tokens", 0), "cacheRead": cached, "reasoning": 0}
+    if shape == "responses":
+        return {"input": u.get("input_tokens", 0), "output": u.get("output_tokens", 0),
+                "cacheRead": (u.get("input_tokens_details") or {}).get("cached_tokens", 0),
+                "reasoning": (u.get("output_tokens_details") or {}).get("reasoning_tokens", 0)}
+    return {"input": u.get("prompt_tokens", 0), "output": u.get("completion_tokens", 0),
+            "cacheRead": (u.get("prompt_tokens_details") or {}).get("cached_tokens", 0),
+            "reasoning": (u.get("completion_tokens_details") or {}).get("reasoning_tokens", 0)}
+
+
+def capture_note(handler, **fields):
+    """Add to what is known about the answer. Safe to call when there is no capture."""
+    cap = getattr(handler, "cap", None)
+    if cap is None:
+        return
+    for key in ("route", "rule"):
+        if key in fields:
+            cap["meta"][key] = fields.pop(key)
+    cap["response"].update({k: v for k, v in fields.items() if v is not None})
+
+
+def capture_finish(handler):
+    cap = getattr(handler, "cap", None)
+    handler.cap = None
+    if cap is None:
+        return
+    limit = CONFIG["capture"]["maxBytes"]
+    try:
+        raw = json.dumps(cap["request"])
+    except (TypeError, ValueError):
+        raw = ""
+    size = len(raw)
+    cap["requestBytes"] = size
+    cap["truncated"] = False
+    if size > limit:
+        view = build_view(cap["meta"], cap["request"])
+        cap["request"] = _compact_request(view, limit)
+        cap["meta"]["shape"] = "openai"
+        cap["truncated"] = True
+    cap["response"].setdefault("status", getattr(handler, "_status", None))
+    cap["response"]["ms"] = int((time.time() - cap["at"]) * 1000)
+    cap["n"] = next(CAPTURE_SEQ)
+    with CAPTURE_LOCK:
+        CAPTURES.append(cap)
+
+
+def capture_view(cap):
+    """The view of a held capture — the same shape a live request has, plus its answer."""
+    view = build_view(cap["meta"], cap["request"], cap["response"])
+    view["n"], view["at"], view["truncated"] = cap["n"], cap["at"], cap["truncated"]
+    return view
+
+
+def _redact_value(value, patterns):
+    if isinstance(value, str):
+        for p in patterns:
+            value = re.sub(p["pattern"], p["replace"], value)
+        return value
+    if isinstance(value, list):
+        return [_redact_value(v, patterns) for v in value]
+    if isinstance(value, dict):
+        return {k: _redact_value(v, patterns) for k, v in value.items()}
+    return value
+
+
+def capture_public(cap, redact=True):
+    """A capture as it may be shown: redactions applied, and nothing a header
+    list says should be kept out."""
+    out = json.loads(json.dumps({k: cap[k] for k in ("n", "at", "meta", "request", "response", "requestBytes", "truncated")}))
+    if redact:
+        drop = set(CONFIG["capture"]["redact"]["headers"])
+        out["meta"]["headers"] = {k: v for k, v in out["meta"]["headers"].items() if k not in drop}
+        patterns = CONFIG["capture"]["redact"]["patterns"]
+        if patterns:
+            out["request"] = _redact_value(out["request"], patterns)
+            out["response"] = _redact_value(out["response"], patterns)
+    return out
+
+
+def capture_summary(cap):
+    view = capture_view(cap)
+    ident = cap["meta"].get("identity") or {}
+    return {"n": cap["n"], "at": cap["at"], "run": ident.get("run", ""), "agent": ident.get("agent", ""),
+            "app": ident.get("app", ""), "provider": view["provider"], "model": view["model"], "route": view["route"],
+            "rule": view["rule"], "status": view["status"], "ms": view["response"]["ms"], "turn": view["turn"],
+            "ask": view["ask"][:200], "tools": view["tools"], "calls": view["response"]["toolNames"],
+            "fault": view["fault"], "credential": cap["meta"].get("credential", {}).get("label", ""),
+            "truncated": cap["truncated"]}
+
+
+def captures_matching(scope=None, limit=None, since=0):
+    """Captures (oldest first) whose view satisfies a condition."""
+    with CAPTURE_LOCK:
+        held = list(CAPTURES)
+    out = []
+    for cap in held:
+        if cap["n"] <= since:
+            continue
+        if scope and not cond_result(scope, capture_view(cap))[0]:
+            continue
+        out.append(cap)
+    return out[-limit:] if limit else out
+
+
+def runs_overview():
+    """The runs seen so far, derived from what was captured and what is running."""
+    runs = {}
+    with CAPTURE_LOCK:
+        held = list(CAPTURES)
+    for cap in held:
+        ident = cap["meta"].get("identity") or {}
+        run = ident.get("run")
+        if not run:
+            continue
+        r = runs.setdefault(run, {"run": run, "requests": 0, "agents": set(), "apps": set(), "first": cap["at"], "last": cap["at"]})
+        r["requests"] += 1
+        r["first"], r["last"] = min(r["first"], cap["at"]), max(r["last"], cap["at"])
+        if ident.get("agent"):
+            r["agents"].add(ident["agent"])
+        if ident.get("app"):
+            r["apps"].add(ident["app"])
+    return sorted(({**r, "agents": sorted(r["agents"]), "apps": sorted(r["apps"])} for r in runs.values()),
+                  key=lambda r: -r["last"])
+
+
+def run_base_urls(host, run, agents=None):
+    """The base URLs to give an agent so its traffic arrives under this run.
+
+    This is what an agent platform needs and the only thing it needs: a URL it
+    can be pointed at. Identity rides in the path, so it works for a platform
+    that offers no way to add a header.
+    """
+    def urls(prefix):
+        return {"anthropic": "http://%s%s/anthropic" % (host, prefix), "openai": "http://%s%s/openai/v1" % (host, prefix),
+                "deepseek": "http://%s%s/deepseek/v1" % (host, prefix)}
+    out = {"run": run, "baseUrls": urls("/run/" + run)}
+    if agents:
+        out["agents"] = {a: urls("/run/%s/agent/%s" % (run, a)) for a in agents}
+    return out
+
+
+# ── The REST surface ──────────────────────────────────────────────────────
+#
+# One dispatcher, so the checks that every one of these routes needs — refusing
+# a request that a browser made on behalf of another site, answering in one
+# shape, returning a status that says what went wrong — are written once. The
+# console is a client of this API like any other: whatever a person can do on a
+# page, a harness can do over HTTP.
+#
+#   settings     GET/PUT /api/settings · POST /api/settings/credentials · DELETE …/<label>
+#   captures     GET /api/captures · GET /api/captures/<n> · GET …/export · DELETE /api/captures
+#   runs         GET/POST /api/runs · GET/DELETE /api/runs/<run>
+#   rules        /api/rules …
+#   faults       /api/faults …
+#   assertions   /api/assertions/evaluate · /api/assertion-sets …
+
+REST_PREFIXES = ("/api/settings", "/api/captures", "/api/runs", "/api/rules", "/api/faults", "/api/assertions",
+                 "/api/assertion-sets")
+
+
+def _fail(code, message, **extra):
+    return code, dict({"ok": False, "message": message}, **extra)
+
+
+def _ok(payload=None, **extra):
+    return 200, dict({"ok": True}, **(payload or {}), **extra)
+
+
+def _int_arg(query, name, default, low, high):
+    try:
+        n = int((query.get(name) or [default])[0])
+    except (TypeError, ValueError):
+        return default
+    return max(low, min(high, n))
+
+
+# -- settings -----------------------------------------------------------------
+
+def _rest_settings(method, rest, body, query, host):
+    if method == "GET" and not rest:
+        return _ok(settings_public())
+    if method == "PUT" and not rest:
+        if not isinstance(body, dict):
+            return _fail(400, "The body must be an object of settings sections.")
+        staged = {}
+        for section, value in body.items():
+            if section not in ("capture", "identity", "auth"):
+                return _fail(400, "Unknown settings section %r. The sections are capture, identity and auth." % section)
+            clean, error = _settings_check(section, value)
+            if error:
+                return _fail(400, error)
+            staged[section] = clean
+        CONFIG.update(staged)
+        if "capture" in staged:
+            _resize_captures()
+        save_config()
+        return _ok(settings_public())
+    if method == "POST" and rest == ["credentials"]:
+        label, key = (body or {}).get("label"), (body or {}).get("key")
+        if not isinstance(label, str) or not ID_RE.fullmatch(label) or label.startswith("published:"):
+            return _fail(400, "A credential's label is letters, digits, dot, dash, underscore or colon, and not 'published:…'.")
+        if not isinstance(key, str) or not key or len(key) > 1000:
+            return _fail(400, "Give the credential to register as key. It is fingerprinted and not kept.")
+        fp = credential_fingerprint(key)
+        kept = [c for c in CONFIG["auth"]["credentials"] if c["label"] != label and c["fingerprint"] != fp]
+        CONFIG["auth"]["credentials"] = kept + [{"label": label, "fingerprint": fp}]
+        save_config()
+        return _ok(settings_public(), message="Registered %s as %s. The key itself is not stored." % (fp, label))
+    if method == "DELETE" and len(rest) == 2 and rest[0] == "credentials":
+        before = len(CONFIG["auth"]["credentials"])
+        CONFIG["auth"]["credentials"] = [c for c in CONFIG["auth"]["credentials"] if c["label"] != rest[1]]
+        if len(CONFIG["auth"]["credentials"]) == before:
+            return _fail(404, "There is no credential called %s." % rest[1])
+        save_config()
+        return _ok(settings_public())
+    return _fail(404, "No such route: %s /api/settings/%s" % (method, "/".join(rest)))
+
+
+# -- captures -----------------------------------------------------------------
+
+def _capture_scope(query):
+    """The filter a captures query asks for, as a condition — so the API filters
+    with the same language everything else does."""
+    scope = {}
+    ident = {k: (query.get(k) or [None])[0] for k in IDENTITY_FIELDS if (query.get(k) or [None])[0]}
+    if ident:
+        scope["identity"] = ident
+    for key in ("route", "provider"):
+        if (query.get(key) or [None])[0]:
+            scope[key] = (query[key])[0]
+    if (query.get("model") or [None])[0]:
+        scope["model"] = query["model"][0]
+    if (query.get("status") or [None])[0]:
+        try:
+            scope["status"] = int(query["status"][0])
+        except ValueError:
+            pass
+    q = (query.get("q") or [None])[0]
+    if q:
+        scope["any"] = [{"contains": q}, {"field": "response.text", "op": "contains", "value": q},
+                        {"field": "allText", "op": "contains", "value": q}]
+    return scope
+
+
+def _rest_captures(method, rest, body, query, host):
+    if method == "GET" and not rest:
+        found = captures_matching(_capture_scope(query), limit=_int_arg(query, "limit", 100, 1, 1000),
+                                  since=_int_arg(query, "since", 0, 0, 10 ** 12))
+        with CAPTURE_LOCK:
+            total = len(CAPTURES)
+        return _ok({"captures": [capture_summary(c) for c in found][::-1], "seq": found[-1]["n"] if found else 0,
+                    "total": total, "capacity": CONFIG["capture"]["max"], "enabled": CONFIG["capture"]["enabled"]})
+    if method == "GET" and rest == ["export"]:
+        found = captures_matching(_capture_scope(query))
+        return 200, {"version": 1, "exportedAt": time.time(), "redacted": True,
+                     "captures": [capture_public(c) for c in found]}, {"download": "llmsim-captures.json"}
+    if method == "GET" and len(rest) == 1 and rest[0].isdigit():
+        with CAPTURE_LOCK:
+            cap = next((c for c in CAPTURES if c["n"] == int(rest[0])), None)
+        if not cap:
+            return _fail(404, "Capture %s is not held. It may have been pushed out by newer ones." % rest[0])
+        view = capture_view(cap)
+        return _ok({"capture": capture_public(cap), "view": {k: view[k] for k in (
+            "system", "ask", "lastText", "lastToolOutput", "tools", "turn", "identity", "credential", "response", "messageCount")}})
+    if method == "DELETE" and not rest:
+        scope = _capture_scope(query)
+        with CAPTURE_LOCK:
+            before = len(CAPTURES)
+            if scope:
+                keep = [c for c in CAPTURES if not cond_result(scope, capture_view(c))[0]]
+                CAPTURES.clear()
+                CAPTURES.extend(keep)
+            else:
+                CAPTURES.clear()
+            removed = before - len(CAPTURES)
+        return _ok(removed=removed)
+    return _fail(404, "No such route: %s /api/captures/%s" % (method, "/".join(rest)))
+
+
+# -- runs ---------------------------------------------------------------------
+
+def _rest_runs(method, rest, body, query, host):
+    if method == "GET" and not rest:
+        return _ok({"runs": runs_overview()})
+    if method == "POST" and not rest:
+        body = body or {}
+        run = body.get("run") or "r-" + "".join(random.choice(string.ascii_lowercase + string.digits) for _ in range(6))
+        if not isinstance(run, str) or not ID_RE.fullmatch(run):
+            return _fail(400, "A run id is letters, digits, dot, dash, underscore or colon, up to 64.")
+        agents = body.get("agents") or []
+        if not isinstance(agents, list) or not all(isinstance(a, str) and ID_RE.fullmatch(a) for a in agents) or len(agents) > 50:
+            return _fail(400, "agents is a list of names (letters, digits, dot, dash, underscore).")
+        return _ok(run_base_urls(host, run, agents))
+    if method == "GET" and len(rest) == 1:
+        found = [c for c in captures_matching({"identity": {"run": rest[0]}})]
+        overview = next((r for r in runs_overview() if r["run"] == rest[0]), None)
+        if not overview and not found:
+            return _fail(404, "Nothing has been seen for run %s." % rest[0])
+        return _ok({"run": overview, "captures": [capture_summary(c) for c in found][::-1][:200],
+                    "sessions": run_session_status(rest[0])})
+    if method == "DELETE" and len(rest) == 1:
+        with CAPTURE_LOCK:
+            before = len(CAPTURES)
+            keep = [c for c in CAPTURES if (c["meta"].get("identity") or {}).get("run") != rest[0]]
+            CAPTURES.clear()
+            CAPTURES.extend(keep)
+            removed = before - len(CAPTURES)
+        stopped = run_session_stop(rest[0])
+        return _ok(removed=removed, sessionStopped=stopped)
+    return _fail(404, "No such route: %s /api/runs/%s" % (method, "/".join(rest)))
+
+
+REST_AREAS = {"settings": _rest_settings, "captures": _rest_captures, "runs": _rest_runs}
+
+
+def rest_dispatch(method, path, body, query, host):
+    """(status, payload[, headers]) for any of the routes above."""
+    segs = [s for s in path.split("/") if s][1:]
+    if not segs or segs[0] not in REST_AREAS:
+        return _fail(404, "No such route: %s %s" % (method, path))
+    try:
+        return REST_AREAS[segs[0]](method, segs[1:], body, query, host)
+    except Exception as exc:  # noqa: BLE001 — a bug here must be a message, not a dropped connection
+        log("api error on %s %s: %s: %s" % (method, path, type(exc).__name__, exc))
+        return _fail(500, "%s: %s" % (type(exc).__name__, exc))
+
+
+# ── Rules that branch ─────────────────────────────────────────────────────
+#
+# A rule is `when` a request satisfies a condition, answer with these `turns`.
+# That has not changed. What has: `when` is the one condition language every other
+# part of this file uses, so a rule can say what it always could — the ask, the
+# provider, the tools the client declared — and now also what the LAST TOOL SAID,
+# which turn this is, who is asking, and what the system prompt contained.
+#
+# That is what makes an agent's conditional flows testable. "The grant came back
+# approved, so carry on; it came back denied, so stop" is two rules that differ in
+# one condition, or one turn with two branches:
+#
+#   {"name": "needs-capability",
+#    "when": {"contains": "reconcile"},
+#    "turns": [
+#      {"text": "Checking what I am granted.", "tool_calls": [{"name": "granted", "input": {}}]},
+#      {"branches": [
+#        {"when": {"toolOutput": {"contains": "SAP.Invoice.Read"}}, "turn": {"text": "Granted — reading."}},
+#        {"when": {"toolOutput": {"contains": "[]"}},               "turn": {"text": "Nothing granted. Stopping."}}]}]}
+#
+# Shipped rules live in responses.json, which is source and is read, not written.
+# Rules made through the console or the API live in llmsim.rules.json, beside it,
+# which is also meant to be committed, and are tried FIRST so one can override a
+# shipped rule without editing it.
+
+RULES_PATH = os.environ.get("LLMSIM_RULES", os.path.join(HERE, "llmsim.rules.json"))
+RULES_LOCK = threading.RLock()
+USER_RULES = {"rules": [], "default": None}
+TURN_KEYS = {"text", "tool_calls", "stop_reason", "input_tokens", "output_tokens", "cached_tokens", "reasoning_tokens",
+             "delay_ms", "error", "fault", "branches", "description"}
+RULE_KEYS = {"name", "description", "when", "turns", "enabled"}
+MAX_TURNS, MAX_BRANCHES = 200, 20
+
+
+def load_user_rules():
+    try:
+        with open(RULES_PATH) as fh:
+            data = json.load(fh)
+    except FileNotFoundError:
+        return {"rules": [], "default": None}
+    except (ValueError, OSError) as exc:
+        log("rules: cannot read %s (%s) — starting without them" % (RULES_PATH, exc))
+        return {"rules": [], "default": None}
+    rules = [r for r in data.get("rules", []) if isinstance(r, dict) and isinstance(r.get("turns"), list)]
+    return {"rules": rules, "default": data.get("default") if isinstance(data.get("default"), dict) else None}
+
+
+def save_user_rules():
+    tmp = RULES_PATH + ".tmp"
+    with open(tmp, "w") as fh:
+        json.dump({"version": 1, "_": "LLMSim rules made in the console or over the API. Tried before responses.json. "
+                                       "Commit this.", "rules": USER_RULES["rules"], "default": USER_RULES["default"]},
+                  fh, indent=1)
+    os.replace(tmp, RULES_PATH)
+
+
+def all_rules():
+    """[(rule, source)] in the order they are tried: user rules, then shipped."""
+    with RULES_LOCK:
+        mine = [(r, "user") for r in USER_RULES["rules"]]
+    return mine + [(r, "shipped") for r in SCRIPT.get("rules", [])]
+
+
+def default_turn():
+    with RULES_LOCK:
+        mine = USER_RULES["default"]
+    return mine or SCRIPT.get("default", {"text": "LLMSim has no scripted answer for that."})
+
+
+def validate_turn(turn, where="turn", depth=0):
+    """Problems with one scripted turn, found when it is saved."""
+    if not isinstance(turn, dict):
+        return ["%s must be an object" % where]
+    if depth > 4:
+        return ["%s: branches are nested too deeply" % where]
+    problems = ["%s: unknown field %r" % (where, k) for k in turn if k not in TURN_KEYS]
+    if not any(k in turn for k in ("text", "tool_calls", "error", "fault", "branches")):
+        problems.append("%s must say something, fail, inject a fault or branch" % where)
+    if "text" in turn and not isinstance(turn["text"], str):
+        problems.append("%s.text must be a string" % where)
+    for key in ("input_tokens", "output_tokens", "cached_tokens", "reasoning_tokens"):
+        if key in turn and (isinstance(turn[key], bool) or not isinstance(turn[key], int) or not 0 <= turn[key] <= 10 ** 9):
+            problems.append("%s.%s must be a whole number from 0 to a billion" % (where, key))
+    if "delay_ms" in turn and (isinstance(turn["delay_ms"], bool) or not isinstance(turn["delay_ms"], int) or not 0 <= turn["delay_ms"] <= 600000):
+        problems.append("%s.delay_ms must be 0 to 600000" % where)
+    if "stop_reason" in turn and not isinstance(turn["stop_reason"], str):
+        problems.append("%s.stop_reason must be a string" % where)
+    calls = turn.get("tool_calls")
+    if calls is not None:
+        if not isinstance(calls, list) or len(calls) > 50:
+            problems.append("%s.tool_calls must be a list of at most 50" % where)
+        else:
+            for i, c in enumerate(calls):
+                if not isinstance(c, dict) or not isinstance(c.get("name"), str) or not c["name"]:
+                    problems.append("%s.tool_calls[%d] needs a name" % (where, i))
+                elif "input" in c and not isinstance(c["input"], dict):
+                    problems.append("%s.tool_calls[%d].input must be an object" % (where, i))
+    err = turn.get("error")
+    if err is not None:
+        if not isinstance(err, dict) or isinstance(err.get("status"), bool) or not isinstance(err.get("status"), int) or not 400 <= err["status"] <= 599:
+            problems.append("%s.error needs a status from 400 to 599" % where)
+    if "fault" in turn:
+        problems += validate_fault(turn["fault"], where + ".fault")
+    branches = turn.get("branches")
+    if branches is not None:
+        if not isinstance(branches, list) or not branches or len(branches) > MAX_BRANCHES:
+            problems.append("%s.branches must be a list of 1 to %d" % (where, MAX_BRANCHES))
+        else:
+            for i, b in enumerate(branches):
+                w = "%s.branches[%d]" % (where, i)
+                if not isinstance(b, dict) or set(b) - {"when", "turn", "description"} or "turn" not in b:
+                    problems.append("%s must be {when, turn}" % w)
+                    continue
+                problems += validate_cond(b.get("when", {}), w + ".when")
+                problems += validate_turn(b["turn"], w + ".turn", depth + 1)
+    return problems
+
+
+def validate_rule(rule):
+    """Every problem with a rule, so a person fixes them in one go."""
+    if not isinstance(rule, dict):
+        return ["a rule must be an object"]
+    problems = ["unknown field %r" % k for k in rule if k not in RULE_KEYS]
+    name = rule.get("name")
+    if not isinstance(name, str) or not re.fullmatch(r"[^\s/][^/]{0,79}", name or ""):
+        problems.append("name is required: 1 to 80 characters, no slash, not starting with a space")
+    if "enabled" in rule and not isinstance(rule["enabled"], bool):
+        problems.append("enabled must be true or false")
+    problems += validate_cond(rule.get("when", {}), "when")
+    turns = rule.get("turns")
+    if not isinstance(turns, list) or not turns or len(turns) > MAX_TURNS:
+        problems.append("turns must be a list of 1 to %d turns" % MAX_TURNS)
+    else:
+        for i, t in enumerate(turns):
+            problems += validate_turn(t, "turns[%d]" % i)
+    return problems
+
+
+def _turn_base(rule):
+    """The conversation turn a rule's first scripted turn answers. Zero unless
+    the rule says it only applies from a later turn on."""
+    t = (rule.get("when") or {}).get("turn")
+    if isinstance(t, int) and not isinstance(t, bool):
+        return t
+    if isinstance(t, dict):
+        return t.get("min", t.get("eq", 0)) if isinstance(t.get("min", t.get("eq", 0)), int) else 0
+    return 0
+
+
+def resolve_branches(turn, view, depth=0):
+    """The turn a request actually gets: the first branch whose condition holds,
+    else the turn's own fields. A branch's turn replaces the turn whole."""
+    for b in turn.get("branches") or []:
+        if cond_result(b.get("when", {}), view)[0]:
+            inner = b.get("turn") or {}
+            return resolve_branches(inner, view, depth + 1) if depth < 4 and inner.get("branches") else {
+                k: v for k, v in inner.items() if k != "branches"}
+    return {k: v for k, v in turn.items() if k not in ("branches", "description")}
+
+
+def pick_scripted(view, explain=False):
+    """(name, source, turn_index, turn, checked) for the first rule that matches.
+
+    `checked` says, for every rule tried and in order, whether it matched and — when
+    it did not — the first reason why. That is the answer to the question that comes
+    after writing any rule: why did it not fire?
+    """
+    checked = []
+    for rule, source in all_rules():
+        if rule.get("enabled") is False:
+            if explain:
+                checked.append({"rule": rule.get("name"), "source": source, "matched": False, "why": "disabled"})
+            continue
+        ok, why = cond_result(rule.get("when", {}), view)
+        if explain:
+            checked.append({"rule": rule.get("name"), "source": source, "matched": ok, "why": why})
+        turns = rule.get("turns") or []
+        if ok and turns:
+            index = max(0, view["turn"] - _turn_base(rule))
+            turn = resolve_branches(turns[min(index, len(turns) - 1)], view)
+            return rule.get("name", "unnamed"), source, min(index, len(turns) - 1), turn, checked
+    return "default", "default", 0, dict(default_turn()), checked
+
+
+def _rule_summary(rule):
+    when = rule.get("when") or {}
+    parts = ["%s: %s" % (k, json.dumps(v)[:40]) for k, v in when.items()]
+    return ", ".join(parts)[:140] or "every request"
+
+
+def _rule_public(rule, source, index):
+    return {"name": rule.get("name"), "source": source, "index": index, "enabled": rule.get("enabled") is not False,
+            "summary": _rule_summary(rule), "turns": len(rule.get("turns") or []),
+            "description": rule.get("description", ""), "rule": rule}
+
+
+def rules_listing():
+    return [_rule_public(r, src, i) for i, (r, src) in enumerate(all_rules())]
+
+
+def _dry_run_view(spec):
+    """(view, messages) for a request described in the fields a person has to hand."""
+    messages = spec.get("messages")
+    if not isinstance(messages, list):
+        messages = [{"role": "user", "content": str(spec.get("ask") or "")}]
+    tools = spec.get("tools") or []
+    request = {"model": spec.get("model", ""), "stream": bool(spec.get("stream")), "messages": messages,
+               "tools": [{"type": "function", "function": {"name": t}} for t in tools if isinstance(t, str)]}
+    meta = {"provider": spec.get("provider", "openai"), "shape": "openai", "model": spec.get("model", ""),
+            "path": spec.get("path", ""), "stream": bool(spec.get("stream")), "route": spec.get("route", "scripted"),
+            "identity": spec.get("identity") or {}, "credential": spec.get("credential") or {}, "headers": spec.get("headers") or {}}
+    return build_view(meta, request), messages
+
+
+def _rest_rules(method, rest, body, query, host):
+    global SCRIPT
+    if method == "GET" and not rest:
+        return _ok({"rules": rules_listing(), "default": default_turn(), "userDefault": USER_RULES["default"] is not None,
+                    "path": RULES_PATH})
+    if method == "POST" and rest == ["validate"]:
+        problems = validate_rule((body or {}).get("rule"))
+        return _ok(valid=not problems, problems=problems)
+    if method == "POST" and rest == ["test"]:
+        spec = body or {}
+        view, messages = _dry_run_view(spec)
+        name, source, index, turn, checked = pick_scripted(view, explain=True)
+        turn = fill(turn, messages, view)
+        fault = preview_fault(view)
+        return _ok(matched=name, source=source, turnIndex=index, turn=turn, checked=checked, fault=fault,
+                   view={k: view[k] for k in ("ask", "turn", "lastToolOutput", "tools", "identity")})
+    if method == "POST" and rest == ["order"]:
+        names = (body or {}).get("names")
+        with RULES_LOCK:
+            have = {r["name"]: r for r in USER_RULES["rules"]}
+            if not isinstance(names, list) or sorted(names) != sorted(have):
+                return _fail(400, "names must be every one of your rules, in the order you want them tried.")
+            USER_RULES["rules"] = [have[n] for n in names]
+            save_user_rules()
+        return _ok({"rules": rules_listing()})
+    if method == "POST" and rest == ["reload"]:
+        with RULES_LOCK:
+            SCRIPT = load_script()
+            USER_RULES.update(load_user_rules())
+        return _ok({"rules": rules_listing()}, message="Reloaded responses.json and %s." % os.path.basename(RULES_PATH))
+    if method == "POST" and not rest:
+        rule = (body or {}).get("rule")
+        problems = validate_rule(rule)
+        if problems:
+            return _fail(400, "That rule is not valid.", problems=problems)
+        with RULES_LOCK:
+            if any(r["name"] == rule["name"] for r in USER_RULES["rules"]):
+                return _fail(409, "You already have a rule called %s. Replace it with PUT, or pick another name." % rule["name"])
+            if (body or {}).get("position") == "bottom":
+                USER_RULES["rules"].append(rule)
+            else:
+                USER_RULES["rules"].insert(0, rule)
+            save_user_rules()
+        shadows = any(r.get("name") == rule["name"] for r in SCRIPT.get("rules", []))
+        return _ok({"rules": rules_listing()}, shadowsShipped=shadows)
+    if method == "PUT" and rest == ["default"]:
+        turn = (body or {}).get("turn")
+        problems = validate_turn(turn, "turn") if turn is not None else []
+        if problems:
+            return _fail(400, "That turn is not valid.", problems=problems)
+        with RULES_LOCK:
+            USER_RULES["default"] = turn
+            save_user_rules()
+        return _ok({"default": default_turn()})
+    if method == "DELETE" and rest == ["default"]:
+        with RULES_LOCK:
+            USER_RULES["default"] = None
+            save_user_rules()
+        return _ok({"default": default_turn()})
+    if len(rest) == 1 and rest[0] not in ("validate", "test", "order", "reload", "default"):
+        name = urllib.parse.unquote(rest[0])
+        with RULES_LOCK:
+            mine = next((r for r in USER_RULES["rules"] if r["name"] == name), None)
+        shipped = next((r for r in SCRIPT.get("rules", []) if r.get("name") == name), None)
+        if method == "GET":
+            if not mine and not shipped:
+                return _fail(404, "There is no rule called %s." % name)
+            return _ok({"rule": mine or shipped, "source": "user" if mine else "shipped"})
+        if method == "PUT":
+            if not mine:
+                return _fail(403 if shipped else 404, ("%s is a shipped rule and is read-only. Create a rule of your own — "
+                                                       "it is tried first." % name) if shipped else "There is no rule called %s." % name)
+            rule = (body or {}).get("rule")
+            problems = validate_rule(rule)
+            if problems:
+                return _fail(400, "That rule is not valid.", problems=problems)
+            with RULES_LOCK:
+                if rule["name"] != name and any(r["name"] == rule["name"] for r in USER_RULES["rules"]):
+                    return _fail(409, "You already have a rule called %s." % rule["name"])
+                USER_RULES["rules"] = [rule if r["name"] == name else r for r in USER_RULES["rules"]]
+                save_user_rules()
+            return _ok({"rules": rules_listing()})
+        if method == "DELETE":
+            if not mine:
+                return _fail(403 if shipped else 404, ("%s is a shipped rule and is read-only." % name) if shipped
+                             else "There is no rule called %s." % name)
+            with RULES_LOCK:
+                USER_RULES["rules"] = [r for r in USER_RULES["rules"] if r["name"] != name]
+                save_user_rules()
+            return _ok({"rules": rules_listing()})
+    return _fail(404, "No such route: %s /api/rules/%s" % (method, "/".join(rest)))
+
+
+REST_AREAS["rules"] = _rest_rules
+
+
+# ── Faults ────────────────────────────────────────────────────────────────
+#
+# The paths that only ever run when something goes wrong are the ones no live
+# vendor will reliably show you: a stream that dies half way, a tool call whose
+# arguments are not JSON, a connection reset before a byte. An agent that has
+# never met one has never been tested, whatever its happy path does.
+#
+# A fault is a thing to do (`{"type": "abort_stream", "after": 3}`) and there are
+# two ways to say when:
+#
+#   on a scripted turn   {"text": "...", "fault": {...}} — this turn, every time
+#   as a fault rule      {"match": <condition>, "fault": {...}, "probability": 0.2,
+#                         "every": 5, "after": 10, "limit": 3, "seed": 7}
+#                        — whichever requests the condition selects, as often as
+#                        the gates allow
+#
+# Rules apply on EVERY route — scripted, relay, the ChatGPT plan, a replay — since
+# a fault is about how the vendor misbehaves, not about who answered. A rule's
+# randomness is seeded, so a chaotic run can be run again and do the same thing.
+#
+#   type                  what happens                                          when
+#   status                a vendor error envelope with this status             before any byte
+#   delay                 wait first                                           before any byte
+#   drop                  hang up before answering (close or reset)            before any byte
+#   empty                 a 200 that says nothing                              whole answers
+#   malformed_tool_args   a tool call whose arguments are not valid JSON       whole answers, and streams that carry whole calls
+#   unknown_tool          a tool call naming a tool nobody declared            whole answers
+#   garbage               a body (or one stream frame) that is not valid       any
+#   huge                  an answer padded to this many bytes                  whole answers
+#   abort_stream          stop after N events, close or reset                  streams
+#   stall                 pause for ms after N events                          streams
+#   slow_stream           pause for ms between every event                     streams
+#
+# "Whole answers" means the scripted, replayed and non-streamed relay routes. A
+# streamed relay or plan answer is passed through event by event, so only the
+# stream faults reach it.
+
+FAULT_TYPES = {
+    "status": {"status": "int 400-599 (required)", "error_type": "the vendor's error type", "message": "text", "retry_after": "seconds"},
+    "delay": {"ms": "0-600000 (required)"},
+    "drop": {"mode": "close | reset"},
+    "empty": {},
+    "malformed_tool_args": {"mode": "truncated | not_json | array | empty"},
+    "unknown_tool": {"name": "the tool name to call"},
+    "garbage": {"where": "body | frame", "after": "events before the bad frame"},
+    "huge": {"bytes": "1-5000000 (required)"},
+    "abort_stream": {"after": "events sent first", "mode": "close | reset"},
+    "stall": {"after": "events sent first", "ms": "0-600000 (required)"},
+    "slow_stream": {"ms": "0-60000 (required)"},
+}
+STREAM_FAULTS = ("abort_stream", "stall", "slow_stream", "garbage")
+FAULT_RULE_KEYS = {"id", "name", "enabled", "match", "fault", "probability", "every", "after", "limit", "seed", "description"}
+FAULT_STATE = {}                 # rule id -> {seen, fired, rng}
+FAULT_LOCK = threading.Lock()
+
+
+class FaultAbort(BrokenPipeError):
+    """A stream was cut on purpose. A BrokenPipeError, so every path that already
+    copes with a client going away copes with this one too."""
+
+
+def validate_fault(fault, where="fault"):
+    """Problems with a fault spec, found when it is saved."""
+    if not isinstance(fault, dict):
+        return ["%s must be an object with a type" % where]
+    kind = fault.get("type")
+    if kind not in FAULT_TYPES:
+        return ["%s.type must be one of: %s" % (where, ", ".join(sorted(FAULT_TYPES)))]
+    problems = ["%s: %r is not a parameter of %s" % (where, k, kind) for k in fault if k != "type" and k not in FAULT_TYPES[kind]]
+
+    def whole(key, low, high, required=False):
+        if key not in fault:
+            if required:
+                problems.append("%s.%s is required" % (where, key))
+            return
+        if isinstance(fault[key], bool) or not isinstance(fault[key], int) or not low <= fault[key] <= high:
+            problems.append("%s.%s must be a whole number from %d to %d" % (where, key, low, high))
+
+    if kind == "status":
+        whole("status", 400, 599, required=True)
+        whole("retry_after", 0, 3600)
+    elif kind == "delay":
+        whole("ms", 0, 600000, required=True)
+    elif kind == "huge":
+        whole("bytes", 1, 5000000, required=True)
+    elif kind == "slow_stream":
+        whole("ms", 0, 60000, required=True)
+    elif kind == "stall":
+        whole("after", 0, 100000)
+        whole("ms", 0, 600000, required=True)
+    elif kind == "abort_stream":
+        whole("after", 0, 100000)
+    elif kind == "garbage":
+        whole("after", 0, 100000)
+    if "mode" in fault and fault["mode"] not in (("close", "reset") if kind in ("drop", "abort_stream") else
+                                                 ("truncated", "not_json", "array", "empty")):
+        problems.append("%s.mode is not one of the modes of %s" % (where, kind))
+    if "where" in fault and fault["where"] not in ("body", "frame"):
+        problems.append("%s.where is body or frame" % where)
+    for key in ("error_type", "message", "name"):
+        if key in fault and not isinstance(fault[key], str):
+            problems.append("%s.%s must be text" % (where, key))
+    return problems
+
+
+def validate_fault_rule(rule):
+    if not isinstance(rule, dict):
+        return ["a fault rule must be an object"]
+    problems = ["unknown field %r" % k for k in rule if k not in FAULT_RULE_KEYS]
+    if "id" in rule and not (isinstance(rule["id"], str) and ID_RE.fullmatch(rule["id"])):
+        problems.append("id is letters, digits, dot, dash, underscore or colon, up to 64")
+    if "name" in rule and not isinstance(rule["name"], str):
+        problems.append("name must be text")
+    if "enabled" in rule and not isinstance(rule["enabled"], bool):
+        problems.append("enabled must be true or false")
+    problems += validate_cond(rule.get("match", {}), "match")
+    problems += validate_fault(rule.get("fault"), "fault")
+    p = rule.get("probability", 1)
+    if isinstance(p, bool) or not isinstance(p, (int, float)) or not 0 <= p <= 1:
+        problems.append("probability must be from 0 to 1")
+    for key in ("every", "after", "limit"):
+        if key in rule and (isinstance(rule[key], bool) or not isinstance(rule[key], int) or not 0 <= rule[key] <= 10 ** 9):
+            problems.append("%s must be a whole number, 0 or more" % key)
+    if "seed" in rule and not isinstance(rule["seed"], (int, str, type(None))):
+        problems.append("seed must be a number or text")
+    return problems
+
+
+def _fault_state(rule):
+    st = FAULT_STATE.get(rule["id"])
+    if st is None:
+        seed = rule.get("seed")
+        st = FAULT_STATE[rule["id"]] = {"seen": 0, "fired": 0, "rng": random.Random(rule["id"] if seed in (None, "") else seed)}
+    return st
+
+
+def _gate(rule, st, consume):
+    """(fires, why) for a request this rule's condition selected.
+
+    seen counts the requests the condition selected; the gates then say which of
+    them the rule acts on: skip the first `after`, then every `every`th, until
+    `limit` have fired, each with `probability`. With consume=False this only
+    looks — nothing is counted, and a probability is reported rather than rolled.
+    """
+    seen = st["seen"] + 1
+    if consume:
+        st["seen"] = seen
+    after, every, limit = rule.get("after", 0), rule.get("every", 0), rule.get("limit", 0)
+    if seen <= after:
+        return False, "skipping the first %d matching request(s)" % after
+    if every > 1 and (seen - after) % every != 0:
+        return False, "fires every %d, and this is not one" % every
+    if limit and st["fired"] >= limit:
+        return False, "used up its limit of %d" % limit
+    p = rule.get("probability", 1)
+    if p < 1:
+        if not consume:
+            return True, "would fire with probability %s" % p
+        if st["rng"].random() >= p:
+            return False, "the dice said no (probability %s)" % p
+    return True, "fires"
+
+
+def pick_fault(view, consume=True):
+    """(rule, fault) for the first fault rule that fires on this request, else (None, None).
+    With consume=False nothing is used up: this is the preview."""
+    if CONFIG["chaos"]["paused"]:
+        return None, None
+    with FAULT_LOCK:
+        for rule in CONFIG["faults"]:
+            if rule.get("enabled") is False or not cond_result(rule.get("match", {}), view)[0]:
+                continue
+            st = _fault_state(rule)
+            fires, _why = _gate(rule, st, consume)
+            if fires:
+                if consume:
+                    st["fired"] += 1
+                return rule, rule["fault"]
+    return None, None
+
+
+def preview_fault(view):
+    """What would be done to this request, without using anything up."""
+    rule, fault = pick_fault(view, consume=False)
+    if not rule:
+        return None
+    return {"rule": rule["id"], "name": rule.get("name", ""), "fault": fault, "probability": rule.get("probability", 1)}
+
+
+def fault_label(fault):
+    return fault["type"] if fault else ""
+
+
+def apply_turn_fault(turn, fault):
+    """(turn, after) for the faults that change what is said. `after` is a thing
+    to do once the turn is built: "garbage_body"."""
+    kind = fault["type"]
+    turn = dict(turn)
+    after = None
+    if kind == "empty":
+        turn.pop("text", None)
+        turn["tool_calls"] = []
+        turn["text"] = ""
+    elif kind == "huge":
+        turn["text"] = (turn.get("text") or "") + "x" * fault["bytes"]
+    elif kind == "malformed_tool_args":
+        mode = fault.get("mode", "truncated")
+        calls = []
+        for c in turn.get("tool_calls") or []:
+            whole_json = json.dumps(c.get("input") or {})
+            raw = {"truncated": whole_json[:max(1, len(whole_json) // 2)], "not_json": "this is not json",
+                   "array": "[1, 2, 3]", "empty": ""}[mode]
+            calls.append(dict(c, raw_arguments=raw))
+        turn["tool_calls"] = calls
+    elif kind == "unknown_tool":
+        turn["tool_calls"] = [dict(c, name=fault.get("name") or "llmsim_unknown_tool") for c in turn.get("tool_calls") or []] or \
+            [{"name": fault.get("name") or "llmsim_unknown_tool", "input": {}}]
+    elif kind == "garbage" and fault.get("where", "body") == "body":
+        after = "garbage_body"
+    elif kind == "status":
+        turn["error"] = {"status": fault["status"], "type": fault.get("error_type") or _error_type(fault["status"]),
+                         "message": fault.get("message") or "A fault LLMSim was told to inject.", "retry_after": fault.get("retry_after")}
+    return turn, after
+
+
+def fault_rules_listing():
+    out = []
+    for rule in CONFIG["faults"]:
+        with FAULT_LOCK:
+            st = FAULT_STATE.get(rule["id"], {"seen": 0, "fired": 0})
+        out.append(dict(rule, seen=st["seen"], fired=st["fired"]))
+    return out
+
+
+def _rest_faults(method, rest, body, query, host):
+    def listing(**extra):
+        return _ok({"faults": fault_rules_listing(), "paused": CONFIG["chaos"]["paused"], "types": FAULT_TYPES}, **extra)
+
+    if method == "GET" and not rest:
+        return listing()
+    if method == "POST" and rest in (["pause"], ["resume"]):
+        CONFIG["chaos"]["paused"] = rest == ["pause"]
+        save_config()
+        return listing()
+    if method == "POST" and rest == ["reset"]:
+        with FAULT_LOCK:
+            FAULT_STATE.clear()
+        return listing(message="Counters reset.")
+    if method == "POST" and not rest:
+        # The rule itself is the body — or wrapped as {"rule": …}. Not under "fault": a
+        # rule HAS a fault, and reading that as the wrapper takes the spec for the rule.
+        rule = dict((body or {}).get("rule") if isinstance((body or {}).get("rule"), dict) else (body or {}))
+        rule.setdefault("id", "f-" + "".join(random.choice(string.ascii_lowercase + string.digits) for _ in range(6)))
+        problems = validate_fault_rule(rule)
+        if problems:
+            return _fail(400, "That fault rule is not valid.", problems=problems)
+        if any(r["id"] == rule["id"] for r in CONFIG["faults"]):
+            return _fail(409, "A fault rule called %s already exists." % rule["id"])
+        rule.setdefault("enabled", True)
+        CONFIG["faults"].append(rule)
+        save_config()
+        return listing(id=rule["id"])
+    if len(rest) == 1 and rest[0] not in ("pause", "resume", "reset"):
+        fid = rest[0]
+        existing = next((r for r in CONFIG["faults"] if r["id"] == fid), None)
+        if not existing:
+            return _fail(404, "There is no fault rule called %s." % fid)
+        if method == "GET":
+            return _ok({"fault": fault_rules_listing()[CONFIG["faults"].index(existing)]})
+        if method == "PUT":
+            rule = dict((body or {}).get("rule") if isinstance((body or {}).get("rule"), dict) else (body or {}))
+            rule["id"] = fid
+            problems = validate_fault_rule(rule)
+            if problems:
+                return _fail(400, "That fault rule is not valid.", problems=problems)
+            rule.setdefault("enabled", True)
+            CONFIG["faults"] = [rule if r["id"] == fid else r for r in CONFIG["faults"]]
+            with FAULT_LOCK:
+                FAULT_STATE.pop(fid, None)
+            save_config()
+            return listing()
+        if method == "DELETE":
+            CONFIG["faults"] = [r for r in CONFIG["faults"] if r["id"] != fid]
+            with FAULT_LOCK:
+                FAULT_STATE.pop(fid, None)
+            save_config()
+            return listing()
+    return _fail(404, "No such route: %s /api/faults/%s" % (method, "/".join(rest)))
+
+
+REST_AREAS["faults"] = _rest_faults
+
+
+# ── Assertions: checking what was actually sent ───────────────────────────
+#
+# A test of an agent has to be able to say things like
+#
+#     no request of run r1 carried a card number to the model
+#     every request carried the safety preamble
+#     the worker never called Write
+#     the planner asked before the worker did
+#     agent B was told what agent A answered
+#
+# — claims about the requests an agent made, which LLMSim is the one place that
+# sees. Each is an assertion over captures:
+#
+#   {"id": "no-card-numbers", "name": "…",
+#    "scope": {"identity": {"run": "r1"}},                   which requests this is about
+#    "none":  {"field": "allText", "op": "regex", "value": "\\b\\d{13,16}\\b"}}
+#
+# and exactly one of
+#
+#   each      every scoped request satisfies the check
+#   none      no scoped request satisfies the check          (the form for "must not")
+#   count     {min, max, where?}: how many scoped requests (satisfying where) there are
+#   sequence  [cond, cond, …]: requests matching these exist, in this order
+#
+# Three decisions, each from something that fails otherwise:
+#
+#   NO DATA IS NOT A PASS. "No request carried a card number" is true of an agent
+#   that never ran. A check that selects nothing reports `no-data`, which is not a
+#   pass, unless the assertion says allowEmpty.
+#   RUN ON WHAT WAS SENT, SHOW WHAT IS SAFE. Assertions read the held, unredacted
+#   capture — a leak check run on redacted text could never find a leak — and the
+#   evidence they return has the configured redactions applied.
+#   SAY WHEN IT SAW LESS THAN EVERYTHING. A request too large to hold whole is kept
+#   in part. An assertion that passed over one says so, because "none" passing on
+#   half a request is weaker than it looks.
+
+ASSERTIONS_PATH = os.environ.get("LLMSIM_ASSERTIONS", os.path.join(HERE, "llmsim.assertions.json"))
+ASSERTION_SETS = {"sets": []}
+ASSERTION_LOCK = threading.RLock()
+ASSERTION_KINDS = ("each", "none", "count", "sequence")
+ASSERTION_KEYS = {"id", "name", "description", "scope", "allowEmpty", "each", "none", "count", "where", "sequence"}
+VIEW_FIELDS = {
+    "system": "the system prompt", "ask": "the last thing a person asked", "lastText": "the last message",
+    "lastToolOutput": "what the last tool printed", "userText": "everything a person said", "assistantText": "everything the model said so far",
+    "allText": "every message, concatenated", "tools": "the tools the agent declared (a list)", "turn": "turns already taken",
+    "messageCount": "messages in the request", "model": "the model asked for", "provider": "anthropic, openai or deepseek",
+    "route": "scripted, relay, chatgpt or replay", "rule": "which rule answered", "stream": "whether it streamed",
+    "status": "the HTTP status of the answer", "fault": "the fault injected, if any",
+    "response.text": "what was answered", "response.toolNames": "the tools the answer called (a list)",
+    "response.usage.input": "tokens in", "response.usage.output": "tokens out", "response.error": "the error, if any",
+    "response.ms": "how long it took", "identity.run": "the run", "identity.agent": "the agent", "identity.app": "the app",
+    "credential.label": "what the credential was registered as", "credential.fingerprint": "which credential",
+    "credential.known": "whether LLMSim knows the credential", "headers.<name>": "a request header",
+}
+OPERATORS = ["eq", "ne", "contains", "not_contains", "regex", "not_regex", "in", "not_in", "gt", "gte", "lt", "lte", "exists",
+             "not_exists", "includes", "excludes", "includes_all", "includes_any", "empty", "len"]
+
+
+def load_assertion_sets():
+    try:
+        with open(ASSERTIONS_PATH) as fh:
+            data = json.load(fh)
+    except FileNotFoundError:
+        return {"sets": []}
+    except (ValueError, OSError) as exc:
+        log("assertions: cannot read %s (%s) — starting without them" % (ASSERTIONS_PATH, exc))
+        return {"sets": []}
+    return {"sets": [s for s in data.get("sets", []) if isinstance(s, dict) and s.get("id")]}
+
+
+def save_assertion_sets():
+    tmp = ASSERTIONS_PATH + ".tmp"
+    with open(tmp, "w") as fh:
+        json.dump({"version": 1, "_": "LLMSim assertion sets. Commit this.", "sets": ASSERTION_SETS["sets"]}, fh, indent=1)
+    os.replace(tmp, ASSERTIONS_PATH)
+
+
+def validate_assertion(a, where="assertion"):
+    if not isinstance(a, dict):
+        return ["%s must be an object" % where]
+    problems = ["%s: unknown field %r" % (where, k) for k in a if k not in ASSERTION_KEYS]
+    if not isinstance(a.get("id"), str) or not ID_RE.fullmatch(a.get("id") or ""):
+        problems.append("%s.id is required: letters, digits, dot, dash, underscore or colon" % where)
+    if not isinstance(a.get("name"), str) or not a.get("name"):
+        problems.append("%s.name is required" % where)
+    problems += validate_cond(a.get("scope", {}), where + ".scope")
+    kinds = [k for k in ASSERTION_KINDS if k in a]
+    if len(kinds) != 1:
+        problems.append("%s must have exactly one of each, none, count or sequence" % where)
+        return problems
+    kind = kinds[0]
+    if kind in ("each", "none"):
+        problems += validate_cond(a[kind], "%s.%s" % (where, kind))
+    elif kind == "count":
+        c = a["count"]
+        if not isinstance(c, dict) or set(c) - {"min", "max"} or not c:
+            problems.append("%s.count is {min, max} with at least one of them" % where)
+        else:
+            for k, v in c.items():
+                if isinstance(v, bool) or not isinstance(v, int) or v < 0:
+                    problems.append("%s.count.%s must be a whole number, 0 or more" % (where, k))
+            if isinstance(c.get("min"), int) and isinstance(c.get("max"), int) and c["min"] > c["max"]:
+                problems.append("%s.count.min is more than max" % where)
+        if "where" in a:
+            problems += validate_cond(a["where"], where + ".where")
+    elif kind == "sequence":
+        seq = a["sequence"]
+        if not isinstance(seq, list) or not 1 <= len(seq) <= 20:
+            problems.append("%s.sequence must be a list of 1 to 20 conditions" % where)
+        else:
+            for i, c in enumerate(seq):
+                problems += validate_cond(c, "%s.sequence[%d]" % (where, i))
+    if kind != "count" and "where" in a:
+        problems.append("%s.where only goes with count" % where)
+    if "allowEmpty" in a and not isinstance(a["allowEmpty"], bool):
+        problems.append("%s.allowEmpty must be true or false" % where)
+    return problems
+
+
+def _excerpt(check, view, width=60):
+    """The text around what a check found, for evidence. Redacted by the caller."""
+    if not (isinstance(check, dict) and check.get("op") in ("regex", "contains") and isinstance(check.get("field"), str)):
+        return ""
+    text = _dig_path(view, check["field"])
+    if not isinstance(text, str):
+        return ""
+    want, case = str(check.get("value")), bool(check.get("case"))
+    start = end = None
+    try:
+        if check["op"] == "regex":
+            m = re.search(want, text, 0 if case else re.I)
+            if m:
+                start, end = m.start(), m.end()
+        else:
+            i = text.find(want) if case else text.lower().find(want.lower())
+            if i >= 0:
+                start, end = i, i + len(want)
+    except re.error:
+        return ""
+    if start is None:
+        return ""
+    return ("…" if start > width else "") + text[max(0, start - width):end + width] + ("…" if end + width < len(text) else "")
+
+
+def _evidence(view, why, check=None, patterns=None):
+    item = {"capture": view["n"], "run": view["identity"].get("run", ""), "agent": view["identity"].get("agent", ""),
+            "turn": view["turn"], "ask": view["ask"][:120], "why": why[:300]}
+    ex = _excerpt(check, view)
+    if ex:
+        item["excerpt"] = ex
+    return _redact_value(item, patterns) if patterns else item
+
+
+def eval_assertion(a, views):
+    """The verdict on one assertion over the given views (oldest first).
+
+    status: pass, fail, no-data (selected nothing, so proved nothing), or error
+    (the assertion itself could not be evaluated).
+    """
+    patterns = CONFIG["capture"]["redact"]["patterns"]
+    result = {"id": a.get("id"), "name": a.get("name"), "status": "pass", "detail": "", "matched": 0, "evidence": [], "warnings": []}
+    problems = validate_assertion(a)
+    if problems:
+        return dict(result, status="error", detail="; ".join(problems[:3]))
+    scoped = [v for v in views if cond_result(a.get("scope", {}), v)[0]]
+    result["matched"] = len(scoped)
+    kind = [k for k in ASSERTION_KINDS if k in a][0]
+    truncated = [v for v in scoped if v["truncated"]]
+    if truncated:
+        result["warnings"].append("%d request(s) were too large to hold whole and were reduced; a check for something absent may have "
+                                  "missed it in the part that was dropped" % len(truncated))
+    if not scoped and not a.get("allowEmpty"):
+        if kind == "count" and a["count"].get("min", 0) >= 1:
+            return dict(result, status="fail", detail="no request matched the scope, and at least %d was required" % a["count"]["min"])
+        return dict(result, status="no-data", detail="no request matched the scope, so there is nothing to check. "
+                    "An agent that never ran satisfies every 'must not'; set allowEmpty if that is intended.")
+    if kind == "each":
+        bad = []
+        for v in scoped:
+            ok, why = cond_result(a["each"], v)
+            if not ok:
+                bad.append(_evidence(v, why, a["each"], patterns))
+        result["evidence"] = bad[:10]
+        if bad:
+            return dict(result, status="fail", detail="%d of %d request(s) did not satisfy it" % (len(bad), len(scoped)))
+        return dict(result, detail="all %d request(s) satisfied it" % len(scoped))
+    if kind == "none":
+        hit = []
+        for v in scoped:
+            ok, why = cond_result(a["none"], v)
+            if ok:
+                hit.append(_evidence(v, "this request satisfied the forbidden condition", a["none"], patterns))
+        result["evidence"] = hit[:10]
+        if hit:
+            return dict(result, status="fail", detail="%d of %d request(s) did what it forbids" % (len(hit), len(scoped)))
+        return dict(result, detail="none of %d request(s) did" % len(scoped))
+    if kind == "count":
+        rows = [v for v in scoped if cond_result(a["where"], v)[0]] if "where" in a else scoped
+        n, lo, hi = len(rows), a["count"].get("min"), a["count"].get("max")
+        result["evidence"] = [_evidence(v, "counted", a.get("where")) for v in rows[:10]]
+        result["count"] = n
+        if lo is not None and n < lo:
+            return dict(result, status="fail", detail="%d request(s), at least %d required" % (n, lo))
+        if hi is not None and n > hi:
+            return dict(result, status="fail", detail="%d request(s), at most %d allowed" % (n, hi))
+        return dict(result, detail="%d request(s), within the limits" % n)
+    # sequence: each condition is found in a request after the one before it
+    cursor, found = 0, []
+    for i, cond in enumerate(a["sequence"]):
+        hit = next((j for j in range(cursor, len(scoped)) if cond_result(cond, scoped[j])[0]), None)
+        if hit is None:
+            result["evidence"] = [_evidence(scoped[found[-1]], "the last one found, before step %d" % (i + 1))] if found else []
+            return dict(result, status="fail", detail="step %d of %d was never found%s" % (
+                i + 1, len(a["sequence"]), " after step %d" % i if i else ""))
+        found.append(hit)
+        cursor = hit + 1
+    result["evidence"] = [_evidence(scoped[j], "step %d" % (i + 1)) for i, j in enumerate(found)]
+    return dict(result, detail="all %d steps were found, in order" % len(found))
+
+
+def evaluate_assertions(assertions, extra_scope=None, set_scope=None):
+    """A report for a list of assertions over what is held now."""
+    views = [capture_view(c) for c in captures_matching(extra_scope or None)]
+    results = []
+    for a in assertions:
+        a = dict(a)
+        if set_scope:
+            a["scope"] = {"all": [set_scope, a.get("scope", {})]}
+        results.append(eval_assertion(a, views))
+    counts = {k: sum(1 for r in results if r["status"] == k) for k in ("pass", "fail", "no-data", "error")}
+    verdict = "fail" if counts["fail"] or counts["error"] else "no-data" if counts["no-data"] else "pass"
+    if not results:
+        verdict = "no-data"
+    return {"verdict": verdict, "summary": counts, "results": results, "capturesConsidered": len(views),
+            "firstCapture": views[0]["n"] if views else None, "lastCapture": views[-1]["n"] if views else None,
+            "evaluatedAt": time.time(), "redacted": bool(CONFIG["capture"]["redact"]["patterns"])}
+
+
+def _run_scope(body):
+    scope = body.get("scope") if isinstance(body.get("scope"), dict) else {}
+    ident = {k: body[k] for k in IDENTITY_FIELDS if isinstance(body.get(k), str)}
+    if ident:
+        scope = {"all": [scope, {"identity": ident}]} if scope else {"identity": ident}
+    return scope
+
+
+def _rest_assertions(method, rest, body, query, host):
+    if method == "GET" and rest == ["catalog"]:
+        return _ok({"fields": VIEW_FIELDS, "operators": OPERATORS, "kinds": list(ASSERTION_KINDS),
+                    "conditions": sorted(COND_KEYS)})
+    if method == "POST" and rest == ["validate"]:
+        problems = validate_assertion((body or {}).get("assertion"))
+        return _ok(valid=not problems, problems=problems)
+    if method == "POST" and rest == ["evaluate"]:
+        body = body or {}
+        if "set" in body:
+            with ASSERTION_LOCK:
+                found = next((s for s in ASSERTION_SETS["sets"] if s["id"] == body["set"]), None)
+            if not found:
+                return _fail(404, "There is no assertion set called %s." % body["set"])
+            return _ok(evaluate_assertions(found.get("assertions", []), _run_scope(body), found.get("scope")), set=found["id"])
+        assertions = body.get("assertions")
+        if not isinstance(assertions, list) or not assertions or len(assertions) > 200:
+            return _fail(400, "Give assertions (a list of 1 to 200), or the id of a saved set.")
+        return _ok(evaluate_assertions(assertions, _run_scope(body)))
+    return _fail(404, "No such route: %s /api/assertions/%s" % (method, "/".join(rest)))
+
+
+def _rest_assertion_sets(method, rest, body, query, host):
+    def clean(sset):
+        if not isinstance(sset, dict) or not isinstance(sset.get("id"), str) or not ID_RE.fullmatch(sset["id"]):
+            return None, ["a set needs an id: letters, digits, dot, dash, underscore or colon"]
+        problems = ["unknown field %r" % k for k in sset if k not in ("id", "name", "description", "scope", "assertions")]
+        problems += validate_cond(sset.get("scope", {}), "scope")
+        items = sset.get("assertions")
+        if not isinstance(items, list) or len(items) > 200:
+            problems.append("assertions must be a list of at most 200")
+        else:
+            seen = set()
+            for i, a in enumerate(items):
+                problems += validate_assertion(a, "assertions[%d]" % i)
+                if isinstance(a, dict) and a.get("id") in seen:
+                    problems.append("assertions[%d].id %r is used twice" % (i, a.get("id")))
+                seen.add(a.get("id") if isinstance(a, dict) else None)
+        return sset, problems
+
+    if method == "GET" and not rest:
+        return _ok({"sets": ASSERTION_SETS["sets"], "path": ASSERTIONS_PATH})
+    if method == "POST" and not rest:
+        sset, problems = clean((body or {}).get("set") if isinstance((body or {}).get("set"), dict) else body)
+        if problems:
+            return _fail(400, "That set is not valid.", problems=problems)
+        with ASSERTION_LOCK:
+            if any(s["id"] == sset["id"] for s in ASSERTION_SETS["sets"]):
+                return _fail(409, "A set called %s already exists." % sset["id"])
+            ASSERTION_SETS["sets"].append(sset)
+            save_assertion_sets()
+        return _ok({"sets": ASSERTION_SETS["sets"]})
+    if len(rest) >= 1:
+        sid = rest[0]
+        with ASSERTION_LOCK:
+            found = next((s for s in ASSERTION_SETS["sets"] if s["id"] == sid), None)
+        if not found:
+            return _fail(404, "There is no assertion set called %s." % sid)
+        if method == "GET" and len(rest) == 1:
+            return _ok({"set": found})
+        if method == "POST" and rest[1:] == ["evaluate"]:
+            return _ok(evaluate_assertions(found.get("assertions", []), _run_scope(body or {}), found.get("scope")), set=sid)
+        if method == "PUT" and len(rest) == 1:
+            sset, problems = clean(dict((body or {}).get("set") if isinstance((body or {}).get("set"), dict) else (body or {}), id=sid))
+            if problems:
+                return _fail(400, "That set is not valid.", problems=problems)
+            with ASSERTION_LOCK:
+                ASSERTION_SETS["sets"] = [sset if s["id"] == sid else s for s in ASSERTION_SETS["sets"]]
+                save_assertion_sets()
+            return _ok({"sets": ASSERTION_SETS["sets"]})
+        if method == "DELETE" and len(rest) == 1:
+            with ASSERTION_LOCK:
+                ASSERTION_SETS["sets"] = [s for s in ASSERTION_SETS["sets"] if s["id"] != sid]
+                save_assertion_sets()
+            return _ok({"sets": ASSERTION_SETS["sets"]})
+    return _fail(404, "No such route: %s /api/assertion-sets/%s" % (method, "/".join(rest)))
+
+
+REST_AREAS["assertions"] = _rest_assertions
+REST_AREAS["assertion-sets"] = _rest_assertion_sets
 
 
 # ── HTTP ─────────────────────────────────────────────────────────────────
@@ -3250,6 +5232,28 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(page)
 
+    def serve_guide(self):
+        """The how-to guide, from the same process and with nothing to fetch.
+
+        guide.html is written as a page body — a title, its styles, its content —
+        so the same file can be published elsewhere as it is. It is given a
+        document around it here; without one a browser renders it in quirks mode.
+        """
+        try:
+            with open(os.path.join(HERE, "guide.html"), "rb") as fh:
+                body = fh.read()
+        except FileNotFoundError:
+            return self.send_json(404, {"error": "guide.html is missing from this install"})
+        page = (b'<!doctype html><html lang="en"><head><meta charset="utf-8">'
+                b'<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"></head><body>'
+                + body + b"</body></html>")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(page)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(page)
+
     def ui_state(self, since):
         with REQUESTS_LOCK:
             rows = [r for r in REQUESTS if r["n"] > since]
@@ -3258,7 +5262,7 @@ class Handler(BaseHTTPRequestHandler):
             "config": public_config(),
             "models": {p: MODELS[p] for p in sorted(MODELS)},
             "allModels": known,
-            "rules": [r.get("name") for r in SCRIPT.get("rules", [])],
+            "rules": [r.get("name") for r, _ in all_rules()],
             "runs": RESULTS["runs"][:5],
             "chatgpt": chatgpt_status(),
             "session": session_status(),
@@ -3467,6 +5471,8 @@ class Handler(BaseHTTPRequestHandler):
         if getattr(self, "show_trace", False):
             for key, value in self.trace.items():
                 self.send_header("X-LLMSim-" + key, str(value))
+        for key, value in getattr(self, "_extra", {}).items():
+            self.send_header(key, value)
         if not CONFIG.get("fidelity", {}).get("headers", True):
             return
         rid = rand_id("req_", 24)
@@ -3484,7 +5490,11 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("x-ratelimit-reset-requests", "60s")
         # The one a client actually acts on. Without it a 429 is a dead end:
         # nothing says when to try again, so every backoff is a guess.
-        if status == 429:
+        # Unless a fault said how long: two Retry-After headers disagree, and the client
+        # reads whichever it likes.
+        if "Retry-After" in getattr(self, "_extra", {}):
+            pass
+        elif status == 429:
             self.send_header("retry-after", "2")
         elif status == 529 or status == 503:
             self.send_header("retry-after", "5")
@@ -3498,7 +5508,14 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
 
+    def send_response(self, code, message=None):
+        # The first status sent is the answer's; a capture records it.
+        if getattr(self, "_status", None) is None:
+            self._status = code
+        BaseHTTPRequestHandler.send_response(self, code, message)
+
     def refuse(self, status, kind, message):
+        capture_note(self, error=message)
         # Each vendor's own error envelope, so a client's error handling is
         # exercised rather than bypassed.
         if self.provider == "anthropic":
@@ -3514,6 +5531,16 @@ class Handler(BaseHTTPRequestHandler):
         /v1/chat/completions. With no prefix, the key decides.
         """
         path = self.path.split("?")[0].rstrip("/") or "/"
+        # Who is asking, from the base URL: /run/<id>, /agent/<name>, /app/<name>,
+        # in any order, ahead of the provider. It is the one way of saying so that
+        # needs nothing of an agent platform but a URL to point at.
+        self.path_identity = {}
+        while True:
+            m = re.match(r"^/(run|agent|app)/([A-Za-z0-9._:-]{1,64})(/.*)?$", path)
+            if not m:
+                break
+            self.path_identity.setdefault(m.group(1), m.group(2))
+            path = (m.group(3) or "/").rstrip("/") or "/"
         for name in ("anthropic", "openai", "deepseek"):
             if path == "/" + name or path.startswith("/" + name + "/"):
                 return name, path[len(name) + 1:] or "/"
@@ -3528,23 +5555,61 @@ class Handler(BaseHTTPRequestHandler):
         auth = self.headers.get("authorization") or ""
         return auth[7:].strip() if auth.lower().startswith("bearer ") else ""
 
-    def resolve_provider(self, prefix, key):
+    def resolve_provider(self, prefix, key, path=""):
         if prefix:
             return prefix
         for name, expected in API_KEYS.items():
             if key == expected:
                 return name
+        # A credential LLMSim did not publish says nothing about the vendor, so
+        # the route does: /v1/messages is Anthropic's, and everything else here
+        # is the OpenAI shape.
+        if path.startswith("/v1/messages"):
+            return "anthropic"
         return None
 
     # -- routes --
 
+    def rest_api(self, method, path, body, query):
+        """Any /api/… route that is not the console's own. A browser page on
+        another site can make this machine's browser send these, so a request
+        that declares another origin is refused, exactly as the console's are."""
+        if self.foreign_origin():
+            return self.send_json(403, {"ok": False, "message": "That request came from another site."})
+        result = rest_dispatch(method, path, body, query, self.headers.get("Host") or "localhost:%d" % PORT)
+        if len(result) == 3 and result[2].get("download"):
+            raw = json.dumps(result[1], indent=1).encode()
+            self.send_response(result[0])
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Disposition", 'attachment; filename="%s"' % result[2]["download"])
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+            return
+        return self.send_json(result[0], result[1])
+
+    def _begin(self):
+        """State that belongs to one request. A handler outlives a request on a
+        kept-alive connection, so none of it may be left from the last one."""
+        self._status, self.cap, self.identity = None, None, {}
+        self.show_trace, self.trace = False, {}
+        self.fault, self.stream_fault, self._events, self._fault_done, self._extra = None, None, 0, False, {}
+
     def do_GET(self):
+        self._begin()
         prefix, path = self.split_path()
         key = self.presented_key()
-        self.provider = self.resolve_provider(prefix, key) or "openai"
+        self.provider = self.resolve_provider(prefix, key, path) or "openai"
+        self.cred = credential_of(self)
+
+        if path.startswith(REST_PREFIXES):
+            return self.rest_api("GET", path, None, urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query))
 
         if path == "/ui" or path == "/ui/":
             return self.serve_ui()
+
+        if path == "/guide":
+            return self.serve_guide()
 
         if path == "/api/ui/state":
             since = 0
@@ -3602,11 +5667,11 @@ class Handler(BaseHTTPRequestHandler):
                               "fallback": CONFIG["upstream"]["fallback"]} if relaying() else None),
                 "chatgpt": {"signedIn": chatgpt_status()["signedIn"], "model": CONFIG["chatgpt"]["model"] or "auto"},
                 "session": {"mode": SESSION["mode"], "name": SESSION["name"]},
-                "rules": [r.get("name") for r in SCRIPT.get("rules", [])],
+                "rules": [r.get("name") for r, _ in all_rules()],
             })
 
         if path == "/v1/models":
-            if key != API_KEYS.get(self.provider):
+            if not credential_accepted(self.cred):
                 return self.refuse(401, "authentication_error", "Invalid API key.")
             names = MODELS.get(self.provider, [])
             if self.provider == "anthropic":
@@ -3633,21 +5698,25 @@ class Handler(BaseHTTPRequestHandler):
             return None
 
     def do_PUT(self):
-        self.show_trace, self.trace = False, {}
+        self._begin()
         prefix, path = self.split_path()
-        self.provider = self.resolve_provider(prefix, self.presented_key()) or "openai"
+        self.provider = self.resolve_provider(prefix, self.presented_key(), path) or "openai"
         body = self._json_body()
-        if not path.startswith("/api/sessions/"):
-            return self.send_json(404, {"error": "No such route: PUT " + path})
         if body is None:
             return self.send_json(400, {"ok": False, "message": "The body is not valid JSON."})
+        if path.startswith(REST_PREFIXES):
+            return self.rest_api("PUT", path, body, urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query))
+        if not path.startswith("/api/sessions/"):
+            return self.send_json(404, {"error": "No such route: PUT " + path})
         return self.session_api("PUT", path, body, urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query))
 
     def do_DELETE(self):
-        self.show_trace, self.trace = False, {}
+        self._begin()
         prefix, path = self.split_path()
-        self.provider = self.resolve_provider(prefix, self.presented_key()) or "openai"
+        self.provider = self.resolve_provider(prefix, self.presented_key(), path) or "openai"
         self._json_body()                       # a body, if one was sent, is read and ignored
+        if path.startswith(REST_PREFIXES):
+            return self.rest_api("DELETE", path, None, urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query))
         if not path.startswith("/api/sessions/"):
             return self.send_json(404, {"error": "No such route: DELETE " + path})
         return self.session_api("DELETE", path, None, {})
@@ -3660,11 +5729,12 @@ class Handler(BaseHTTPRequestHandler):
                 and self.client_address[0] in ("127.0.0.1", "::1", "::ffff:127.0.0.1"))
 
     def do_POST(self):
-        self.show_trace, self.trace = False, {}
+        self._begin()
         self.internal = self._is_internal()
         prefix, path = self.split_path()
         key = self.presented_key()
-        self.provider = self.resolve_provider(prefix, key) or "openai"
+        self.provider = self.resolve_provider(prefix, key, path) or "openai"
+        self.cred = credential_of(self)
 
         length = int(self.headers.get("Content-Length") or 0)
         raw = self.rfile.read(length) if length else b"{}"
@@ -3690,17 +5760,23 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/ui/chat":
             return self.console_chat(body)
 
+        if path.startswith(REST_PREFIXES):
+            return self.rest_api("POST", path, body, urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query))
+
         if path.startswith("/api/sessions"):
             return self.session_api("POST", path, body, urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query))
 
         if path == "/api/ui/session":
             return self.session_console(body)
 
-        expected = API_KEYS.get(self.provider)
         if not key:
             return self.refuse(401, "authentication_error", "No API key provided.")
-        if key != expected:
+        if not credential_accepted(self.cred):
             return self.refuse(401, "authentication_error", "Invalid API key.")
+        # Who this is, now that it is allowed in. Read from the base URL first and
+        # then from wherever the configured rules look, since a gateway may carry
+        # an identity through in a header or a body field.
+        self.identity = identity_of(self, body)
 
         if path == "/v1/messages" and self.provider == "anthropic":
             return self.handle_chat(body, "anthropic")
@@ -3776,8 +5852,8 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
 
-    def _session_reply(self, ok, message, code, **extra):
-        return self.send_json(code, dict({"ok": ok, "message": message, "status": session_status()}, **extra))
+    def _session_reply(self, ok, message, code, run=None, **extra):
+        return self.send_json(code, dict({"ok": ok, "message": message, "status": session_status(run)}, **extra))
 
     def session_console(self, body):
         """The console's route, one action per call. See session_api for the one
@@ -3788,16 +5864,18 @@ class Handler(BaseHTTPRequestHandler):
         """
         if self.foreign_origin():
             return self.send_json(403, {"error": "That request came from another site."})
-        action, name = body.get("action"), body.get("name")
+        action, name, run = body.get("action"), body.get("name"), body.get("run") or None
+        if run is not None and not (isinstance(run, str) and ID_RE.fullmatch(run)):
+            return self._session_reply(False, "A run id is letters, digits, dot, dash, underscore or colon, up to 64.", 400)
         if action in ("record", "replay"):
             return self._session_reply(*session_start(action, name, masks=body.get("masks"), on_miss=body.get("onMiss"),
-                                                      strict=body.get("strict"), overwrite=bool(body.get("overwrite"))))
+                                                      strict=body.get("strict"), overwrite=bool(body.get("overwrite")), run=run), run=run)
         if action == "auto":
             return self._session_reply(*session_auto(name, masks=body.get("masks"), on_miss=body.get("onMiss"),
-                                                     strict=body.get("strict")))
+                                                     strict=body.get("strict"), run=run), run=run)
         if action == "stop":
-            ok, message, code, summary = session_stop()
-            return self._session_reply(ok, message, code, summary=summary)
+            ok, message, code, summary = session_stop(run)
+            return self._session_reply(ok, message, code, summary=summary, run=run)
         if action == "delete":
             return self._session_reply(*session_delete(name))
         if action == "import":
@@ -3808,8 +5886,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._session_reply(False, "onMiss must be fail or route, and strict true or false.", 400)
             CONFIG["session"] = {"onMiss": on_miss, "strict": strict}
             save_config()
-            if SESSION["mode"] == "replay":          # the console's controls change the replay in front of it
-                SESSION["onMiss"], SESSION["strict"] = on_miss, strict
+            for st_ in _states():                    # the console's controls change the replays in front of it
+                if st_["mode"] == "replay":
+                    st_["onMiss"], st_["strict"] = on_miss, strict
             return self._session_reply(True, "Saved.", 200)
         return self._session_reply(False, "Unknown action.", 400)
 
@@ -3834,8 +5913,12 @@ class Handler(BaseHTTPRequestHandler):
         if self.foreign_origin():
             return self.send_json(403, {"error": "That request came from another site."})
         rest = path[len("/api/sessions"):].strip("/")
+        run = (body or {}).get("run") if isinstance(body, dict) else None
+        run = run or (query.get("run") or [None])[0]
+        if run is not None and not (isinstance(run, str) and ID_RE.fullmatch(run)):
+            return self.send_json(400, {"ok": False, "message": "A run id is letters, digits, dot, dash, underscore or colon, up to 64."})
         if method == "GET" and not rest:
-            return self.send_json(200, session_status())
+            return self.send_json(200, session_status(run))
         if method == "GET":
             return self.session_download(rest)
         if method == "DELETE" and rest:
@@ -3845,13 +5928,13 @@ class Handler(BaseHTTPRequestHandler):
             return self._session_reply(*session_import(rest, body, overwrite=overwrite))
         if method == "POST" and rest in ("record", "replay"):
             return self._session_reply(*session_start(rest, body.get("name"), masks=body.get("masks"), on_miss=body.get("onMiss"),
-                                                      strict=body.get("strict"), overwrite=bool(body.get("overwrite"))))
+                                                      strict=body.get("strict"), overwrite=bool(body.get("overwrite")), run=run), run=run)
         if method == "POST" and rest == "auto":
             return self._session_reply(*session_auto(body.get("name"), masks=body.get("masks"),
-                                                     on_miss=body.get("onMiss"), strict=body.get("strict")))
+                                                     on_miss=body.get("onMiss"), strict=body.get("strict"), run=run), run=run)
         if method == "POST" and rest == "stop":
-            ok, message, code, summary = session_stop()
-            return self._session_reply(ok, message, code, summary=summary)
+            ok, message, code, summary = session_stop(run)
+            return self._session_reply(ok, message, code, summary=summary, run=run)
         return self.send_json(404, {"ok": False, "message": "No such route: %s %s" % (method, path)})
 
     def chatgpt_console(self, path, body):
@@ -3885,7 +5968,53 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.close_connection = True
 
+    def _hang_up(self, mode="close"):
+        """End the connection without finishing the answer.
+
+        close is what a vendor's load balancer does mid-answer: a clean EOF, so the
+        client sees a body that stops short. reset is the harder case — a TCP reset
+        that surfaces as a connection error rather than as an incomplete answer.
+        """
+        self.close_connection = True
+        try:
+            if mode == "reset":
+                self.connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+                self.connection.close()
+            else:
+                self.connection.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+
+    def _send_raw(self, status, content_type, raw):
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(raw)))
+        self.vendor_headers(status)
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def _stream_fault_step(self):
+        """What a stream fault does before the next event is written."""
+        fault, n = self.stream_fault, self._events
+        kind = fault["type"]
+        if kind == "slow_stream":
+            time.sleep(fault["ms"] / 1000.0)
+        elif kind == "abort_stream" and n >= fault.get("after", 3):
+            log("   fault: hanging up after %d event(s)" % n)
+            self._hang_up(fault.get("mode", "close"))
+            raise FaultAbort("a stream fault cut this stream")
+        elif n == fault.get("after", 3) and not self._fault_done:
+            self._fault_done = True
+            if kind == "stall":
+                time.sleep(fault["ms"] / 1000.0)
+            elif kind == "garbage" and fault.get("where", "frame") == "frame":
+                self.wfile.write(b'data: {"this frame": is not json\n\n')
+                self.wfile.flush()
+
     def write_event(self, event, data):
+        if self.stream_fault:
+            self._stream_fault_step()
+        self._events += 1
         """One SSE frame, in the form this shape uses.
 
         Anthropic and Responses name their events; OpenAI does not, and sends
@@ -3984,6 +6113,7 @@ class Handler(BaseHTTPRequestHandler):
                 return None
             for ev in _stream_close(shape, "".join(sent)):
                 self.write_event(ev[0], ev[1])
+            capture_note(self, route="relay", rule="relay:" + CONFIG["upstream"]["model"], text="".join(sent))
             session_capture(self.ctx, "relay", "relay:" + CONFIG["upstream"]["model"],
                             {"text": "".join(sent)}, int((time.time() - entry_started) * 1000))
         except Exception as exc:
@@ -4018,6 +6148,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if not stream:
                 turn = _collect(events, plan)
+                capture_note(self, route="chatgpt", rule="chatgpt:" + plan, text=turn.get("text") or "", usage=_usage_of(turn),
+                             toolCalls=[{"id": c.get("id"), "name": c.get("name"), "input": c.get("input")} for c in turn.get("tool_calls") or []])
                 session_capture(self.ctx, "chatgpt", "chatgpt:" + plan, turn, int((time.time() - started) * 1000))
                 settle(reply=(turn.get("text") or "")[:400], usage=turn["usage"],
                        tools=[c["name"] for c in turn.get("tool_calls") or []])
@@ -4043,6 +6175,8 @@ class Handler(BaseHTTPRequestHandler):
                         made.append({"id": data["id"], "name": data["name"], "input": {"_raw": data["arguments"]}})
                 elif kind == "end":
                     u = data["usage"]
+                    capture_note(self, route="chatgpt", rule="chatgpt:" + plan, text="".join(said), toolCalls=made,
+                                 usage={"input": u["input"], "output": u["output"], "cacheRead": u["cached"], "reasoning": u["reasoning"]})
                     session_capture(self.ctx, "chatgpt", "chatgpt:" + plan, {
                         "text": "".join(said), "tool_calls": made,
                         "usage": {"input": u["input"], "output": u["output"], "cacheRead": u["cached"], "reasoning": u["reasoning"]}},
@@ -4131,14 +6265,32 @@ class Handler(BaseHTTPRequestHandler):
         return None
 
     def handle_chat(self, body, shape):
+        """Answer one request, and keep what it was and what answered it."""
+        model = body.get("model") or (MODELS[self.provider][0])
+        self.cap = capture_begin(self, body, shape, model, bool(body.get("stream")))
+        try:
+            return self._handle_chat(body, shape)
+        finally:
+            capture_finish(self)
+
+    def _view(self, body, shape, model, stream, route):
+        """This request as rules, faults and assertions see it."""
+        meta = {"provider": self.provider, "shape": shape, "model": model, "path": self.path.split("?")[0], "stream": stream,
+                "route": route, "identity": getattr(self, "identity", {}), "credential": getattr(self, "cred", {}),
+                "headers": {k.lower(): v for k, v in self.headers.items() if k.lower() not in SENSITIVE_HEADERS}}
+        return build_view(meta, body)
+
+    def _handle_chat(self, body, shape):
         model = body.get("model") or (MODELS[self.provider][0])
         messages = responses_to_messages(body) if shape == "responses" else (body.get("messages") or [])
         stream = bool(body.get("stream"))
         declared = declared_tools(body)
         # What a recording needs to know about this request, wherever in the
         # several paths below the answer ends up being produced.
+        run = (getattr(self, "identity", {}) or {}).get("run")
+        st = SESSIONS.get(run) if run and SESSIONS.get(run) and SESSIONS[run]["mode"] != "off" else SESSION
         self.ctx = {"shape": shape, "model": model, "messages": messages,
-                    "provider": self.provider, "declared": sorted(declared)}
+                    "provider": self.provider, "declared": sorted(declared), "st": st}
 
         bad = self.validate(body, shape, model, messages)
         if bad:
@@ -4154,24 +6306,55 @@ class Handler(BaseHTTPRequestHandler):
         # A replay comes before routing: a request the recording can answer is
         # answered from it whatever the model is routed to, and that is the
         # point — the run no longer depends on anything that route reaches.
-        replaying = SESSION["mode"] == "replay" and not internal
-        replayed = session_replay(messages) if replaying else None
-        if replaying and not replayed and SESSION["onMiss"] != "route":
-            ask, n, _, _ = exchange_key(messages)
+        replaying = st["mode"] == "replay" and not internal
+        replayed = session_replay(messages, st) if replaying else None
+        if replaying and not replayed and st["onMiss"] != "route":
+            ask, n, _, _ = exchange_key(messages, st)
             message = ("LLMSim has no recording for this request. Cassette %s, asked %r, %d turn(s) in. "
-                       "Record it again, or set misses to route normally." % (SESSION["name"], ask[:80], n))
+                       "Record it again, or set misses to route normally." % (st["name"], ask[:80], n))
             log("replay miss: " + message)
             record({"provider": self.provider, "shape": shape, "model": model, "route": "replay",
                     "rule": None, "stream": stream, "status": 404, "ms": 0,
                     "prompt": subject(messages)[:400], "reply": None, "tools": [], "error": message})
             self.trace = {"Route": "replay"}
+            capture_note(self, route="replay", rule="")
             return self.refuse(404, "not_found_error", message)
         if replayed:
             route = "replay"
         self.trace = {"Route": route}
+        view = self._view(body, shape, model, stream, route)
+
+        # A fault rule picks its request before anything is spent on an answer, so
+        # a status or a hang-up never costs an upstream call. The runner's own
+        # requests are checking a caller against the script and are left alone.
+        fault_rule, fault = (None, None) if internal else pick_fault(view)
+        if fault:
+            self.trace["Fault"] = fault["type"]
+            log("   fault: %s (%s)" % (fault["type"], fault_rule.get("name") or fault_rule["id"]))
+            capture_note(self, route=route, fault=fault["type"])
+            early = {"prompt": subject(messages)[:400], "reply": None, "tools": [], "provider": self.provider, "shape": shape,
+                     "model": model, "route": route, "rule": None, "stream": stream, "ms": 0, "fault": fault["type"]}
+            if fault["type"] == "delay":
+                time.sleep(fault["ms"] / 1000.0)
+            elif fault["type"] == "drop":
+                record(dict(early, status=0, error="LLMSim hung up before answering."))
+                self._hang_up(fault.get("mode", "close"))
+                return None
+            elif fault["type"] == "status":
+                turn_err, _ = apply_turn_fault({}, fault)
+                err = turn_err["error"]
+                if err.get("retry_after") is not None:
+                    self._extra["Retry-After"] = str(err["retry_after"])
+                record(dict(early, status=err["status"], error=err["message"]))
+                return self.refuse(err["status"], err["type"], err["message"])
+            elif fault["type"] in STREAM_FAULTS:
+                self.stream_fault = fault
+            else:
+                self.fault = fault
+
         if route == "replay":
             entry_hit, differs = replayed
-            name = "replay:%s%s" % (SESSION["name"], " (last message differs)" if differs else "")
+            name = "replay:%s%s" % (st["name"], " (last message differs)" if differs else "")
             turn = turn_from_entry(entry_hit)
         elif route == "relay":
             try:
@@ -4199,7 +6382,7 @@ class Handler(BaseHTTPRequestHandler):
                             "error": str(exc)})
                     return self.refuse(502, "upstream_error",
                                        "LLMSim could not reach its upstream model: %s" % exc)
-                name, turn = choose_turn(self.provider, model, messages, declared)
+                name, turn = choose_turn(self.provider, model, messages, declared, view)
                 name = "fallback:" + name
         elif route == "chatgpt":
             canon = canon_request(shape, body)
@@ -4215,14 +6398,14 @@ class Handler(BaseHTTPRequestHandler):
                             "prompt": subject(messages)[:400], "reply": None, "tools": [],
                             "error": exc.message})
                     return self.refuse(exc.status, exc.kind, exc.message)
-                name, turn = choose_turn(self.provider, model, messages, declared)
+                name, turn = choose_turn(self.provider, model, messages, declared, view)
                 name = "fallback:" + name
             else:
                 if canon["dropped"]:
                     log("   not sent to ChatGPT, which does not take them: %s" % ", ".join(canon["dropped"]))
                 return self.chatgpt_serve(resp, shape, model, stream, body, messages, started, plan)
         else:
-            name, turn = choose_turn(self.provider, model, messages, declared)
+            name, turn = choose_turn(self.provider, model, messages, declared, view)
 
         self.trace["Rule"] = name
         entry = record({"provider": self.provider, "shape": shape, "model": model, "route": route,
@@ -4288,8 +6471,41 @@ class Handler(BaseHTTPRequestHandler):
                 resolved.append(dict(call, name=real, input=aligned, id=call.get("id") or _call_id(shape)))
             turn = dict(turn, tool_calls=resolved)
 
+        built = (anthropic_body if shape == "anthropic" else responses_body if shape == "responses" else openai_body)
+        capture_note(self, route=route, rule=name, text=turn.get("text") or "", usage=usage_from_body(shape, built(turn, model)),
+                     toolCalls=[{"id": c.get("id"), "name": c.get("name"), "input": c.get("input")} for c in turn.get("tool_calls") or []])
         if route != "replay" and not internal and not turn.get("error"):
             session_capture(self.ctx, route, name, turn, int((time.time() - started) * 1000))
+
+        # A fault is what happens to an answer, never the answer itself — which is why
+        # this comes after the answer has been recorded. A rule's fault applies
+        # first; failing that, the turn's own.
+        post = None
+        turn_fault = turn.get("fault")
+        # A garbage fault is a corrupt frame in a stream and a corrupt body in a
+        # whole answer: the same fault, in whichever form the request asked for.
+        if not stream and self.stream_fault and self.stream_fault["type"] == "garbage":
+            self.fault, self.stream_fault = self.stream_fault, None
+        fault_now = self.fault or turn_fault
+        if fault_now:
+            kind = fault_now["type"]
+            if kind == "garbage" and not stream:
+                post = "garbage_body"
+            elif kind in STREAM_FAULTS:
+                self.stream_fault = fault_now
+            elif kind == "drop":
+                capture_note(self, fault="drop")
+                entry["fault"], entry["status"] = "drop", 0
+                self._hang_up(fault_now.get("mode", "close"))
+                return None
+            elif kind == "delay":
+                if turn_fault:
+                    turn = dict(turn, delay_ms=turn.get("delay_ms", 0) + fault_now["ms"])
+            else:
+                turn, post = apply_turn_fault(turn, fault_now)
+            capture_note(self, fault=kind)
+            entry["fault"] = kind
+            self.trace["Fault"] = kind
 
         delay = turn.get("delay_ms")
         if delay:
@@ -4303,8 +6519,14 @@ class Handler(BaseHTTPRequestHandler):
         # will reliably show you.
         if turn.get("error"):
             err = turn["error"]
+            if err.get("retry_after") is not None:
+                self._extra["Retry-After"] = str(err["retry_after"])
             return self.refuse(err.get("status", 429), err.get("type", "rate_limit_error"),
                                err.get("message", "Rate limited."))
+
+        if not stream and post == "garbage_body":
+            return self._send_raw(200, "application/json",
+                                  b'{"id": "chatcmpl-llmsim", "object": "chat.completion", "choices": [{"index": 0, "message": {"role": "assis')
 
         if not stream:
             payload = (anthropic_body(turn, model) if shape == "anthropic"
@@ -4312,31 +6534,21 @@ class Handler(BaseHTTPRequestHandler):
                        else openai_body(turn, model))
             return self.send_json(200, payload)
 
-        # Connection: close, not keep-alive, and the handler stops reusing
-        # the socket. An event stream has no Content-Length and this server
-        # speaks HTTP/1.1, so a kept-alive connection leaves the client with
-        # no way to know the body ended — it reads the last event and then
-        # blocks until it times out. Closing is what marks the end.
-        self.send_response(200)
-        self.send_header("Content-Type", "text/event-stream")
-        self.send_header("Cache-Control", "no-cache")
-        self.send_header("Connection", "close")
-        self.vendor_headers(200)
-        self.end_headers()
-        self.close_connection = True
-
+        # Connection: close, not keep-alive, and the handler stops reusing the socket
+        # (begin_stream does both). An event stream has no Content-Length and this
+        # server speaks HTTP/1.1, so a kept-alive connection leaves the client with no
+        # way to know the body ended — it reads the last event and then blocks until
+        # it times out. Closing is what marks the end.
+        self.begin_stream()
         try:
             if shape in ("anthropic", "responses"):
                 events = anthropic_sse(turn, model) if shape == "anthropic" else responses_sse(turn, model)
                 for event, data in events:
-                    self.wfile.write(("event: %s\ndata: %s\n\n" % (event, json.dumps(data))).encode())
-                    self.wfile.flush()
+                    self.write_event(event, data)
             else:
                 for chunk in openai_sse(turn, model):
-                    self.wfile.write(("data: %s\n\n" % json.dumps(chunk)).encode())
-                    self.wfile.flush()
-                self.wfile.write(b"data: [DONE]\n\n")
-                self.wfile.flush()
+                    self.write_event("", chunk)
+                self.write_event("", "[DONE]")
         except BrokenPipeError:
             log("client closed the stream early")
 
@@ -4344,7 +6556,10 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     CHATGPT["auth"] = _load_chatgpt_auth()
     log("listening on http://localhost:%d" % PORT)
-    log("script: %s (%d rules)" % (SCRIPT_PATH, len(SCRIPT.get("rules", []))))
+    USER_RULES.update(load_user_rules())
+    ASSERTION_SETS.update(load_assertion_sets())
+    log("script: %s (%d rules%s)" % (SCRIPT_PATH, len(SCRIPT.get("rules", [])),
+                                     ", and %d of yours in %s" % (len(USER_RULES["rules"]), os.path.basename(RULES_PATH)) if USER_RULES["rules"] else ""))
     ensure_suite_file()
     log("suite:  %s (%d case(s), %d plan(s))"
         % (SUITE_PATH, len(CONFIG.get("tests", [])), len(CONFIG.get("plans", []))))
@@ -4376,7 +6591,7 @@ def main():
         log("          anyone who can reach this port can spend that plan; keep it off a shared network")
     elif CONFIG["routing"]["default"] == "chatgpt" or routed_to_plan:
         log("chatgpt: routes point at the plan but nobody is signed in — those requests will fail until the console signs in")
-    log("console: http://localhost:%d/ui" % PORT)
+    log("console: http://localhost:%d/ui   guide: http://localhost:%d/guide" % (PORT, PORT))
     for name in sorted(API_KEYS):
         log("  %-9s http://localhost:%d/%s   key %s" % (name, PORT, name, API_KEYS[name]))
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()

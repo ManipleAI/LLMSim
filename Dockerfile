@@ -3,7 +3,8 @@
 FROM python:3.12-slim
 
 WORKDIR /app
-COPY server.py responses.json ui.html guide.html ./
+COPY server.py responses.json ui.html ./
+COPY docs/guide.html ./docs/guide.html
 
 ENV LLMSIM_PORT=8099
 EXPOSE 8099

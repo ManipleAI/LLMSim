@@ -5235,15 +5235,17 @@ class Handler(BaseHTTPRequestHandler):
     def serve_guide(self):
         """The how-to guide, from the same process and with nothing to fetch.
 
-        guide.html is written as a page body — a title, its styles, its content —
-        so the same file can be published elsewhere as it is. It is given a
+        docs/guide.html is written as a page body — a title, its styles, its
+        content — so the same file can be published elsewhere as it is. docs/guide.md
+        beside it is the same guide for reading on GitHub, which shows an .html file
+        as source; a test keeps the two naming the same routes. It is given a
         document around it here; without one a browser renders it in quirks mode.
         """
         try:
-            with open(os.path.join(HERE, "guide.html"), "rb") as fh:
+            with open(os.path.join(HERE, "docs", "guide.html"), "rb") as fh:
                 body = fh.read()
         except FileNotFoundError:
-            return self.send_json(404, {"error": "guide.html is missing from this install"})
+            return self.send_json(404, {"error": "docs/guide.html is missing from this install"})
         page = (b'<!doctype html><html lang="en"><head><meta charset="utf-8">'
                 b'<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"></head><body>'
                 + body + b"</body></html>")

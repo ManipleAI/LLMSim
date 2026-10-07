@@ -14,6 +14,11 @@ sh examples/try-it.sh
 That's the whole setup. Python 3.9+, standard library only, nothing to
 install.
 
+A task-by-task guide — point an agent at it, script the model, break it on
+purpose, check what the agent sent — is served by the same process at
+`http://localhost:8099/guide`, and linked from the console. This file is the
+reference and the reasons.
+
 ## Why simulate the vendors and not the gateway
 
 A gateway already translates between formats. Simulating the gateway would
@@ -538,6 +543,181 @@ plan stand-in and all three wire formats. It has not been tried against a real
 Maniple session, whose requests carry more than any test here does. The first
 recording will say: if requests that should match show as *no recording*, the
 console lists the ask each one arrived with.
+
+## Testing an agent: behaviors, faults and evidence
+
+Everything above makes LLMSim a convincing *model*. This is what makes it a way to
+test the *agent* around the model — any agent that can be pointed at a base URL.
+LLMSim is the one place that sees every request the agent makes to its model, and
+that is a better place to check an agent from than inside it.
+
+Four things, sharing one description of a request (a *view*) and one language for
+saying something about it (a *condition*). All of it is configurable on the console
+(**Behaviors**, **Faults**, **Evidence**) and over HTTP: the console is a client of
+the same API a test harness uses.
+
+### Who sent it
+
+Point each agent at its own base URL and LLMSim knows who is who:
+
+```
+http://localhost:8099/run/<run>/agent/<agent>/openai/v1        also …/anthropic, …/deepseek/v1
+POST /api/runs {"run": "r1", "agents": ["planner", "worker"]}  → the URLs, ready to paste
+```
+
+That is the one thing every agent platform has to support, so it needs nothing of
+the platform — not a header, not a plugin. Identity can also be read from a header
+(`X-LLMSim-Run`, `-Agent`, `-App` by default), a body field or the credential, with
+rules you configure under *Evidence → Settings*: which header a given gateway
+forwards is a fact about that gateway, so it is configured and not assumed.
+
+Which **credential** arrived is recorded too, as a fingerprint — never the key.
+Register what a fingerprint is (`POST /api/settings/credentials {"label","key"}`:
+the key is fingerprinted and not stored) and an assertion can say "the session used
+the platform token". `auth.mode` is `published` (only this file's keys, the default),
+`registered`, or `any` — *witness mode*, which accepts anything and says which came.
+
+### Conditions
+
+One language, used by a rule's `when`, a fault's `match`, an assertion's scope and its
+checks. Every key must hold; `not`, `all` and `any` combine them.
+
+| | |
+|---|---|
+| `contains`, `regex` | the ask — the last thing a person said that was not tool output |
+| `provider`, `model`, `route`, `shape`, `path`, `stream` | the request itself |
+| `tool` / `tools` | tools the client declared |
+| `turn` | `2`, or `{"min": 1, "max": 3}` — assistant turns already taken |
+| `toolOutput`, `anyToolOutput`, `lastMessage`, `system` | text conditions: a string (contains) or `{contains, not_contains, regex, not_regex, equals, empty, case}` |
+| `identity` | `{"run": …, "agent": …, "app": …}` |
+| `header`, `credential` | `{"x-tenant": "acme"}`, `{"label": "platform-token", "known": true}` |
+| `status`, `fault` | the answer, for assertions |
+| `{field, op, value}` | any field of the view: `response.toolNames includes Write`, `response.usage.input gt 1000`, … |
+
+Text matches ignore case unless `{"case": true}`.
+
+### Rules that branch
+
+Your rules live in `llmsim.rules.json` — also source, also meant to be committed —
+and are tried **before** the shipped `responses.json`, which is never written. A rule
+may now condition on what the last tool said, so an agent's conditional flows are
+testable: *granted, so carry on; denied, so stop.*
+
+```json
+{"name": "needs-capability", "when": {"contains": "reconcile the ledger"},
+ "turns": [
+   {"text": "Checking what I am granted.", "tool_calls": [{"name": "granted", "input": {}}]},
+   {"text": "Unclear. Asking.", "branches": [
+     {"when": {"toolOutput": {"contains": "SAP.Invoice.Read"}}, "turn": {"text": "Granted. Reading."}},
+     {"when": {"toolOutput": {"regex": "^\\[\\]$"}},            "turn": {"text": "Nothing granted. Stopping."}}]}]}
+```
+
+A turn can also set **exact usage** — `input_tokens`, `output_tokens`, `cached_tokens`,
+`reasoning_tokens` (zero is a count, not "unset") — which is what a cost or budget test
+needs. A rule with `when.turn: {"min": 2}` answers from its first turn when the
+conversation reaches turn 2. `{{ask}}`, `{{tool_output}}`, `{{run}}`, `{{agent}}`,
+`{{app}}`, `{{turn}}` and `{{model}}` are filled in.
+
+`POST /api/rules/test` is a dry run that says which rule would answer **and, for every
+one that would not, why not** — the question that follows writing any rule.
+
+### Faults
+
+The paths that only run when something goes wrong are the ones no live vendor will
+show you on demand. A fault is a thing to do, with two ways to say when: on a scripted
+turn (`"fault": {…}`), or as a *fault rule* with a `match`, `probability`, `every`,
+`after`, `limit` and a `seed` — so a chaotic run can be run again.
+
+| `type` | |
+|---|---|
+| `status` | the vendor's own error envelope, with an optional `retry_after` |
+| `delay`, `drop` | wait first; hang up before answering (`close` or `reset`) |
+| `abort_stream` | stop after N events, as a clean close or a reset |
+| `stall`, `slow_stream`, `garbage` | pause once; pause between events; one frame (or a whole body) that is not JSON |
+| `malformed_tool_args` | arguments that are not valid JSON (`truncated`, `not_json`, `array`, `empty`) |
+| `unknown_tool`, `empty`, `huge` | call a tool nobody declared; a 200 that says nothing; an answer of N bytes |
+
+Faults apply on **every route** — scripted, relay, the ChatGPT plan, a replay — since a
+fault is about how the vendor misbehaves, not who answered. `status` and `drop` happen
+*before* anything is spent upstream, so injecting one never costs a call. A recording
+keeps the real answer, not the fault. LLMSim's own functional cases are never faulted.
+Limit: a streamed relay or plan answer is passed through event by event, so only the
+stream faults (`abort_stream`, `stall`, `slow_stream`, `garbage`) reach it.
+
+### Evidence and assertions
+
+Every request is **captured**: what was sent, who sent it, what answered it, with what
+usage. Held in memory, bounded (`capture.max`, `capture.maxBytes`), never written to
+disk. `GET /api/captures` filters by run, agent, app, model, route, status or text;
+`…/<n>` is one in full; `…/export` is a download.
+
+An assertion is a claim about the captured requests:
+
+```json
+{"id": "no-card-numbers", "name": "No card number reaches the model",
+ "scope": {"identity": {"run": "r1"}},
+ "none": {"field": "allText", "op": "regex", "value": "\\b\\d{13,16}\\b"}}
+```
+
+with exactly one of `each` (every request satisfies it), `none` (no request does),
+`count` (`{min, max}`, with an optional `where`) or `sequence` (conditions found, in
+order). `POST /api/assertions/evaluate` returns a verdict, and for each assertion a
+status, a detail and **evidence**: which requests, and an excerpt. Sets of assertions
+are saved in `llmsim.assertions.json` (commit it) and run by name.
+
+Four decisions, each from something that fails otherwise:
+
+- **No data is not a pass.** "No request carried a card number" is true of an agent
+  that never ran. A check that selects nothing reports `no-data` unless it says
+  `allowEmpty`.
+- **Assertions run on what was sent; what is shown is redacted.** A leak check run on
+  redacted text could never find a leak. Redactions (`capture.redact`) apply to the
+  console, the API and exports — including the evidence an assertion returns.
+- **It says when it saw less than everything.** A request too big to hold whole is
+  reduced; an assertion that passed over one says so.
+- **A handoff between agents never crosses LLMSim, but its contents do.** Have agent A's
+  scripted answer carry a trace token, and assert that it appears in agent B's next
+  request: that proves the handoff happened, what B was told, and in what order.
+
+### Runs that do not see each other
+
+Sessions (recording and replay) are scoped by run: `POST /api/sessions/record
+{"name", "run": "r1"}` records only `/run/r1/…` traffic, and several runs can record or
+replay at once, each with its own `onMiss`, `strict` and masks. A request is handled
+under its run's session if the run has one, and under the default session otherwise, so
+everything that names no run behaves as it always did. A cassette being recorded is
+taken: nobody else may record, replay or delete it; one being replayed may be replayed
+by others. `DELETE /api/runs/<run>` stops its session and forgets its requests.
+
+### The API
+
+| | |
+|---|---|
+| `GET/PUT /api/settings` · `POST /api/settings/credentials` | capture, identity and credential mode |
+| `GET/POST /api/runs` · `GET/DELETE /api/runs/<run>` | runs, and the base URLs for one |
+| `GET/DELETE /api/captures` · `…/<n>` · `…/export` | what was sent and what answered |
+| `GET/POST /api/rules` · `PUT/DELETE …/<name>` · `POST …/test`, `…/validate`, `…/order`, `…/reload` | rules |
+| `GET/POST /api/faults` · `PUT/DELETE …/<id>` · `POST …/pause`, `…/resume`, `…/reset` | faults |
+| `POST /api/assertions/evaluate` · `GET …/catalog` · `/api/assertion-sets` | assertions |
+| `/api/sessions` | recording and replay, now per run |
+
+Status codes say what went wrong — 400 it asked wrongly (with every `problems` item at
+once, not the first), 404 there is no such thing, 409 the state forbids it, 403 the
+request came from another website's page.
+
+### What this is not
+
+LLMSim sees what crosses the **model boundary** of each agent. It does not see tool-side
+effects (files written, calls made), channels between agents that never pass through a
+model, or an agent that cannot be pointed at a base URL. A claim about those needs
+something that does see them. And a conformance result from a scripted model says what
+an agent does when the model does *that*; it does not say how good the agent is with a
+real one.
+
+```
+python3 tests/test_behaviors.py        # 43 cases: identity, captures, rules, faults, assertions, runs, the guide
+python3 tests/test_chatgpt_plan.py     # 38 cases: the ChatGPT route, recording, replay
+```
 
 ## Testing the unhappy paths
 

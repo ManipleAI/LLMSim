@@ -131,6 +131,13 @@
   .tag.set { background:var(--green-tint); color:var(--green); }
   .tag.err { background:var(--amber-tint); color:var(--amber); }
 
+  /* ── behaviors, faults, evidence ─────────────────────────────────── */
+  pre.json { margin:6px 0 0; padding:10px 12px; background:var(--subtle); border:1px solid var(--border-soft); border-radius:7px;
+             font:12px/1.5 var(--mono); white-space:pre-wrap; overflow-wrap:anywhere; max-height:320px; overflow:auto; }
+  .call { font:12px/1.4 var(--mono); background:#fff; border:1px solid var(--border); border-radius:6px; padding:5px 8px; margin-top:6px; overflow-wrap:anywhere; }
+  .call b { color:var(--primary); }
+  details summary { cursor:pointer; }
+
   /* ── sessions ────────────────────────────────────────────────────── */
   .sess-table { width:100%; border-collapse:collapse; font-size:12.5px; }
   .sess-table th { text-align:left; font:600 10px/1 var(--mono); letter-spacing:.12em; text-transform:uppercase; color:var(--faint); padding:0 10px 8px 0; }
@@ -208,9 +215,12 @@
   <div class="group">Simulate</div>
   <button data-view="models" onclick="show('models')"><span>Models</span><span class="n" id="n-models">0</span></button>
   <button data-view="routing" onclick="show('routing')"><span>Routing</span><span class="n" id="n-routing">—</span></button>
+  <button data-view="behaviors" onclick="show('behaviors')"><span>Behaviors</span></button>
+  <button data-view="faults" onclick="show('faults')"><span>Faults</span><span class="n" id="n-faults"></span></button>
 
   <div class="group">Observe</div>
   <button data-view="logs" onclick="show('logs')"><span>Logs</span><span class="n" id="n-logs">0</span></button>
+  <button data-view="evidence" onclick="show('evidence')"><span>Evidence</span></button>
 
   <div class="group">Verify</div>
   <button data-view="chat" onclick="show('chat')"><span>Chat</span></button>
@@ -219,6 +229,9 @@
 
   <div class="group">Connect</div>
   <button data-view="integrations" onclick="show('integrations')"><span>Integrations</span></button>
+
+  <div class="group">Learn</div>
+  <button onclick="window.open(api('/guide'), '_blank', 'noopener')"><span>How to use it</span><span class="n">↗</span></button>
 
   <div class="foot">
     <div class="status"><span id="dot" class="dot"></span><span id="conn">connected</span></div>
@@ -374,6 +387,185 @@
 
 
   <!-- ── Test Execution ─────────────────────────────────────────────── -->
+  <!-- ── Behaviors ──────────────────────────────────────────────────── -->
+  <section class="view" id="v-behaviors" hidden>
+    <div class="head">
+      <div><h1>Behaviors</h1><p>What the simulated model answers, and when — including what it does with what a tool printed. Your rules are tried before the shipped ones.</p></div>
+      <span class="spacer"></span>
+      <button class="btn ghost" onclick="bhReload()" title="Re-read responses.json and llmsim.rules.json">Reload files</button>
+      <button class="btn" onclick="bhNew()">New rule</button>
+    </div>
+    <div class="body">
+      <div class="split">
+        <div class="list">
+          <div class="search"><input id="bh-filter" class="mono" type="text" placeholder="filter…" oninput="bhRenderList()"></div>
+          <div class="scroll" id="bh-list"></div>
+        </div>
+        <div>
+          <div id="bh-detail"><div class="card"><p class="help" style="margin:0">Pick a rule to read it, or start a new one from a template.</p></div></div>
+          <div class="card">
+            <h2>Try a request</h2>
+            <p class="help">Which rule would answer, and — for each one that would not — why. Nothing is sent and nothing is captured.</p>
+            <div class="row">
+              <div><label for="bh-t-ask">The ask</label><input id="bh-t-ask" type="text" placeholder="please reconcile the ledger"></div>
+              <div style="flex:0 0 130px"><label for="bh-t-provider">Provider</label>
+                <select id="bh-t-provider"><option>openai</option><option>anthropic</option><option>deepseek</option></select></div>
+            </div>
+            <div class="row">
+              <div><label for="bh-t-tool">What the last tool printed <span class="hint">· makes it turn 1</span></label><input id="bh-t-tool" class="mono" type="text" placeholder="granted: SAP.Invoice.Read"></div>
+              <div><label for="bh-t-tools">Tools declared <span class="hint">· comma separated</span></label><input id="bh-t-tools" class="mono" type="text" placeholder="Write, Bash"></div>
+            </div>
+            <div class="row">
+              <div><label for="bh-t-run">Run</label><input id="bh-t-run" class="mono" type="text"></div>
+              <div><label for="bh-t-agent">Agent</label><input id="bh-t-agent" class="mono" type="text"></div>
+              <div><label for="bh-t-system">System prompt contains</label><input id="bh-t-system" type="text"></div>
+            </div>
+            <div style="margin-top:12px"><button class="btn" onclick="bhTry()">Try it</button></div>
+            <div id="bh-try-out" style="margin-top:12px"></div>
+          </div>
+          <div class="card">
+            <h2>When nothing matches</h2>
+            <p class="help">The turn used when no rule applies. Yours, if you set one; otherwise the shipped default.</p>
+            <textarea id="bh-default" class="mono" style="min-height:70px"></textarea>
+            <div style="margin-top:10px; display:flex; gap:9px; align-items:center">
+              <button class="btn" onclick="bhSaveDefault()">Save</button>
+              <button class="btn ghost" onclick="bhClearDefault()">Use the shipped default</button>
+              <span id="bh-default-msg" style="font-size:12px"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Faults ─────────────────────────────────────────────────────── -->
+  <section class="view" id="v-faults" hidden>
+    <div class="head">
+      <div><h1>Faults</h1><p>Things that go wrong on purpose: a stream that dies half way, a tool call that is not JSON, a connection reset. On every route, and reproducible from a seed.</p></div>
+      <span class="spacer"></span>
+      <button class="btn ghost" id="ft-pause" onclick="ftPause()">Pause all</button>
+      <button class="btn ghost" onclick="ftReset()" title="Zero every rule's counters">Reset counters</button>
+      <button class="btn" onclick="ftNew()">New fault</button>
+    </div>
+    <div class="body">
+      <div class="note warn" id="ft-paused" hidden>All fault rules are paused. Nothing below will fire until they are resumed.</div>
+      <div class="card" id="ft-editor" hidden></div>
+      <div class="card">
+        <h2>Fault rules</h2>
+        <div id="ft-list"></div>
+      </div>
+      <div class="card">
+        <h2>What a fault can do</h2>
+        <table class="sess-table" id="ft-types"></table>
+        <p class="help" style="margin:12px 0 0">A rule's <b>match</b> is the same condition language rules use. Gates are applied in order: skip the first <i>after</i> matches, then every <i>every</i>th, until <i>limit</i> have fired, each with <i>probability</i> (drawn from <i>seed</i>, so a chaotic run can be run again). LLMSim's own functional cases are never faulted.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Evidence ───────────────────────────────────────────────────── -->
+  <section class="view" id="v-evidence" hidden>
+    <div class="head">
+      <div><h1>Evidence</h1><p>What each agent actually sent to the model, what answered it, and checks over both.</p></div>
+      <span class="spacer"></span>
+      <div class="seg" role="group" aria-label="Evidence view">
+        <button id="ev-tab-requests" onclick="evTab('requests')" aria-pressed="true">Requests</button>
+        <button id="ev-tab-assertions" onclick="evTab('assertions')" aria-pressed="false">Assertions</button>
+        <button id="ev-tab-settings" onclick="evTab('settings')" aria-pressed="false">Settings</button>
+      </div>
+    </div>
+    <div class="body">
+
+      <div id="ev-requests">
+        <div class="card">
+          <div class="row" style="align-items:flex-end">
+            <div><label for="ev-f-run" style="margin-top:0">Run</label><input id="ev-f-run" class="mono" type="text" oninput="evRefresh(true)"></div>
+            <div><label for="ev-f-agent" style="margin-top:0">Agent</label><input id="ev-f-agent" class="mono" type="text" oninput="evRefresh(true)"></div>
+            <div><label for="ev-f-q" style="margin-top:0">Contains</label><input id="ev-f-q" type="text" oninput="evRefresh(true)"></div>
+            <div style="flex:0 0 auto; display:flex; gap:8px">
+              <button class="btn ghost" onclick="evNewRun()">New run</button>
+              <button class="btn ghost" onclick="evExport()">Export</button>
+              <button class="btn ghost" onclick="evClear()">Clear</button>
+            </div>
+          </div>
+          <div id="ev-newrun" hidden style="margin-top:12px"></div>
+        </div>
+        <div class="split" style="grid-template-columns:minmax(0,1.1fr) minmax(0,1fr)">
+          <div class="card" style="padding:0; overflow:hidden">
+            <div id="ev-list" class="scroll" style="max-height:70vh; overflow:auto"></div>
+          </div>
+          <div id="ev-detail"><div class="card"><p class="help" style="margin:0">Pick a request to see what was sent and what came back.</p></div></div>
+        </div>
+      </div>
+
+      <div id="ev-assertions" hidden>
+        <div class="card">
+          <h2>Run a check</h2>
+          <p class="help">Evaluate a saved set, or paste assertions, against what has been captured. A check that selects nothing reports <b>no data</b>, which is not a pass.</p>
+          <div class="row" style="align-items:flex-end">
+            <div style="flex:0 0 240px"><label for="as-set" style="margin-top:0">Saved set</label><select id="as-set" onchange="asPick()"></select></div>
+            <div><label for="as-run" style="margin-top:0">Only run</label><input id="as-run" class="mono" type="text" placeholder="every run"></div>
+            <div style="flex:0 0 auto"><button class="btn" onclick="asEvaluate()">Evaluate</button></div>
+          </div>
+          <label for="as-json">Assertions <span class="hint">· JSON; a set's, or your own</span></label>
+          <textarea id="as-json" class="mono" style="min-height:230px" spellcheck="false"></textarea>
+          <div style="margin-top:10px; display:flex; gap:9px; align-items:center; flex-wrap:wrap">
+            <button class="btn ghost" onclick="asTemplate()">Insert an example</button>
+            <input id="as-id" class="mono" type="text" placeholder="save as set id" style="width:200px">
+            <button class="btn ghost" onclick="asSave()">Save as set</button>
+            <button class="btn ghost" onclick="asDelete()">Delete set</button>
+            <span id="as-msg" style="font-size:12px"></span>
+          </div>
+        </div>
+        <div class="card" id="as-report" hidden></div>
+        <div class="card">
+          <h2>What an assertion can say</h2>
+          <div id="as-catalog"></div>
+        </div>
+      </div>
+
+      <div id="ev-settings" hidden>
+        <div class="card">
+          <h2>Capture</h2>
+          <p class="help">Requests are held in memory, bounded, and never written to disk. Assertions read what was held; redactions apply to what is shown, exported or returned.</p>
+          <label style="display:flex; align-items:center; gap:8px; margin:0; color:var(--ink)"><input id="st-cap-enabled" type="checkbox" style="width:auto"> Keep requests</label>
+          <div class="row">
+            <div><label for="st-cap-max">How many to keep</label><input id="st-cap-max" type="number" class="mono"></div>
+            <div><label for="st-cap-bytes">Most of one request to keep whole <span class="hint">· bytes</span></label><input id="st-cap-bytes" type="number" class="mono"></div>
+          </div>
+          <label for="st-cap-headers">Headers never shown <span class="hint">· comma separated</span></label>
+          <input id="st-cap-headers" class="mono" type="text">
+          <label for="st-cap-patterns">Redactions <span class="hint">· JSON: [{"pattern": "…", "replace": "[card]"}]</span></label>
+          <textarea id="st-cap-patterns" class="mono" style="min-height:80px" spellcheck="false"></textarea>
+        </div>
+        <div class="card">
+          <h2>Identity</h2>
+          <p class="help">Who sent a request is always read from the base URL — <span class="mono">/run/&lt;id&gt;/agent/&lt;name&gt;/openai/v1</span> — which needs nothing of an agent platform but a URL. These rules read it from elsewhere, for a gateway that carries one through.</p>
+          <textarea id="st-identity" class="mono" style="min-height:110px" spellcheck="false"></textarea>
+        </div>
+        <div class="card">
+          <h2>Credentials</h2>
+          <p class="help"><b>Published</b> accepts only the keys this file publishes. <b>Registered</b> adds credentials you register below. <b>Any</b> accepts anything and records which arrived — for witnessing what a gateway sends. A credential is kept as a fingerprint; the key itself is not stored.</p>
+          <div class="seg" role="group" aria-label="Credential mode">
+            <button id="st-auth-published" onclick="stAuth('published')" aria-pressed="false">Published</button>
+            <button id="st-auth-registered" onclick="stAuth('registered')" aria-pressed="false">Registered</button>
+            <button id="st-auth-any" onclick="stAuth('any')" aria-pressed="false">Any (witness)</button>
+          </div>
+          <div id="st-creds" style="margin-top:14px"></div>
+          <div class="row" style="align-items:flex-end; margin-top:10px">
+            <div><label for="st-cred-label" style="margin-top:0">Label</label><input id="st-cred-label" class="mono" type="text" placeholder="platform-token"></div>
+            <div><label for="st-cred-key" style="margin-top:0">Credential</label><input id="st-cred-key" type="password" autocomplete="off" placeholder="not stored; only its fingerprint is"></div>
+            <div style="flex:0 0 auto"><button class="btn" onclick="stRegister()">Register</button></div>
+          </div>
+        </div>
+        <div style="margin-top:14px; display:flex; gap:9px; align-items:center">
+          <button class="btn" onclick="stSave()">Save settings</button>
+          <span id="st-msg" style="font-size:12px"></span>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
   <!-- ── Sessions ───────────────────────────────────────────────────── -->
   <section class="view" id="v-sessions" hidden>
     <div class="head">
@@ -383,15 +575,24 @@
       <div class="card">
         <h2>Session</h2>
         <div id="sess-status" style="font-size:13px; margin-bottom:12px"></div>
-        <div id="sess-start" class="row" style="align-items:flex-end">
-          <div><label for="sess-name" style="margin-top:0">Name <span class="hint">· letters, digits, dot, dash, underscore</span></label>
-            <input id="sess-name" class="mono" type="text" placeholder="login-flow"
-              onkeydown="if (event.key === 'Enter') sessRecord()"></div>
-          <div style="flex:0 0 auto"><button class="btn" onclick="sessRecord()">Start recording</button></div>
+        <div id="sess-start">
+          <div class="row" style="align-items:flex-end">
+            <div><label for="sess-name" style="margin-top:0">Name <span class="hint">· letters, digits, dot, dash, underscore</span></label>
+              <input id="sess-name" class="mono" type="text" placeholder="login-flow"
+                onkeydown="if (event.key === 'Enter') sessRecord()"></div>
+            <div><label for="sess-run" style="margin-top:0">Run <span class="hint">· optional: only <span class="mono">/run/&lt;id&gt;</span> traffic, so runs do not see each other</span></label>
+              <input id="sess-run" class="mono" type="text" placeholder="every request"></div>
+          </div>
+          <div class="row" style="align-items:flex-end">
+            <div><label for="sess-masks">Masks <span class="hint">· JSON list of patterns removed from the ask, e.g. a run id made from the clock</span></label>
+              <input id="sess-masks" class="mono" type="text" placeholder='["\\d{8}-\\d{6}"]'></div>
+            <div style="flex:0 0 auto"><button class="btn" onclick="sessRecord()">Start recording</button></div>
+          </div>
         </div>
         <div id="sess-stop" hidden><button class="btn" onclick="sessStop()">Stop</button></div>
         <div id="sess-msg" style="font-size:12px; margin-top:10px"></div>
         <div id="sess-live" style="margin-top:14px"></div>
+        <div id="sess-runs" style="margin-top:14px"></div>
         <div class="note warn" id="sess-warn" hidden>
           Recording keeps the model's <b>answers</b> — its text and tool calls — in <code>cassettes/</code> on this machine, owner-only and not committed. It does not keep the requests, but an answer can quote one.
         </div>
@@ -523,6 +724,7 @@ function show(v) {
   for (const s of document.querySelectorAll(".view")) s.hidden = s.id !== "v-" + v;
   for (const b of document.querySelectorAll("nav button[data-view]")) b.setAttribute("aria-current", b.dataset.view === v);
   if (CFG) { renderDetail(); placeCards(); renderChatGPT(); renderChat(); renderSessions(); }
+  pageEntered(v);
 }
 
 async function load() {
@@ -755,6 +957,586 @@ const saveUpstream = () => post({
 }, "saved");
 
 
+// ── The REST API, as the console uses it ──────────────────────────────────
+//
+// Nothing below is special to the console: every control here calls a route a
+// test harness can call, and shows what that route said. If a thing can be done on
+// a page, it can be done over HTTP.
+
+async function REST(method, path, body) {
+  const r = await fetch(api(path), {
+    method, headers: { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  let out = {};
+  try { out = await r.json(); } catch { /* an empty body is an answer too */ }
+  return { ok: r.ok, status: r.status, body: out };
+}
+const pretty = (v) => JSON.stringify(v, null, 2);
+const said = (out) => ((out.problems && out.problems.length) ? out.problems.map((p) => "• " + p).join("\n") : out.message || out.error || "that did not work");
+function note(id, text, bad) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.style.whiteSpace = "pre-wrap";
+  el.textContent = text || "";
+  el.style.color = bad ? "var(--primary)" : "var(--green)";
+  if (!bad && text) setTimeout(() => { if (el.textContent === text) el.textContent = ""; }, 2500);
+}
+const readJSON = (id, what) => {
+  const text = document.getElementById(id).value.trim();
+  if (!text) return undefined;
+  try { return JSON.parse(text); } catch (e) { throw new Error(what + " is not valid JSON: " + e.message); }
+};
+const tagFor = (cls, text) => `<span class="tag ${cls}">${esc(text)}</span>`;
+const when_ = (t) => (t ? new Date(t * 1000).toLocaleTimeString([], { hour12: false }) : "");
+const copyText = (t) => navigator.clipboard && navigator.clipboard.writeText(t);
+
+// A page that re-reads its data while it is on screen, and stops when it is not.
+const PAGES = {};
+let POLL = null;
+function pageEntered(v) {
+  if (POLL) { clearInterval(POLL); POLL = null; }
+  const page = PAGES[v];
+  if (!page) return;
+  if (page.enter) page.enter();
+  if (page.poll) POLL = setInterval(() => { if (!document.hidden) page.poll(); }, 2000);
+}
+
+
+// ── Behaviors: rules ──────────────────────────────────────────────────────
+let BH = { rules: [], picked: null, mode: "view", defaultTurn: null, userDefault: false };
+
+const BH_TEMPLATES = {
+  "A plain reply": { name: "my-reply", description: "Answers anything that mentions hello.", when: { contains: "hello" }, turns: [{ text: "Hi, from a rule of my own." }] },
+  "Branch on what a tool said": {
+    name: "needs-capability", description: "Carry on if the tool says granted; stop if it says nothing is.",
+    when: { contains: "reconcile the ledger" },
+    turns: [
+      { text: "Checking what I am granted.", tool_calls: [{ name: "granted", input: {} }] },
+      { text: "Unclear. Asking.", branches: [
+        { when: { toolOutput: { contains: "SAP.Invoice.Read" } }, turn: { text: "Granted. Reading the invoices." } },
+        { when: { toolOutput: { regex: "^\\[\\]$" } }, turn: { text: "Nothing is granted. Stopping." } } ] } ] },
+  "Fail with a status": { name: "over-quota", when: { contains: "quota" }, turns: [{ error: { status: 429, type: "rate_limit_error", message: "Over quota." } }] },
+  "Exact token counts": { name: "metered", description: "For testing cost and budget handling.", when: { contains: "meter me" }, turns: [{ text: "counted", input_tokens: 1000, output_tokens: 250, cached_tokens: 400 }] },
+  "A different answer per agent": { name: "reviewer-status", when: { contains: "status", identity: { agent: "reviewer" } }, turns: [{ text: "Reviewer {{agent}} of run {{run}}: all clear." }] },
+  "Starts at a later turn": { name: "second-wind", when: { contains: "long job", turn: { min: 2 } }, turns: [{ text: "Picking up from turn 2." }, { text: "And the last." }] },
+  "Dies half way": { name: "dies-mid-answer", when: { contains: "die halfway" }, turns: [{ text: "This answer is long enough to be sent in several pieces before it stops.", fault: { type: "abort_stream", after: 2 } }] },
+};
+
+async function bhLoad() {
+  const r = await REST("GET", "/api/rules");
+  if (!r.ok) return;
+  BH.rules = r.body.rules; BH.defaultTurn = r.body.default; BH.userDefault = r.body.userDefault;
+  bhRenderList(); bhRenderDefault();
+  if (BH.picked && BH.mode === "view") bhDetail();
+}
+
+function bhRenderList() {
+  const q = (document.getElementById("bh-filter").value || "").toLowerCase();
+  const rows = BH.rules.filter((r) => !q || (r.name + " " + r.summary).toLowerCase().includes(q));
+  document.getElementById("bh-list").innerHTML = rows.map((r) => `
+    <button class="item" data-name="${esc(r.name)}" aria-current="${r.name === BH.picked && BH.mode === "view"}" onclick="bhPick(this.dataset.name)">
+      <span class="nm">${esc(r.name)}<br><span style="color:var(--faint); font-size:11px">${esc(r.summary)}</span></span>
+      ${r.enabled ? "" : tagFor("err", "off")}${tagFor(r.source === "user" ? "plan" : "", r.source === "user" ? "yours" : "shipped")}</button>`).join("")
+    || '<div class="empty">No rule matches that.</div>';
+}
+
+function bhPick(name) { BH.picked = name; BH.mode = "view"; bhRenderList(); bhDetail(); }
+const bhRule = () => BH.rules.find((r) => r.name === BH.picked);
+
+function bhDetail() {
+  const el = document.getElementById("bh-detail");
+  if (BH.mode === "new") return;
+  const item = bhRule();
+  if (!item) return;
+  const mine = item.source === "user";
+  const idx = BH.rules.filter((r) => r.source === "user").findIndex((r) => r.name === item.name);
+  const users = BH.rules.filter((r) => r.source === "user").length;
+  if (editing("#bh-detail")) return;
+  el.innerHTML = `
+    <div class="card">
+      <h2>${mine ? "Your rule" : "Shipped rule"} · ${esc(item.name)}</h2>
+      ${mine ? "" : `<div class="note warn" style="margin:0 0 12px">Shipped rules are read-only: they live in <span class="mono">responses.json</span>. Make a copy to change it — yours is tried first.</div>`}
+      <textarea id="bh-json" class="mono" style="min-height:340px" spellcheck="false" ${mine ? "" : "readonly"}>${esc(pretty(item.rule))}</textarea>
+      <div style="margin-top:12px; display:flex; gap:9px; align-items:center; flex-wrap:wrap">
+        ${mine ? `<button class="btn" onclick="bhSave()">Save</button>
+          <button class="btn ghost" onclick="bhValidate()">Check it</button>
+          <button class="btn ghost" onclick="bhToggle()">${item.enabled ? "Turn off" : "Turn on"}</button>
+          <button class="btn ghost" ${idx <= 0 ? "disabled" : ""} onclick="bhMove(-1)" title="Try earlier">↑</button>
+          <button class="btn ghost" ${idx >= users - 1 ? "disabled" : ""} onclick="bhMove(1)" title="Try later">↓</button>
+          <button class="btn ghost" onclick="bhDelete()">Delete</button>` : `<button class="btn" onclick="bhCopy()">Make a copy</button>`}
+        <span id="bh-msg" style="font-size:12px"></span>
+      </div>
+      <p class="help" style="margin:12px 0 0">${esc(item.description || "")}</p>
+    </div>`;
+}
+
+function bhNew(template) {
+  BH.mode = "new"; BH.picked = null; bhRenderList();
+  const names = Object.keys(BH_TEMPLATES);
+  const first = BH_TEMPLATES[template || names[0]];
+  document.getElementById("bh-detail").innerHTML = `
+    <div class="card">
+      <h2>New rule</h2>
+      <label for="bh-tpl" style="margin-top:0">Start from</label>
+      <select id="bh-tpl" onchange="document.getElementById('bh-json').value = pretty(BH_TEMPLATES[this.value])">
+        ${names.map((n) => `<option ${n === (template || names[0]) ? "selected" : ""}>${esc(n)}</option>`).join("")}</select>
+      <label for="bh-json">The rule <span class="hint">· JSON: name, when, turns</span></label>
+      <textarea id="bh-json" class="mono" style="min-height:340px" spellcheck="false">${esc(pretty(first))}</textarea>
+      <div style="margin-top:12px; display:flex; gap:9px; align-items:center; flex-wrap:wrap">
+        <button class="btn" onclick="bhCreate('top')">Create — try it first</button>
+        <button class="btn ghost" onclick="bhCreate('bottom')">Create — try it last</button>
+        <button class="btn ghost" onclick="bhValidate()">Check it</button>
+        <span id="bh-msg" style="font-size:12px"></span>
+      </div>
+    </div>`;
+}
+
+function bhCopy() {
+  const item = bhRule();
+  const copy = JSON.parse(JSON.stringify(item.rule));
+  copy.name = item.name + "-mine";
+  BH.mode = "new"; BH.picked = null;
+  bhNew();
+  document.getElementById("bh-json").value = pretty(copy);
+}
+
+async function bhCall(fn) {
+  try { return await fn(); } catch (e) { note("bh-msg", e.message, true); return null; }
+}
+const bhParsed = () => { const v = readJSON("bh-json", "The rule"); if (!v) throw new Error("Write the rule first."); return v; };
+
+async function bhValidate() {
+  const rule = await bhCall(bhParsed); if (!rule) return;
+  const r = await REST("POST", "/api/rules/validate", { rule });
+  note("bh-msg", r.body.valid ? "That rule is valid." : said(r.body), !r.body.valid);
+}
+async function bhCreate(position) {
+  const rule = await bhCall(bhParsed); if (!rule) return;
+  const r = await REST("POST", "/api/rules", { rule, position });
+  if (!r.ok) return note("bh-msg", said(r.body), true);
+  BH.mode = "view"; BH.picked = rule.name;
+  await bhLoad(); bhDetail();
+  note("bh-msg", r.body.shadowsShipped ? "Created. It has the name of a shipped rule and is tried first." : "Created.");
+}
+async function bhSave() {
+  const rule = await bhCall(bhParsed); if (!rule) return;
+  const r = await REST("PUT", "/api/rules/" + encodeURIComponent(BH.picked), { rule });
+  if (!r.ok) return note("bh-msg", said(r.body), true);
+  BH.picked = rule.name; await bhLoad(); note("bh-msg", "Saved.");
+}
+async function bhDelete() {
+  if (!confirm("Delete the rule " + BH.picked + "?")) return;
+  const r = await REST("DELETE", "/api/rules/" + encodeURIComponent(BH.picked));
+  if (!r.ok) return note("bh-msg", said(r.body), true);
+  BH.picked = null; document.getElementById("bh-detail").innerHTML = '<div class="card"><p class="help" style="margin:0">Deleted.</p></div>';
+  bhLoad();
+}
+async function bhToggle() {
+  const item = bhRule(), rule = { ...item.rule, enabled: !item.enabled };
+  const r = await REST("PUT", "/api/rules/" + encodeURIComponent(item.name), { rule });
+  if (!r.ok) return note("bh-msg", said(r.body), true);
+  await bhLoad(); bhDetail();
+}
+async function bhMove(by) {
+  const names = BH.rules.filter((r) => r.source === "user").map((r) => r.name);
+  const i = names.indexOf(BH.picked), j = i + by;
+  if (i < 0 || j < 0 || j >= names.length) return;
+  [names[i], names[j]] = [names[j], names[i]];
+  const r = await REST("POST", "/api/rules/order", { names });
+  if (r.ok) { await bhLoad(); bhDetail(); }
+}
+async function bhReload() {
+  const r = await REST("POST", "/api/rules/reload");
+  await bhLoad();
+  if (r.ok) { const el = document.getElementById("bh-default-msg"); note("bh-default-msg", r.body.message); }
+}
+
+function bhRenderDefault() {
+  const box = document.getElementById("bh-default");
+  if (document.activeElement !== box) box.value = pretty(BH.defaultTurn || {});
+}
+async function bhSaveDefault() {
+  let turn;
+  try { turn = readJSON("bh-default", "The default turn"); } catch (e) { return note("bh-default-msg", e.message, true); }
+  const r = await REST("PUT", "/api/rules/default", { turn });
+  note("bh-default-msg", r.ok ? "Saved." : said(r.body), !r.ok);
+  if (r.ok) bhLoad();
+}
+async function bhClearDefault() {
+  await REST("DELETE", "/api/rules/default");
+  note("bh-default-msg", "Back to the shipped default."); bhLoad();
+}
+
+async function bhTry() {
+  const v = (id) => document.getElementById(id).value.trim();
+  const ask = v("bh-t-ask"), tool = v("bh-t-tool");
+  const messages = [];
+  if (v("bh-t-system")) messages.push({ role: "system", content: v("bh-t-system") });
+  messages.push({ role: "user", content: ask });
+  if (tool) messages.push({ role: "assistant", content: "" }, { role: "tool", content: tool });
+  const identity = {};
+  if (v("bh-t-run")) identity.run = v("bh-t-run");
+  if (v("bh-t-agent")) identity.agent = v("bh-t-agent");
+  const r = await REST("POST", "/api/rules/test", {
+    messages, provider: v("bh-t-provider"), identity, tools: v("bh-t-tools").split(",").map((t) => t.trim()).filter(Boolean) });
+  const out = document.getElementById("bh-try-out");
+  if (!r.ok) { out.innerHTML = `<div class="note warn">${esc(said(r.body))}</div>`; return; }
+  const b = r.body;
+  out.innerHTML = `
+    <div class="note ok" style="margin:0 0 10px"><b>${esc(b.matched)}</b> answers${b.source === "default" ? "" : " — " + esc(b.source) + " rule, turn " + b.turnIndex}.</div>
+    <pre class="json">${esc(pretty(b.turn))}</pre>
+    ${b.fault ? `<div class="note warn">A fault rule would also apply: <b>${esc(b.fault.name || b.fault.rule)}</b> — ${esc(b.fault.fault.type)}.</div>` : ""}
+    <table class="sess-table" style="margin-top:10px"><tr><th>Rule tried</th><th></th><th>Why not</th></tr>
+      ${b.checked.map((c) => `<tr><td>${esc(c.rule)} ${tagFor(c.source === "user" ? "plan" : "", c.source)}</td><td>${c.matched ? "✓" : "✗"}</td><td>${esc(c.matched ? "" : c.why)}</td></tr>`).join("")}</table>`;
+}
+
+
+// ── Faults ────────────────────────────────────────────────────────────────
+let FT = { faults: [], types: {}, paused: false, editing: null };
+
+const FT_PRESETS = {
+  "Rate limit one request in five": { name: "rate-limit-20pct", match: {}, probability: 0.2, seed: 1, fault: { type: "status", status: 429, message: "Rate limited.", retry_after: 2 } },
+  "Vendor overloaded (529)": { name: "overloaded", match: {}, fault: { type: "status", status: 529, error_type: "overloaded_error", message: "Overloaded.", retry_after: 5 } },
+  "Cut a stream after three events": { name: "cut-stream", match: { stream: true }, fault: { type: "abort_stream", after: 3 } },
+  "Reset the connection mid-stream": { name: "reset-stream", match: { stream: true }, fault: { type: "abort_stream", after: 2, mode: "reset" } },
+  "Tool arguments that are not JSON": { name: "bad-tool-json", match: {}, fault: { type: "malformed_tool_args", mode: "truncated" } },
+  "Call a tool nobody declared": { name: "ghost-tool", match: {}, fault: { type: "unknown_tool", name: "format_disk" } },
+  "Hang up before answering": { name: "hang-up", match: {}, fault: { type: "drop", mode: "reset" } },
+  "Slow stream": { name: "slow", match: { stream: true }, fault: { type: "slow_stream", ms: 250 } },
+  "Stall for two seconds": { name: "stall", match: { stream: true }, fault: { type: "stall", after: 1, ms: 2000 } },
+  "Empty answer": { name: "empty", match: {}, fault: { type: "empty" } },
+};
+
+async function ftLoad() {
+  const r = await REST("GET", "/api/faults");
+  if (!r.ok) return;
+  FT.faults = r.body.faults; FT.types = r.body.types; FT.paused = r.body.paused;
+  ftRender();
+}
+
+function ftRender() {
+  document.getElementById("ft-paused").hidden = !FT.paused;
+  document.getElementById("ft-pause").textContent = FT.paused ? "Resume all" : "Pause all";
+  const list = document.getElementById("ft-list");
+  if (!editing("#ft-list")) list.innerHTML = FT.faults.length ? `<table class="sess-table">
+    <tr><th></th><th>Rule</th><th>When</th><th>Does</th><th>Gates</th><th>Seen / fired</th><th></th></tr>
+    ${FT.faults.map((f) => {
+      const gates = [f.probability != null && f.probability < 1 ? "p " + f.probability : "", f.every ? "every " + f.every : "", f.after ? "after " + f.after : "", f.limit ? "limit " + f.limit : ""].filter(Boolean).join(", ") || "always";
+      const params = Object.entries(f.fault).filter(([k]) => k !== "type").map(([k, v]) => k + "=" + v).join(" ");
+      return `<tr>
+        <td><input type="checkbox" style="width:auto" ${f.enabled === false ? "" : "checked"} onchange="ftEnable('${esc(f.id)}', this.checked)"></td>
+        <td><b>${esc(f.name || f.id)}</b><br><span class="mono" style="color:var(--faint)">${esc(f.id)}</span></td>
+        <td class="mono">${esc(JSON.stringify(f.match || {}))}</td>
+        <td>${tagFor("err", f.fault.type)} <span class="mono">${esc(params)}</span></td>
+        <td>${esc(gates)}</td><td class="mono">${f.seen} / ${f.fired}</td>
+        <td class="act"><button class="btn ghost" onclick="ftEdit('${esc(f.id)}')">Edit</button>
+          <button class="btn ghost" onclick="ftDelete('${esc(f.id)}')">Delete</button></td></tr>`;
+    }).join("")}</table>` : '<p class="help" style="margin:0">No fault rules. Everything is answered as it was scripted.</p>';
+  const types = document.getElementById("ft-types");
+  if (!types.innerHTML) types.innerHTML = '<tr><th>Type</th><th>Parameters</th></tr>' + Object.entries(FT.types).map(([t, p]) =>
+    `<tr><td class="mono"><b>${esc(t)}</b></td><td class="mono">${esc(Object.entries(p).map(([k, v]) => k + ": " + v).join(" · ") || "none")}</td></tr>`).join("");
+}
+
+function ftNew(preset) {
+  FT.editing = "new";
+  ftForm(preset ? FT_PRESETS[preset] : FT_PRESETS["Cut a stream after three events"], true);
+}
+function ftEdit(id) { FT.editing = id; ftForm(FT.faults.find((f) => f.id === id), false); }
+
+function ftForm(f, isNew) {
+  const el = document.getElementById("ft-editor");
+  el.hidden = false;
+  const params = { ...f.fault }; delete params.type;
+  el.innerHTML = `
+    <h2>${isNew ? "New fault rule" : "Edit · " + esc(f.id)}</h2>
+    ${isNew ? `<label for="ft-preset" style="margin-top:0">Start from</label>
+      <select id="ft-preset" onchange="ftNew(this.value)"><option value="">— a preset —</option>${Object.keys(FT_PRESETS).map((n) => `<option>${esc(n)}</option>`).join("")}</select>` : ""}
+    <div class="row">
+      <div><label for="ft-name">Name</label><input id="ft-name" type="text" value="${esc(f.name || "")}"></div>
+      <div><label for="ft-id">Id <span class="hint">· optional</span></label><input id="ft-id" class="mono" type="text" value="${isNew ? "" : esc(f.id)}" ${isNew ? "" : "readonly"}></div>
+      <div style="flex:0 0 190px"><label for="ft-type">Does</label>
+        <select id="ft-type">${Object.keys(FT.types).map((t) => `<option ${t === f.fault.type ? "selected" : ""}>${esc(t)}</option>`).join("")}</select></div>
+    </div>
+    <div class="row">
+      <div><label for="ft-match">When <span class="hint">· a condition; {} is every request</span></label>
+        <textarea id="ft-match" class="mono" style="min-height:90px" spellcheck="false">${esc(pretty(f.match || {}))}</textarea></div>
+      <div><label for="ft-params">Its parameters <span class="hint">· JSON, without the type</span></label>
+        <textarea id="ft-params" class="mono" style="min-height:90px" spellcheck="false">${esc(pretty(params))}</textarea></div>
+    </div>
+    <div class="row">
+      <div><label for="ft-prob">Probability</label><input id="ft-prob" type="number" step="0.05" min="0" max="1" class="mono" value="${f.probability ?? 1}"></div>
+      <div><label for="ft-every">Every Nth</label><input id="ft-every" type="number" min="0" class="mono" value="${f.every ?? 0}"></div>
+      <div><label for="ft-after">After N</label><input id="ft-after" type="number" min="0" class="mono" value="${f.after ?? 0}"></div>
+      <div><label for="ft-limit">Limit</label><input id="ft-limit" type="number" min="0" class="mono" value="${f.limit ?? 0}"></div>
+      <div><label for="ft-seed">Seed</label><input id="ft-seed" class="mono" type="text" value="${esc(f.seed ?? "")}"></div>
+    </div>
+    <div style="margin-top:14px; display:flex; gap:9px; align-items:center">
+      <button class="btn" onclick="ftSave(${isNew})">Save</button>
+      <button class="btn ghost" onclick="ftCancel()">Cancel</button>
+      <span id="ft-msg" style="font-size:12px"></span>
+    </div>`;
+}
+function ftCancel() { FT.editing = null; document.getElementById("ft-editor").hidden = true; }
+
+async function ftSave(isNew) {
+  let match, params;
+  try { match = readJSON("ft-match", "When") || {}; params = readJSON("ft-params", "Its parameters") || {}; } catch (e) { return note("ft-msg", e.message, true); }
+  const num = (id) => Number(document.getElementById(id).value || 0);
+  const rule = { name: document.getElementById("ft-name").value.trim(), match, fault: { type: document.getElementById("ft-type").value, ...params },
+    probability: num("ft-prob") || (document.getElementById("ft-prob").value === "0" ? 0 : 1), every: num("ft-every"), after: num("ft-after"), limit: num("ft-limit") };
+  const seed = document.getElementById("ft-seed").value.trim();
+  if (seed) rule.seed = /^-?\d+$/.test(seed) ? Number(seed) : seed;
+  const id = document.getElementById("ft-id").value.trim();
+  if (id) rule.id = id;
+  const existing = FT.faults.find((f) => f.id === id);
+  if (!isNew && existing) rule.enabled = existing.enabled !== false;
+  const r = isNew ? await REST("POST", "/api/faults", rule) : await REST("PUT", "/api/faults/" + encodeURIComponent(id), rule);
+  if (!r.ok) return note("ft-msg", said(r.body), true);
+  ftCancel(); ftLoad();
+}
+async function ftEnable(id, on) {
+  const f = FT.faults.find((x) => x.id === id);
+  const { seen, fired, ...rule } = f;
+  await REST("PUT", "/api/faults/" + encodeURIComponent(id), { ...rule, enabled: on });
+  ftLoad();
+}
+async function ftDelete(id) {
+  if (!confirm("Delete the fault rule " + id + "?")) return;
+  await REST("DELETE", "/api/faults/" + encodeURIComponent(id)); ftLoad();
+}
+async function ftPause() { await REST("POST", "/api/faults/" + (FT.paused ? "resume" : "pause")); ftLoad(); }
+async function ftReset() { await REST("POST", "/api/faults/reset"); ftLoad(); }
+
+PAGES.behaviors = { enter: bhLoad };
+PAGES.faults = { enter: ftLoad, poll: ftLoad };
+
+
+// ── Evidence ──────────────────────────────────────────────────────────────
+let EV = { tab: "requests", picked: null, last: "" };
+
+function evTab(t) {
+  EV.tab = t;
+  for (const name of ["requests", "assertions", "settings"]) {
+    document.getElementById("ev-" + name).hidden = name !== t;
+    document.getElementById("ev-tab-" + name).setAttribute("aria-pressed", name === t);
+  }
+  if (t === "requests") evRefresh(true);
+  if (t === "assertions") asLoad();
+  if (t === "settings") stLoad();
+}
+const evFilters = () => {
+  const q = new URLSearchParams();
+  for (const [id, key] of [["ev-f-run", "run"], ["ev-f-agent", "agent"], ["ev-f-q", "q"]]) {
+    const v = document.getElementById(id).value.trim();
+    if (v) q.set(key, v);
+  }
+  return q;
+};
+function evEnter() { evTab(EV.tab); }
+function evPoll() { if (EV.tab === "requests") evRefresh(false); }
+
+async function evRefresh(force) {
+  const q = evFilters(); q.set("limit", "200");
+  const r = await REST("GET", "/api/captures?" + q);
+  if (!r.ok) return;
+  const sig = r.body.captures.map((c) => c.n).join(",") + "|" + r.body.enabled;
+  if (!force && sig === EV.last) return;
+  EV.last = sig;
+  const list = document.getElementById("ev-list");
+  if (!r.body.enabled) { list.innerHTML = '<div class="empty"><b>Capture is off</b>Turn it on under Settings.</div>'; return; }
+  list.innerHTML = r.body.captures.length ? `<table class="sess-table" style="margin:0"><tr><th style="padding-left:14px">#</th><th>Who</th><th>Asked</th><th>Answered</th></tr>
+    ${r.body.captures.map((c) => `<tr style="cursor:pointer; ${c.n === EV.picked ? "background:var(--subtle)" : ""}" onclick="evOpen(${c.n})">
+      <td class="mono" style="padding-left:14px">${c.n}</td>
+      <td class="mono">${esc(c.run || "—")}${c.agent ? "<br>" + esc(c.agent) : ""}</td>
+      <td class="ask">${esc(c.ask || "(no text)")}<br><span class="mono" style="color:var(--faint)">${esc(c.model)} · turn ${c.turn}</span></td>
+      <td>${routeTag(c.route)} <span class="mono" style="${c.status >= 400 ? "color:var(--primary)" : ""}">${c.status ?? ""}</span>
+        ${c.fault ? tagFor("err", c.fault) : ""}${c.calls.length ? "<br>" + tagFor("", c.calls.join(", ")) : ""}</td></tr>`).join("")}</table>`
+    : `<div class="empty"><b>Nothing captured yet</b>Send a request, or point an agent at LLMSim. <span class="mono">New run</span> gives it a base URL.</div>`;
+}
+
+async function evOpen(n) {
+  EV.picked = n;
+  const r = await REST("GET", "/api/captures/" + n);
+  const el = document.getElementById("ev-detail");
+  if (!r.ok) { el.innerHTML = `<div class="card"><p class="help" style="margin:0">${esc(said(r.body))}</p></div>`; return; }
+  const c = r.body.capture, v = r.body.view, m = c.meta, res = c.response;
+  const ident = Object.entries(m.identity || {}).map(([k, val]) => tagFor("plan", k + ": " + val)).join(" ") || '<span style="color:var(--faint)">no identity</span>';
+  const cred = m.credential || {};
+  const messages = (c.request.messages || c.request.input || []);
+  el.innerHTML = `
+    <div class="card">
+      <h2>Request ${c.n} · ${when_(c.at)}</h2>
+      <div style="margin-bottom:8px">${ident}</div>
+      <div class="mono" style="font-size:12px; color:var(--muted)">${esc(m.provider)} ${esc(m.path)} · ${esc(m.model)}${m.stream ? " · stream" : ""} · ${c.requestBytes} bytes${c.truncated ? " " + tagFor("err", "reduced") : ""}</div>
+      <div style="margin-top:8px">Credential: ${cred.kind === "none" ? "none" : `${tagFor(cred.known ? "plan" : "err", cred.label || "unregistered")} <span class="mono">${esc(cred.fingerprint)}</span>`}</div>
+      ${v.system ? `<label>System prompt</label><pre class="json">${esc(v.system)}</pre>` : ""}
+      <label>Tools declared</label><div>${v.tools.length ? v.tools.map((t) => tagFor("", t)).join(" ") : '<span style="color:var(--faint)">none</span>'}</div>
+      <label>Conversation <span class="hint">· ${v.messageCount} message(s)</span></label>
+      ${(Array.isArray(messages) ? messages : []).slice(-12).map((x) => `<details style="margin:4px 0" ${x === messages[messages.length - 1] ? "open" : ""}>
+        <summary style="font-size:12px"><b>${esc(x.role || x.type || "")}</b> ${esc(String(typeof x.content === "string" ? x.content : JSON.stringify(x.content ?? x.output ?? x)).slice(0, 80))}</summary>
+        <pre class="json">${esc(typeof x.content === "string" ? x.content : JSON.stringify(x.content ?? x, null, 2))}</pre></details>`).join("")}
+    </div>
+    <div class="card">
+      <h2>Answer · ${routeTag(m.route)} ${esc(m.rule || "")} · ${res.status ?? ""} · ${res.ms ?? ""} ms</h2>
+      ${res.fault ? `<div class="note warn" style="margin:0 0 10px">Fault injected: <b>${esc(res.fault)}</b></div>` : ""}
+      ${res.error ? `<div class="note warn" style="margin:0 0 10px">${esc(res.error)}</div>` : ""}
+      ${res.text ? `<pre class="json">${esc(res.text)}</pre>` : '<p class="help" style="margin:0">No text.</p>'}
+      ${(res.toolCalls || []).map((t) => `<div class="call"><b>${esc(t.name)}</b> ${esc(JSON.stringify(t.input))}</div>`).join("")}
+      ${res.usage && Object.keys(res.usage).length ? `<div class="mono" style="margin-top:8px; color:var(--muted)">${res.usage.input} in · ${res.usage.output} out · ${res.usage.cacheRead || 0} cached</div>` : ""}
+    </div>`;
+  evRefresh(true);
+}
+
+async function evNewRun() {
+  const r = await REST("POST", "/api/runs", { agents: (document.getElementById("ev-f-agent").value.trim() ? [document.getElementById("ev-f-agent").value.trim()] : []) });
+  const box = document.getElementById("ev-newrun");
+  box.hidden = false;
+  const b = r.body, urls = b.baseUrls;
+  box.innerHTML = `<div class="note ok" style="margin:0">Run <b class="mono">${esc(b.run)}</b> — give an agent one of these as its base URL, and everything it sends is captured under this run.</div>
+    <table class="sess-table" style="margin-top:8px">${Object.entries(urls).map(([k, u]) => `<tr><td>${esc(k)}</td><td class="mono">${esc(u)}</td>
+      <td class="act"><button class="btn ghost" onclick="copyText('${esc(u)}')">Copy</button></td></tr>`).join("")}</table>
+    <p class="help" style="margin:8px 0 0">Add <span class="mono">/agent/&lt;name&gt;</span> after <span class="mono">/run/${esc(b.run)}</span> to tell agents apart.</p>`;
+  document.getElementById("ev-f-run").value = b.run;
+}
+function evExport() { location.href = api("/api/captures/export?" + evFilters()); }
+async function evClear() {
+  const q = evFilters();
+  if (!confirm(q.toString() ? "Clear the requests matching this filter?" : "Clear every captured request?")) return;
+  await REST("DELETE", "/api/captures?" + q);
+  document.getElementById("ev-detail").innerHTML = '<div class="card"><p class="help" style="margin:0">Cleared.</p></div>';
+  evRefresh(true);
+}
+
+// -- assertions
+let AS = { sets: [] };
+const AS_EXAMPLE = [
+  { id: "no-card-numbers", name: "No card number reaches the model", none: { field: "allText", op: "regex", value: "\\b\\d{4}-\\d{4}-\\d{4}-\\d{4}\\b" } },
+  { id: "safety-preamble", name: "Every request carries the safety preamble", each: { system: "SAFETY" } },
+  { id: "worker-writes-once", name: "The worker writes at most once", scope: { identity: { agent: "worker" } }, count: { max: 1 },
+    where: { field: "response.toolNames", op: "includes", value: "Write" } },
+  { id: "plan-then-work", name: "The planner asked before the worker", sequence: [{ identity: { agent: "planner" } }, { identity: { agent: "worker" } }] },
+];
+
+async function asLoad() {
+  const [sets, cat] = await Promise.all([REST("GET", "/api/assertion-sets"), REST("GET", "/api/assertions/catalog")]);
+  if (sets.ok) {
+    AS.sets = sets.body.sets;
+    const sel = document.getElementById("as-set"), keep = sel.value;
+    sel.innerHTML = '<option value="">— none saved —</option>'.replace("none saved", AS.sets.length ? "your own (below)" : "none saved yet") +
+      AS.sets.map((s) => `<option value="${esc(s.id)}">${esc(s.name || s.id)}</option>`).join("");
+    if (keep) sel.value = keep;
+  }
+  if (cat.ok) document.getElementById("as-catalog").innerHTML = `
+    <p class="help">Exactly one of <span class="mono">${cat.body.kinds.join(" · ")}</span> per assertion. <span class="mono">scope</span> says which requests it is about.</p>
+    <table class="sess-table"><tr><th>Field</th><th>Is</th></tr>${Object.entries(cat.body.fields).map(([k, d]) => `<tr><td class="mono">${esc(k)}</td><td>${esc(d)}</td></tr>`).join("")}</table>
+    <p class="help" style="margin-top:12px">Operators: <span class="mono">${cat.body.operators.join(" · ")}</span>. Conditions: <span class="mono">${cat.body.conditions.join(" · ")}</span>.</p>`;
+}
+function asPick() {
+  const id = document.getElementById("as-set").value, set = AS.sets.find((s) => s.id === id);
+  if (!set) return;
+  document.getElementById("as-json").value = pretty(set.assertions);
+  document.getElementById("as-id").value = set.id;
+}
+function asTemplate() { document.getElementById("as-json").value = pretty(AS_EXAMPLE); }
+
+async function asEvaluate() {
+  let assertions;
+  try { assertions = readJSON("as-json", "The assertions"); } catch (e) { return note("as-msg", e.message, true); }
+  if (!assertions) return note("as-msg", "Write some assertions, or pick a saved set.", true);
+  if (!Array.isArray(assertions)) assertions = assertions.assertions || [assertions];
+  const body = { assertions }, run = document.getElementById("as-run").value.trim();
+  if (run) body.run = run;
+  const r = await REST("POST", "/api/assertions/evaluate", body);
+  if (!r.ok) return note("as-msg", said(r.body), true);
+  asReport(r.body);
+}
+const AS_TAG = { pass: "plan", fail: "err", "no-data": "", error: "err" };
+function asReport(rep) {
+  const card = document.getElementById("as-report");
+  card.hidden = false;
+  const s = rep.summary;
+  card.innerHTML = `
+    <h2>Verdict</h2>
+    <div style="font-size:15px; margin-bottom:12px"><span class="tag ${AS_TAG[rep.verdict]}" style="font-size:12px">${esc(rep.verdict)}</span>
+      <span style="color:var(--muted); margin-left:8px">${s.pass} passed · ${s.fail} failed · ${s["no-data"]} no data · ${s.error} errors — over ${rep.capturesConsidered} captured request(s)</span></div>
+    ${rep.results.map((r) => `<div style="border-top:1px solid var(--border-soft); padding:10px 0">
+      <div><span class="tag ${AS_TAG[r.status]}">${esc(r.status)}</span> <b>${esc(r.name)}</b> <span class="mono" style="color:var(--faint)">${esc(r.id)}</span></div>
+      <div style="color:var(--muted); font-size:12.5px; margin-top:4px">${esc(r.detail)}</div>
+      ${(r.warnings || []).map((w) => `<div class="note warn" style="margin-top:6px">${esc(w)}</div>`).join("")}
+      ${r.evidence.length ? `<table class="sess-table" style="margin-top:8px"><tr><th>Request</th><th>Who</th><th>Why</th></tr>${r.evidence.map((e) => `<tr>
+        <td class="mono"><a href="#" onclick="evTab('requests'); evOpen(${e.capture}); return false">#${e.capture}</a></td>
+        <td class="mono">${esc(e.run || "—")}${e.agent ? " / " + esc(e.agent) : ""}</td>
+        <td>${esc(e.why)}${e.excerpt ? `<br><span class="mono" style="color:var(--muted)">${esc(e.excerpt)}</span>` : ""}</td></tr>`).join("")}</table>` : ""}</div>`).join("")}`;
+}
+async function asSave() {
+  let assertions;
+  try { assertions = readJSON("as-json", "The assertions"); } catch (e) { return note("as-msg", e.message, true); }
+  const id = document.getElementById("as-id").value.trim();
+  if (!id || !Array.isArray(assertions)) return note("as-msg", "Give the set an id, and write its assertions as a list.", true);
+  const exists = AS.sets.find((s) => s.id === id);
+  const body = { id, name: exists ? exists.name || id : id, assertions };
+  const r = exists ? await REST("PUT", "/api/assertion-sets/" + encodeURIComponent(id), body) : await REST("POST", "/api/assertion-sets", body);
+  note("as-msg", r.ok ? "Saved as " + id + "." : said(r.body), !r.ok);
+  if (r.ok) asLoad();
+}
+async function asDelete() {
+  const id = document.getElementById("as-id").value.trim();
+  if (!id || !AS.sets.find((s) => s.id === id)) return note("as-msg", "No saved set with that id.", true);
+  if (!confirm("Delete the set " + id + "?")) return;
+  await REST("DELETE", "/api/assertion-sets/" + encodeURIComponent(id));
+  asLoad();
+}
+
+// -- settings
+let ST = null;
+async function stLoad() {
+  const r = await REST("GET", "/api/settings");
+  if (!r.ok) return;
+  ST = r.body;
+  const c = ST.capture, el = (id) => document.getElementById(id);
+  el("st-cap-enabled").checked = c.enabled; el("st-cap-max").value = c.max; el("st-cap-bytes").value = c.maxBytes;
+  el("st-cap-headers").value = c.redact.headers.join(", ");
+  el("st-cap-patterns").value = pretty(c.redact.patterns);
+  el("st-identity").value = pretty(ST.identity.rules);
+  stRenderAuth();
+}
+function stRenderAuth() {
+  for (const m of ["published", "registered", "any"]) document.getElementById("st-auth-" + m).setAttribute("aria-pressed", ST.auth.mode === m);
+  document.getElementById("st-creds").innerHTML = ST.auth.credentials.length ? `<table class="sess-table"><tr><th>Label</th><th>Fingerprint</th><th></th></tr>
+    ${ST.auth.credentials.map((c) => `<tr><td class="mono">${esc(c.label)}</td><td class="mono">${esc(c.fingerprint)}</td>
+      <td class="act"><button class="btn ghost" onclick="stForget('${esc(c.label)}')">Forget</button></td></tr>`).join("")}</table>`
+    : '<p class="help" style="margin:0">No registered credentials.</p>';
+}
+async function stAuth(mode) {
+  const r = await REST("PUT", "/api/settings", { auth: { mode } });
+  if (r.ok) { ST = r.body; stRenderAuth(); note("st-msg", "Credential mode: " + mode + "."); } else note("st-msg", said(r.body), true);
+}
+async function stRegister() {
+  const label = document.getElementById("st-cred-label").value.trim(), key = document.getElementById("st-cred-key").value;
+  const r = await REST("POST", "/api/settings/credentials", { label, key });
+  if (!r.ok) return note("st-msg", said(r.body), true);
+  document.getElementById("st-cred-key").value = "";
+  ST = r.body; stRenderAuth(); note("st-msg", r.body.message);
+}
+async function stForget(label) {
+  const r = await REST("DELETE", "/api/settings/credentials/" + encodeURIComponent(label));
+  if (r.ok) { ST = r.body; stRenderAuth(); }
+}
+async function stSave() {
+  let patterns, rules;
+  try { patterns = readJSON("st-cap-patterns", "Redactions") || []; rules = readJSON("st-identity", "Identity rules") || []; } catch (e) { return note("st-msg", e.message, true); }
+  const el = (id) => document.getElementById(id);
+  const r = await REST("PUT", "/api/settings", {
+    capture: { enabled: el("st-cap-enabled").checked, max: Number(el("st-cap-max").value), maxBytes: Number(el("st-cap-bytes").value),
+      redact: { headers: el("st-cap-headers").value.split(",").map((h) => h.trim()).filter(Boolean), patterns } },
+    identity: { rules } });
+  note("st-msg", r.ok ? "Saved." : said(r.body), !r.ok);
+  if (r.ok) ST = r.body;
+}
+
+PAGES.evidence = { enter: evEnter, poll: evPoll };
+
+
 // ── Sessions ──────────────────────────────────────────────────────────────
 const when = (t) => (t ? new Date(t * 1000).toLocaleString([], { hour12: false, dateStyle: "short", timeStyle: "short" }) : "—");
 const sessMsg = (text, bad) => {
@@ -790,6 +1572,12 @@ function renderSessions() {
   }
   el("sess-live").innerHTML = live;
 
+  const runs = Object.entries(st.runs || {});
+  el("sess-runs").innerHTML = runs.length ? `<table class="sess-table"><tr><th>Run</th><th>Doing</th><th>Cassette</th><th>Exchanges</th><th>Answered / missed</th><th></th></tr>
+    ${runs.map(([run, r]) => `<tr><td class="mono">${esc(run)}</td><td>${tagFor(r.mode === "record" ? "rec" : "replay", r.mode)}</td>
+      <td class="mono">${esc(r.name)}</td><td class="mono">${r.entries}</td><td class="mono">${r.hits} / ${r.misses}</td>
+      <td class="act"><button class="btn ghost" onclick="sessStopRun('${esc(run)}')">Stop</button></td></tr>`).join("")}</table>` : "";
+  el("n-sessions").textContent = st.mode === "record" ? "rec" : st.mode === "replay" ? "replay" : runs.length ? runs.length + " run" + (runs.length === 1 ? "" : "s") : "";
   const busy = st.mode !== "off";
   el("sess-list").innerHTML = st.cassettes.length ? `<table class="sess-table"><tr><th>Name</th><th>Exchanges</th><th>Models</th><th>Recorded</th><th></th></tr>
     ${st.cassettes.map((c) => `<tr><td class="mono">${esc(c.name)}${c.broken ? ' <span class="tag err">unreadable</span>' : ""}</td><td class="mono">${c.entries}</td>
@@ -807,15 +1595,31 @@ function renderSessions() {
 async function sessCall(body) {
   const r = await fetch(api("/api/ui/session"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
   const out = await r.json().catch(() => ({}));
-  if (out.status) SESS = out.status;
+  // A call scoped to a run answers with THAT run's status, which is not what this page
+  // shows. Anything else answers with the default session's, which is.
+  if (out.status && !body.run) SESS = out.status;
   sessMsg(out.message || (r.ok ? "" : "could not do that"), !out.ok);
+  if (body.run) await load();
   renderSessions(); renderChrome(); renderChat();
   return out;
 }
-const sessRecord = () => sessCall({ action: "record", name: document.getElementById("sess-name").value.trim() })
-  .then((o) => { if (o.ok) document.getElementById("sess-name").value = ""; });
-const sessReplay = (name) => sessCall({ action: "replay", name });
+// What the start form asks for beyond a name: a run to scope to, and masks.
+function sessScope() {
+  const out = {}, run = document.getElementById("sess-run").value.trim(), raw = document.getElementById("sess-masks").value.trim();
+  if (run) out.run = run;
+  if (raw) {
+    try { out.masks = JSON.parse(raw); } catch { sessMsg("Masks must be a JSON list of patterns.", true); return null; }
+  }
+  return out;
+}
+const sessRecord = () => {
+  const scope = sessScope(); if (!scope) return;
+  return sessCall({ action: "record", name: document.getElementById("sess-name").value.trim(), ...scope })
+    .then((o) => { if (o.ok) document.getElementById("sess-name").value = ""; });
+};
+const sessReplay = (name) => { const scope = sessScope(); if (scope) return sessCall({ action: "replay", name, ...scope }); };
 const sessStop = () => sessCall({ action: "stop" });
+const sessStopRun = (run) => sessCall({ action: "stop", run });
 const sessDelete = (name) => { if (confirm("Delete the recording " + name + "? This cannot be undone.")) sessCall({ action: "delete", name }); };
 const sessSettings = () => sessCall({ action: "settings", onMiss: document.getElementById("sess-miss").value, strict: document.getElementById("sess-strict").checked });
 async function sessImport(input) {

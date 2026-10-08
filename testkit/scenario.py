@@ -19,7 +19,7 @@ middle of a run. It names its credentials, never holds them.
 
 from . import checks, core, drivers
 
-TOP = {"id", "description", "tags", "agent", "agents", "model", "setup", "teardown", "turns", "user", "stop", "checks", "timeoutS", "notes", "ordering"}
+TOP = {"id", "description", "tags", "agent", "agents", "model", "setup", "teardown", "turns", "user", "stop", "checks", "timeoutS", "notes", "ordering", "repeat"}
 SETUP_TYPES = {}                  # type -> (fn(action, run_ctx), validate(action) -> [problems]); phases 2 and 3 register here
 
 
@@ -135,6 +135,9 @@ def validate(scenario):
         any(isinstance(t, dict) and t.get("expect") for a in (agents or []) if isinstance(a, dict) for t in a.get("turns") or [])
     if not has_check:
         problems.append("a scenario with no checks and no expectations passes nothing: add checks, or expect on a turn")
+    if "repeat" in scenario:
+        from . import datasets
+        problems += datasets.validate_repeat(scenario["repeat"])
     t = scenario.get("timeoutS")
     if t is not None and not (isinstance(t, (int, float)) and 1 <= t <= 3600):
         problems.append("timeoutS is from 1 to 3600")

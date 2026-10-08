@@ -49,6 +49,8 @@ class FakeAgent:
                         out = {"output": {"text": agent.answer_with_tools(body, self.path)}}
                     except Exception as exc:  # noqa: BLE001
                         return self._send(502, {"error": "the agent failed: %s" % exc})
+                elif self.path == "/chat-v2":
+                    out = {"output": {"text": "I cannot help with that."}}        # a version of the agent that regressed: it does nothing
                 elif self.path == "/echo":
                     out = {"output": {"text": "echo: " + body.get("input", "")}}
                 elif self.path == "/boom":

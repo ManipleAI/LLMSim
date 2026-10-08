@@ -280,7 +280,7 @@ def set_run_faults(run, rule_list):
         match = dict(rule.get("match") or {})
         ident = dict(match.get("identity") or {}) if isinstance(match.get("identity"), dict) else {}
         ident["run"] = run
-        clean.append(dict(rule, match=dict(match, identity=ident)))
+        clean.append(dict(rule, match=dict(match, identity=ident), seedKey="f%d" % i))
     if problems:
         return problems
     with _LOCK:
@@ -336,7 +336,8 @@ def _state_of(rule):
     st = _STATE.get(rule["id"])
     if st is None:
         seed = rule.get("seed")
-        seed = ("%s:%s" % (_SEED["value"], rule["id"])) if _SEED["value"] is not None and seed in (None, "") else (rule["id"] if seed in (None, "") else seed)
+        key = rule.get("seedKey") or rule["id"]           # a scenario's own rules have run-specific ids, and the dice must not
+        seed = ("%s:%s" % (_SEED["value"], key)) if _SEED["value"] is not None and seed in (None, "") else (key if seed in (None, "") else seed)
         st = _STATE[rule["id"]] = {"seen": 0, "fired": 0, "rng": random.Random(seed)}
     return st
 

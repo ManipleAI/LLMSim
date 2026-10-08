@@ -6,7 +6,7 @@ whatever a person can do on a page a harness can do over HTTP.
 
 from . import core, rest_area, run_route
 from . import checks, credentials, drivers, fakes, runner, scenario as scn, store, timeline
-from . import a2a_peer, http_mock, mcp_mock, multi_checks, ordering, otlp, setup_actions, state_checks  # noqa: F401 — registering routes, checks and setup actions
+from . import a2a_peer, datasets, experiments, http_mock, mcp_mock, multi_checks, ordering, otlp, setup_actions, state_checks  # noqa: F401 — registering routes, checks and setup actions
 from .core import ok, fail
 
 

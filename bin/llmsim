@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+"""llmsim — run agent tests against a LLMSim server, from a shell or a CI job.
+
+    llmsim run scenario.json [--junit out.xml] [--tier simulated|real] [--run ID] [--json]
+    llmsim run --saved ID
+    llmsim validate scenario.json
+    llmsim results [--scenario ID]
+    llmsim timeline RUN
+    llmsim experiment run --dataset NAME[@N|:tag] [--repeat N [--required K]] [--tier T] [--seed S]
+                          [--split S] [--agent-url URL] [--gate [--baseline EXP]] [--set-baseline] [--junit F]
+    llmsim experiment compare BASELINE CANDIDATE
+    llmsim experiment baseline EXPERIMENT
+
+The server is LLMSIM_URL (default http://localhost:8099) or --server. Exit status:
+0 every check passed · 1 a check failed, errored or had no data · 2 could not run.
+Standard library only.
+"""
+
+import argparse
+import json
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from testkit.client import Client, LLMSimError  # noqa: E402
+
+
+def print_result(result):
+    print("%s  run %s  (%s tier, %.1fs)" % (result["verdict"].upper(), result["run"], result["tier"], result.get("durationS") or 0))
+    if result.get("error"):
+        print("  error: %s" % result["error"])
+    for c in result.get("checks") or []:
+        print("  %-8s %s: %s" % (c["status"], c["name"], c["detail"]))
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="llmsim", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--server", default=os.environ.get("LLMSIM_URL", "http://localhost:8099"))
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    run = sub.add_parser("run")
+    run.add_argument("file", nargs="?")
+    run.add_argument("--saved")
+    run.add_argument("--tier", choices=("simulated", "real"))
+    run.add_argument("--run")
+    run.add_argument("--junit")
+    run.add_argument("--json", action="store_true")
+    val = sub.add_parser("validate")
+    val.add_argument("file")
+    res = sub.add_parser("results")
+    res.add_argument("--scenario")
+    tl = sub.add_parser("timeline")
+    tl.add_argument("run")
+    ex = sub.add_parser("experiment")
+    ex.add_argument("action", choices=("run", "compare", "baseline"))
+    ex.add_argument("rest", nargs="*")
+    ex.add_argument("--dataset")
+    ex.add_argument("--label")
+    ex.add_argument("--repeat", type=int)
+    ex.add_argument("--required", type=int)
+    ex.add_argument("--tier", choices=("simulated", "real"))
+    ex.add_argument("--seed")
+    ex.add_argument("--split")
+    ex.add_argument("--agent-url")
+    ex.add_argument("--gate", action="store_true")
+    ex.add_argument("--baseline")
+    ex.add_argument("--min-pass-rate", type=float)
+    ex.add_argument("--strict", action="store_true")
+    ex.add_argument("--set-baseline", action="store_true")
+    ex.add_argument("--junit")
+    ex.add_argument("--json", action="store_true")
+    args = ap.parse_args()
+    client = Client(args.server)
+    try:
+        sys.exit(dispatch(args, client))
+    except LLMSimError as exc:
+        print("llmsim: %s" % exc, file=sys.stderr)
+        sys.exit(2)
+
+
+def dispatch(args, client):
+    if args.cmd == "validate":
+        status, body = client.call("POST", "/api/scenarios/validate", {"scenario": json.load(open(args.file))})
+        for p in body.get("problems") or []:
+            print("  - " + p)
+        print("valid" if body.get("valid") else "not valid")
+        return 0 if body.get("valid") else 1
+    if args.cmd == "results":
+        status, body = client.call("GET", "/api/results" + ("?scenario=" + args.scenario if args.scenario else ""))
+        for r in body.get("results", []):
+            print("%-8s %-28s %s" % (r["verdict"], r["run"], r["scenario"]))
+        return 0
+    if args.cmd == "timeline":
+        status, body = client.call("GET", "/api/runs/%s/timeline" % args.run)
+        if status != 200:
+            raise LLMSimError(body.get("message", "no such run"))
+        for e in body["events"]:
+            print("%7.2fs  %-13s %-12s %s" % (e["t"], e["kind"], e["agent"], e["label"]))
+        return 0
+    if args.cmd == "experiment":
+        return experiment(args, client)
+    options = {k: v for k, v in (("tier", args.tier), ("run", args.run)) if v}
+    if args.saved:
+        result = client.run(args.saved, **options)
+    elif args.file:
+        result = client.run(json.load(open(args.file)), **options)
+    else:
+        raise LLMSimError("give a scenario file, or --saved ID")
+    if args.junit:
+        with open(args.junit, "w") as fh:
+            fh.write(client.junit(result["run"]))
+    print(json.dumps(result, indent=1) if args.json else "", end="" if args.json else "")
+    if not args.json:
+        print_result(result)
+    return 0 if result["verdict"] == "pass" else 1
+
+
+def experiment(args, client):
+    if args.action == "baseline":
+        out = client.set_baseline(args.rest[0])
+        print("%s is now the baseline for %s" % (out["baseline"], out["dataset"]))
+        return 0
+    if args.action == "compare":
+        out = client.compare(args.rest[0], args.rest[1], args.strict)
+        print(out["report"])
+        return 0 if out["comparison"]["verdict"] == "pass" else 1
+    if not args.dataset:
+        raise LLMSimError("give --dataset")
+    spec = {k: v for k, v in (("dataset", args.dataset), ("label", args.label), ("tier", args.tier), ("seed", args.seed), ("split", args.split)) if v}
+    if args.repeat:
+        spec["repeat"] = {"n": args.repeat, "required": args.required or args.repeat}
+    if args.agent_url:
+        spec["agent"] = {"url": args.agent_url}
+    out = client.experiment(**spec)
+    exp = out["experiment"]
+    print(out["report"])
+    verdict = exp["verdict"]
+    junit = out["junit"]
+    if args.gate:
+        gate = client.gate(exp["id"], baseline=args.baseline, minPassRate=args.min_pass_rate, strict=args.strict)
+        print(gate["report"])
+        verdict, junit = gate["gate"]["verdict"], gate["junit"]
+    if args.set_baseline and verdict == "pass":
+        client.set_baseline(exp["id"])
+        print("%s is now the baseline for %s" % (exp["id"], exp["dataset"]))
+    if args.junit:
+        with open(args.junit, "w") as fh:
+            fh.write(junit)
+    return 0 if verdict == "pass" else 1
+
+
+if __name__ == "__main__":
+    main()

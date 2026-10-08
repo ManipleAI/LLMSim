@@ -727,6 +727,16 @@ python3 tests/test_behaviors.py        # 44 cases: identity, captures, rules, fa
 python3 tests/test_chatgpt_plan.py     # 38 cases: the ChatGPT route, recording, replay
 ```
 
+## Testing a system of agents
+
+Everything above puts LLMSim on one side of an agent: the model. The **test kit** puts it on the rest — the tools
+the agent calls (a mock MCP server, a mock REST backend with state), the agents it hands work to (an A2A stub or
+a proxy), and the person driving it — and judges the whole run: the answer, the path, the records left behind,
+what passed between agents, what it cost. Scenarios, datasets with versions, repetition, experiments compared
+with a baseline, a CI gate, judges calibrated against people. Standard library only; one **Agent tests** page in the
+console and the same API for a script. How it works, and what was not verified, is in
+[`docs/agent-testing.md`](docs/agent-testing.md).
+
 ## Testing the unhappy paths
 
 The rules shipped in `responses.json` include ones no live API key will give

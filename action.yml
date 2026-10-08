@@ -1,0 +1,71 @@
+name: LLMSim agent tests
+description: Run a dataset of agent scenarios against a LLMSim server and fail the build when an agent got worse than its baseline.
+branding:
+  icon: check-circle
+  color: blue
+inputs:
+  server-url:
+    description: The LLMSim server to run against.
+    required: true
+  dataset:
+    description: The dataset to run: name, name@version or name:tag.
+    required: true
+  baseline:
+    description: An experiment id to compare with. Default is the dataset's current baseline.
+    required: false
+  repeat:
+    description: Run each case this many times.
+    required: false
+  required:
+    description: How many of those runs must pass (default all of them).
+    required: false
+  tier:
+    description: simulated (a scripted or recorded model, free and exact) or real.
+    required: false
+    default: simulated
+  seed:
+    description: A seed, so a run with random faults repeats exactly.
+    required: false
+  split:
+    description: Run only the cases in this split.
+    required: false
+  agent-url:
+    description: The URL of the new version of the agent, replacing the one in each scenario.
+    required: false
+  min-pass-rate:
+    description: Fail when fewer than this share of cases pass, whatever the baseline says.
+    required: false
+  strict:
+    description: Also fail when a case that passed is now flaky.
+    required: false
+    default: "false"
+  comment:
+    description: Comment on the pull request with the result.
+    required: false
+    default: "true"
+outputs:
+  verdict:
+    description: pass or fail.
+  experiment:
+    description: The experiment's id, to look at in LLMSim.
+  regressions:
+    description: How many cases regressed.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: python3 "$GITHUB_ACTION_PATH/bin/llmsim-ci"
+      env:
+        INPUT_SERVER-URL: ${{ inputs.server-url }}
+        INPUT_DATASET: ${{ inputs.dataset }}
+        INPUT_BASELINE: ${{ inputs.baseline }}
+        INPUT_REPEAT: ${{ inputs.repeat }}
+        INPUT_REQUIRED: ${{ inputs.required }}
+        INPUT_TIER: ${{ inputs.tier }}
+        INPUT_SEED: ${{ inputs.seed }}
+        INPUT_SPLIT: ${{ inputs.split }}
+        INPUT_AGENT-URL: ${{ inputs.agent-url }}
+        INPUT_MIN-PASS-RATE: ${{ inputs.min-pass-rate }}
+        INPUT_STRICT: ${{ inputs.strict }}
+        INPUT_COMMENT: ${{ inputs.comment }}
+        GITHUB_TOKEN: ${{ github.token }}

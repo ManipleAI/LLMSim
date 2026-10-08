@@ -1,0 +1,83 @@
+#!/usr/bin/env python3
+"""The GitHub Action's entry point: run a dataset, gate it against the baseline, say so on the pull request.
+
+Reads its settings from INPUT_* environment variables, which is how a GitHub Action is given its inputs:
+
+    INPUT_SERVER-URL, INPUT_DATASET, INPUT_BASELINE, INPUT_REPEAT, INPUT_REQUIRED, INPUT_TIER,
+    INPUT_SEED, INPUT_SPLIT, INPUT_AGENT-URL, INPUT_MIN-PASS-RATE, INPUT_STRICT, INPUT_COMMENT
+
+It writes the job summary ($GITHUB_STEP_SUMMARY), and, on a pull request and when GITHUB_TOKEN is
+available, one comment on it ($GITHUB_API_URL, $GITHUB_REPOSITORY, and the event file). It exits 1
+when the gate fails, which is what blocks the merge.
+"""
+
+import json
+import os
+import sys
+import urllib.request
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from testkit.client import Client, LLMSimError, markdown  # noqa: E402
+
+
+def inp(name, default=None):
+    return os.environ.get("INPUT_" + name.upper(), os.environ.get("INPUT_" + name.upper().replace("-", "_"), default)) or default
+
+
+def pull_request_number():
+    path = os.environ.get("GITHUB_EVENT_PATH")
+    try:
+        event = json.load(open(path)) if path else {}
+    except (OSError, ValueError):
+        return None
+    return (event.get("pull_request") or {}).get("number") or event.get("number") if "pull_request" in event else None
+
+
+def comment(text):
+    token, repo, number = os.environ.get("GITHUB_TOKEN"), os.environ.get("GITHUB_REPOSITORY"), pull_request_number()
+    if not (token and repo and number and inp("comment", "true") != "false"):
+        return False
+    api = os.environ.get("GITHUB_API_URL", "https://api.github.com")
+    req = urllib.request.Request("%s/repos/%s/issues/%s/comments" % (api, repo, number), json.dumps({"body": text}).encode(),
+                                 {"Authorization": "Bearer " + token, "Accept": "application/vnd.github+json", "Content-Type": "application/json"})
+    try:
+        urllib.request.urlopen(req, timeout=20).read()
+        return True
+    except Exception as exc:  # noqa: BLE001 — a comment that cannot be posted must not hide the verdict
+        print("llmsim-ci: could not comment on the pull request: %s" % exc, file=sys.stderr)
+        return False
+
+
+def main():
+    dataset = inp("dataset")
+    if not dataset:
+        print("llmsim-ci: the dataset input is required", file=sys.stderr)
+        return 2
+    client = Client(inp("server-url"))
+    spec = {"dataset": dataset, "label": os.environ.get("GITHUB_SHA", "")[:12] or None, "tier": inp("tier"), "seed": inp("seed"), "split": inp("split")}
+    if inp("repeat"):
+        spec["repeat"] = {"n": int(inp("repeat")), "required": int(inp("required") or inp("repeat"))}
+    if inp("agent-url"):
+        spec["agent"] = {"url": inp("agent-url")}
+    try:
+        out = client.experiment(**{k: v for k, v in spec.items() if v})
+        exp = out["experiment"]
+        gate = client.gate(exp["id"], baseline=inp("baseline"), minPassRate=float(inp("min-pass-rate")) if inp("min-pass-rate") else None,
+                           strict=inp("strict") == "true")
+    except LLMSimError as exc:
+        print("llmsim-ci: %s" % exc, file=sys.stderr)
+        return 2
+    text = markdown(exp, gate["gate"])
+    print(out["report"] + "\n" + gate["report"])
+    if os.environ.get("GITHUB_STEP_SUMMARY"):
+        with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as fh:
+            fh.write(text)
+    comment(text)
+    if os.environ.get("GITHUB_OUTPUT"):
+        with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+            fh.write("verdict=%s\nexperiment=%s\nregressions=%d\n" % (gate["gate"]["verdict"], exp["id"], len(gate["gate"]["regressed"])))
+    return 0 if gate["gate"]["verdict"] == "pass" else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

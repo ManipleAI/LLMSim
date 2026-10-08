@@ -247,6 +247,7 @@ class Sim:
             LLMSIM_SUITE=os.path.join(workdir, "suite.json"), LLMSIM_CHATGPT_AUTH=self.auth_path,
             LLMSIM_CASSETTES=os.path.join(workdir, "cassettes"),
             LLMSIM_RULES=os.path.join(workdir, "rules.json"), LLMSIM_ASSERTIONS=os.path.join(workdir, "assertions.json"),
+            LLMSIM_RUNS_DB=os.path.join(workdir, "runs.db"), LLMSIM_CREDENTIALS=os.path.join(workdir, "credentials.json"),
             LLMSIM_CHATGPT_ISSUER="http://127.0.0.1:%d" % stub.port,
             LLMSIM_CHATGPT_BACKEND="http://127.0.0.1:%d/backend" % stub.port,
             LLMSIM_CHATGPT_PORTS=callback_ports or str(self.callback_port))

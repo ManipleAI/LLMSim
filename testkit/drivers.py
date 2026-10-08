@@ -269,7 +269,8 @@ class ProcessDriver(Driver):
         self.turn += 1
         env = dict(os.environ, LLMSIM_RUN=self.ctx.run, LLMSIM_AGENT=self.ctx.agent, LLMSIM_TURN=str(self.turn))
         for vendor, url in self.ctx.base_urls.items():
-            env["LLMSIM_URL_" + vendor.upper()] = url
+            if isinstance(url, str):                      # the run's own base URLs are a dict, and an environment holds text
+                env["LLMSIM_URL_" + vendor.upper()] = url
         env.update({k: str(v) for k, v in (self.cfg.get("env") or {}).items()})
         argv = [a.replace("{message}", text) for a in self.cfg["command"]]
         started = time.time()

@@ -49,6 +49,13 @@ class FakeAgent:
                         out = {"output": {"text": agent.answer_with_tools(body, self.path)}}
                     except Exception as exc:  # noqa: BLE001
                         return self._send(502, {"error": "the agent failed: %s" % exc})
+                elif self.path == "/sse":
+                    raw = b"".join(("data: %s\n\n" % json.dumps({"delta": d})).encode() for d in ("Streamed ", "in ", "pieces."))
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/event-stream")
+                    self.send_header("Content-Length", str(len(raw)))
+                    self.end_headers()
+                    return self.wfile.write(raw)
                 elif self.path == "/chat-v2":
                     out = {"output": {"text": "I cannot help with that."}}        # a version of the agent that regressed: it does nothing
                 elif self.path == "/echo":

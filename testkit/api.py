@@ -151,7 +151,7 @@ def _scenario_listing():
 
 def _options(body, query):
     options = {}
-    for key in ("run", "tier", "label", "seed"):
+    for key in ("run", "tier", "label", "seed", "keepState"):
         if (body or {}).get(key) is not None:
             options[key] = body[key]
     return options
@@ -162,6 +162,8 @@ def _check_options(options):
         return "run is a run id"
     if options.get("tier", "simulated") not in ("simulated", "real"):
         return "tier is simulated or real"
+    if "keepState" in options and not isinstance(options["keepState"], bool):
+        return "keepState is true or false"
     return None
 
 

@@ -55,6 +55,28 @@ import urllib.request
 import uuid
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 
+# The agent test kit (scenarios, mocks, a kept timeline of every run). It is a package
+# beside this file; a copy of the server without it is the simulator it always was.
+try:
+    import testkit
+except ImportError:  # pragma: no cover — the server must run without its kit
+    class testkit:  # noqa: N801
+        @staticmethod
+        def attach(_module): pass
+        @staticmethod
+        def owns(_path): return False
+        @staticmethod
+        def on_capture(_cap): pass
+        @staticmethod
+        def run_sub(*_args): return None
+        @staticmethod
+        def store_runs(): return []
+        @staticmethod
+        def forget_run(_run): return 0
+        class timeline:  # noqa: N801
+            @staticmethod
+            def trace_run(_header): return None
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 PORT = int(os.environ.get("LLMSIM_PORT", "8099"))
 SCRIPT_PATH = os.environ.get("LLMSIM_SCRIPT", os.path.join(HERE, "responses.json"))
@@ -3569,6 +3591,10 @@ def identity_of(handler, body):
             raw = m.group(1)
         if ID_RE.fullmatch(raw):
             found[field] = raw
+    if "run" not in found:
+        run = testkit.timeline.trace_run(handler.headers.get("traceparent"))
+        if run:
+            found["run"] = run
     return found
 
 
@@ -4015,6 +4041,10 @@ def capture_finish(handler):
     cap["n"] = next(CAPTURE_SEQ)
     with CAPTURE_LOCK:
         CAPTURES.append(cap)
+    try:
+        testkit.on_capture(cap)         # the run's timeline, kept on disk
+    except Exception as exc:  # noqa: BLE001 — watching a request must never break it
+        log("testkit: %s: %s" % (type(exc).__name__, exc))
 
 
 def capture_view(cap):
@@ -4253,8 +4283,11 @@ def _rest_captures(method, rest, body, query, host):
 # -- runs ---------------------------------------------------------------------
 
 def _rest_runs(method, rest, body, query, host):
+    kit = testkit.run_sub(method, rest, body, query)
+    if kit is not None:
+        return kit
     if method == "GET" and not rest:
-        return _ok({"runs": runs_overview()})
+        return _ok({"runs": runs_overview(), "stored": testkit.store_runs()})
     if method == "POST" and not rest:
         body = body or {}
         run = body.get("run") or "r-" + "".join(random.choice(string.ascii_lowercase + string.digits) for _ in range(6))
@@ -4279,7 +4312,7 @@ def _rest_runs(method, rest, body, query, host):
             CAPTURES.extend(keep)
             removed = before - len(CAPTURES)
         stopped = run_session_stop(rest[0])
-        return _ok(removed=removed, sessionStopped=stopped)
+        return _ok(removed=removed, sessionStopped=stopped, storedRemoved=testkit.forget_run(rest[0]))
     return _fail(404, "No such route: %s /api/runs/%s" % (method, "/".join(rest)))
 
 
@@ -5636,6 +5669,9 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith(REST_PREFIXES):
             return self.rest_api("GET", path, None, urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query))
 
+        if testkit.owns(path):
+            return self.kit_route("GET", path, b"")
+
         if path == "/ui" or path == "/ui/":
             return self.serve_ui()
 
@@ -5720,6 +5756,21 @@ class Handler(BaseHTTPRequestHandler):
 
         return self.send_json(404, {"error": {"message": "No such route: " + path}})
 
+    def kit_route(self, method, path, raw):
+        """A protocol route of the test kit (a mock tool server, a stub agent, a trace
+        collector). Served by the kit, which is given the handler to answer through."""
+        if self.foreign_origin():
+            return self.send_json(403, {"ok": False, "message": "That request came from another site."})
+        self.identity = identity_of(self, None)
+        try:
+            testkit.serve(self, method, path, raw)
+        except (BrokenPipeError, ConnectionResetError):
+            raise
+        except Exception as exc:  # noqa: BLE001 — a bug in a route is a message, not a dropped connection
+            log("testkit route %s %s: %s: %s" % (method, path, type(exc).__name__, exc))
+            if self._status is None:
+                self.send_json(500, {"ok": False, "message": "%s: %s" % (type(exc).__name__, exc)})
+
     def _json_body(self):
         length = int(self.headers.get("Content-Length") or 0)
         raw = self.rfile.read(length) if length else b"{}"
@@ -5737,6 +5788,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(400, {"ok": False, "message": "The body is not valid JSON."})
         if path.startswith(REST_PREFIXES):
             return self.rest_api("PUT", path, body, urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query))
+        if testkit.owns(path):
+            return self.kit_route("PUT", path, json.dumps(body).encode())
         if not path.startswith("/api/sessions/"):
             return self.send_json(404, {"error": "No such route: PUT " + path})
         return self.session_api("PUT", path, body, urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query))
@@ -5748,6 +5801,8 @@ class Handler(BaseHTTPRequestHandler):
         self._json_body()                       # a body, if one was sent, is read and ignored
         if path.startswith(REST_PREFIXES):
             return self.rest_api("DELETE", path, None, urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query))
+        if testkit.owns(path):
+            return self.kit_route("DELETE", path, b"")
         if not path.startswith("/api/sessions/"):
             return self.send_json(404, {"error": "No such route: DELETE " + path})
         return self.session_api("DELETE", path, None, {})
@@ -5769,6 +5824,8 @@ class Handler(BaseHTTPRequestHandler):
 
         length = int(self.headers.get("Content-Length") or 0)
         raw = self.rfile.read(length) if length else b"{}"
+        if testkit.owns(path):
+            return self.kit_route("POST", path, raw)
         try:
             body = json.loads(raw or b"{}")
         except json.JSONDecodeError:
@@ -6585,6 +6642,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
+    testkit.attach(sys.modules[__name__])
     CHATGPT["auth"] = _load_chatgpt_auth()
     log("listening on http://localhost:%d" % PORT)
     USER_RULES.update(load_user_rules())

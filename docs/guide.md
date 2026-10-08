@@ -258,6 +258,10 @@ curl -X POST localhost:8099/api/sessions/stop   -d '{"run": "r1"}'     # hits, m
 
 - A replay matches a request by what was asked and how many turns in it is. It
   does not compare whole requests, which contain timestamps and never repeat.
+- A harness that asks two things at the same point — OpenCode asks for a
+  conversation title alongside the agent's first request — gets both answers
+  kept. They are told apart by the tools each request declares.
+- An empty answer is recorded too. It is how an agent's last turn often looks.
 - A request the recording does not hold gets a 404 that names it. Pass
   `"onMiss": "route"` to let it take its normal route instead.
 - If your prompts contain something that changes every run, such as a run id

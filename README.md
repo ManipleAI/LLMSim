@@ -531,8 +531,16 @@ miss, for the cases where the tool output is what is being tested.
   through another's — the answer is stored once and built per caller. The one
   place that is not exact is a parallel tool call, which Chat Completions sends as
   one assistant message and Responses as several: they count turns differently.
-- **One answer per ask and turn.** A retry, or the same step of a second run,
-  replaces the earlier one.
+- **One answer per ask, turn and caller.** A retry, or the same step of a second
+  run, replaces the earlier one. A harness that asks two things at the same
+  point is the exception that is kept apart: OpenCode asks for a title for the
+  conversation alongside the agent's first request — the same ask, the same
+  turn, one wanting eight words and the other a tool call. They are told apart
+  by the tools each request declares, and each is given its own answer back; a
+  caller whose tools have changed a little is given the nearest.
+- **An answer that says nothing is an answer.** An agent's last turn is often
+  empty — the work is done and the model stops. It is recorded and replayed as
+  that, so a run is replayed through to its end.
 
 A cassette is a JSON file. **Download** and **Import** move one between machines;
 an imported file is checked, and the keys in it are worked out again rather than

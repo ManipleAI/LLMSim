@@ -220,6 +220,12 @@ class Stub:
                 "input_tokens": 50, "output_tokens": 9, "input_tokens_details": {"cached_tokens": 20},
                 "output_tokens_details": {"reasoning_tokens": 3}}})
 
+        if "then stop" in ask and answered:
+            # The work is done and the model has nothing to add: a completed answer with nothing in it.
+            return sse("response.completed", response={"usage": {
+                "input_tokens": 60, "output_tokens": 4, "input_tokens_details": {"cached_tokens": 50},
+                "output_tokens_details": {"reasoning_tokens": 0}}})
+
         said = ("The tool said: %s" % answered[-1]["output"]) if answered else "Hello from the plan: %s" % ask[:60]
         for piece in (said[:6], said[6:]):
             sse("response.output_text.delta", delta=piece)
@@ -741,6 +747,84 @@ def case_a_scripted_tool_call_keeps_its_id_through_a_replay(sim, stub):
         if sim.json("GET", "/api/ui/session")[1]["mode"] != "off":
             sess(sim, action="stop")
         sess(sim, action="delete", name="ids")
+
+
+def case_a_harness_that_asks_twice_at_the_same_point_gets_both_answers_back(sim, stub):
+    """OpenCode asks for a title alongside the agent's first request: the same ask, the same turn. One answer
+    per ask and turn kept whichever finished last, and a replay then handed the title request a tool call."""
+    sim.configure(routing={"default": "scripted", "models": {"gpt-5": "chatgpt"}}, chatgpt={"model": "gpt-5.4"})
+    ask = [{"role": "user", "content": "use the tool for Paris"}]
+    agent = {"model": "gpt-5", "tools": [WEATHER], "messages": ask}
+    title = {"model": "gpt-5", "messages": [{"role": "system", "content": "You are a title generator."}] + ask}
+    message = lambda request: json.loads(sim.post(CHAT, request)[2])["choices"][0]["message"]
+    try:
+        assert sess(sim, action="record", name="twice")[1]["ok"]
+        # The title is kept last, so "whichever came last" would give it to everybody below.
+        called, titled = message(agent), message(title)
+        assert titled["content"] and not titled.get("tool_calls") and called["tool_calls"], (titled, called)
+        assert sess(sim, action="stop")[1]["message"].startswith("Saved 2 exchange(s)"), "one answer replaced the other"
+
+        sim.configure(routing={"default": "scripted", "models": {}})
+        stub.last = None
+        assert sess(sim, action="replay", name="twice")[1]["ok"]
+        assert message(title) == titled, "the title request was not given the title"
+        assert message(agent) == called, "the agent's request was not given its tool call"
+        # A harness that gains a tool is still the agent, not the title generator.
+        grown = dict(agent, tools=[WEATHER, {"type": "function", "function": {"name": "read", "parameters": {"type": "object"}}}])
+        assert message(grown) == called, "a caller with one more tool was handed the other caller's answer"
+        status = sim.json("GET", "/api/ui/session")[1]
+        assert stub.last is None and status["hits"] == 3 and status["misses"] == 0, status
+    finally:
+        if sim.json("GET", "/api/ui/session")[1]["mode"] != "off":
+            sess(sim, action="stop")
+        sess(sim, action="delete", name="twice")
+        sim.configure(routing={"default": "scripted", "models": {}})
+
+
+def case_an_answer_that_says_nothing_is_recorded_and_replayed(sim, stub):
+    """An agent's last turn is often empty: the file is written, the model stops. Not keeping it made a
+    recording that replayed every step of a run and then refused the request that ends it."""
+    sim.configure(routing={"default": "scripted", "models": {"gpt-5": "chatgpt"}}, chatgpt={"model": "gpt-5.4"})
+    ask = "use the tool for Paris, then stop"
+    try:
+        assert sess(sim, action="record", name="quiet")[1]["ok"]
+        live = conversation(sim, ask=ask, stream=False)
+        assert sess(sim, action="stop")[1]["message"].startswith("Saved 2 exchange(s)"), "the empty last turn was dropped"
+
+        assert sess(sim, action="record", name="quiet-streamed")[1]["ok"]
+        first = {"model": "gpt-5", "tools": [WEATHER], "messages": [{"role": "user", "content": ask}]}
+        done = dict(first, stream=True, messages=first["messages"] + [
+            {"role": "assistant", "content": None, "tool_calls": [live[0][1]["choices"][0]["message"]["tool_calls"][0]]},
+            {"role": "tool", "tool_call_id": "call_abc", "content": "18C and clear"}])
+        assert sim.post(CHAT, done)[0] == 200
+        kept = sess(sim, action="stop")[1]
+        assert kept["message"].startswith("Saved 1 exchange(s)"), kept
+        path = os.path.join(sim.workdir, "cassettes", "quiet-streamed.json")
+        assert json.load(open(path))["entries"][0]["answer"]["text"] == "", "a streamed empty answer was not kept as empty"
+
+        sim.configure(routing={"default": "scripted", "models": {}})
+        stub.last = None
+        assert sess(sim, action="replay", name="quiet-streamed")[1]["ok"]
+        status, _, text = sim.post(CHAT, done)
+        out = [d for _, d in frames(text) if isinstance(d, dict)]
+        assert status == 200 and out[-1]["choices"][0]["finish_reason"] == "stop", text
+        assert "".join(d["choices"][0]["delta"].get("content") or "" for d in out if d.get("choices")) == "", text
+        # The same empty answer in the other formats: an answer, not an error and not a crash.
+        status, _, text = sim.post(CHAT, dict(done, stream=False))
+        assert status == 200 and not json.loads(text)["choices"][0]["message"].get("content"), text
+        claude = {"model": "claude-sonnet-5", "max_tokens": 64, "messages": [
+            {"role": "user", "content": ask},
+            {"role": "assistant", "content": [{"type": "tool_use", "id": "call_abc", "name": "get_weather", "input": {}}]},
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "call_abc", "content": "18C and clear"}]}]}
+        status, _, text = sim.post("/anthropic/v1/messages", claude, key=ANTHROPIC_KEY)
+        assert status == 200 and json.loads(text)["stop_reason"] == "end_turn", text
+        assert stub.last is None and sim.json("GET", "/api/ui/session")[1]["misses"] == 0
+    finally:
+        if sim.json("GET", "/api/ui/session")[1]["mode"] != "off":
+            sess(sim, action="stop")
+        for name in ("quiet", "quiet-streamed"):
+            sess(sim, action="delete", name=name)
+        sim.configure(routing={"default": "scripted", "models": {}})
 
 
 def case_the_shipped_functional_plan_still_passes(sim, stub):

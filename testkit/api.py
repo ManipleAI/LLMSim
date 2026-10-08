@@ -5,7 +5,8 @@ whatever a person can do on a page a harness can do over HTTP.
 """
 
 from . import core, rest_area, run_route
-from . import checks, credentials, drivers, runner, scenario as scn, store, timeline
+from . import checks, credentials, drivers, fakes, runner, scenario as scn, store, timeline
+from . import http_mock, mcp_mock, setup_actions, state_checks  # noqa: F401 — registering routes, checks and setup actions
 from .core import ok, fail
 
 
@@ -241,3 +242,62 @@ def _results(method, rest, body, query, host):
     if method == "DELETE" and len(rest) == 1:
         return ok(removed=st.drop("results", rest[0]))
     return fail(404, "No such route: %s /api/results/%s" % (method, "/".join(rest)))
+
+
+# -- faults on tools and peers, and what a run's fake backends hold -----------------------------
+
+@rest_area("kitfaults")
+def _kitfaults(method, rest, body, query, host):
+    st = store.store()
+    if method == "GET" and not rest:
+        counts = fakes.counters()
+        return ok({"faults": [dict(d, **counts.get(i, {"seen": 0, "fired": 0})) for i, d, _ in st.docs("faults")], "runFaults": fakes.run_fault_listing(),
+                   "types": fakes.KIT_FAULTS,
+                   "tool": sorted(fakes.TOOL_FAULTS), "peer": sorted(fakes.PEER_FAULTS), "paused": core.host.CONFIG["chaos"]["paused"]})
+    if method == "POST" and rest == ["validate"]:
+        problems = fakes.validate_rule((body or {}).get("rule"))
+        return ok(valid=not problems, problems=problems)
+    if method == "POST" and rest == ["reseed"]:
+        fakes.reseed((body or {}).get("seed"))
+        return ok(seed=(body or {}).get("seed"))
+    if len(rest) == 1 and core.valid_id(rest[0]):
+        if method == "PUT":
+            rule = dict((body or {}).get("rule") or body or {}, id=rest[0])
+            problems = fakes.validate_rule(rule)
+            if problems:
+                return fail(400, "That fault has %d problem(s): %s" % (len(problems), "; ".join(problems[:5])), problems=problems)
+            st.put("faults", rest[0], rule)
+            fakes._STATE.pop(rest[0], None)
+            return ok({"rule": rule})
+        if method == "DELETE":
+            fakes._STATE.pop(rest[0], None)
+            return ok(removed=st.drop("faults", rest[0])) if st.get("faults", rest[0]) is not None else fail(404, "There is no fault called %s." % rest[0])
+    return fail(404, "No such route: %s /api/kitfaults/%s" % (method, "/".join(rest)))
+
+
+@rest_area("presets")
+def _presets(method, rest, body, query, host):
+    if method == "GET" and not rest:
+        return ok({"injections": fakes.INJECTIONS, "use": 'on a tool or route: "inject": {"preset": "<name>"}; catch it being obeyed with a leak check on its marker'})
+    return fail(404, "No such route: %s /api/presets/%s" % (method, "/".join(rest)))
+
+
+@run_route("state")
+def _run_state(method, run, rest, body, query):
+    if not core.valid_id(run):
+        return fail(400, "That is not a run id.")
+    if method == "GET":
+        snap = fakes.snapshot(run)
+        if not snap:
+            held = (store.store().get("results", run) or {}).get("state")
+            if held is not None:
+                return ok({"state": held, "from": "the result of the run"})
+        return ok({"state": snap, "from": "live"})
+    if method == "PUT":
+        if not isinstance(body, dict) or not all(isinstance(v, dict) for v in body.values()):
+            return fail(400, "The body is {collection: {key: record}}.")
+        fakes.seed(run, "", body)
+        return ok({"state": fakes.snapshot(run)})
+    if method == "DELETE":
+        return ok(removed=fakes.purge(run))
+    return fail(405, "GET reads a run's state, PUT seeds it, DELETE clears it.")

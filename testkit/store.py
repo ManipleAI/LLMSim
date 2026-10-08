@@ -73,6 +73,14 @@ class Store:
                 rows = self.db.execute("select id, body, updated from docs where area=? order by updated", (area,)).fetchall()
         return [(r[0], json.loads(r[1]), r[2]) for r in rows]
 
+    def areas(self, prefix):
+        with self.lock:
+            return [r[0] for r in self.db.execute("select distinct area from docs where area like ? order by area", (prefix + "%",))]
+
+    def drop_area(self, area):
+        with self.lock:
+            return self.db.execute("delete from docs where area=?", (area,)).rowcount
+
     def drop(self, area, doc_id):
         with self.lock:
             return self.db.execute("delete from docs where area=? and id=?", (area, doc_id)).rowcount > 0

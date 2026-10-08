@@ -21,7 +21,7 @@ import threading
 import time
 import traceback
 
-from . import checks, core, drivers, runtime, scenario as scn, timeline
+from . import checks, core, drivers, fakes, runtime, scenario as scn, timeline
 from .store import store
 
 JOBS = {}                       # run -> result, while it is running
@@ -97,6 +97,8 @@ def run_scenario(scenario, options=None, base_host="localhost:8099"):
     store().touch_run(run, label=scenario["id"], meta={"scenario": scenario["id"], "tier": tier, "label": options.get("label", "")})
     store().put("results", run, result)
     driver = None
+    if options.get("seed") is not None:
+        fakes.reseed(options["seed"])
     try:
         problems = _start_model(ctx, result)
         for action in scenario.get("setup") or []:
@@ -133,6 +135,9 @@ def run_scenario(scenario, options=None, base_host="localhost:8099"):
             except Exception as exc:  # noqa: BLE001
                 result.setdefault("warnings", []).append("cleanup: %s" % exc)
     _judge(ctx, result)
+    result["state"] = fakes.snapshot(run)
+    if not options.get("keepState"):
+        fakes.purge(run)
     result["finishedAt"] = time.time()
     result["durationS"] = round(result["finishedAt"] - started, 3)
     result["status"] = "done"

@@ -75,7 +75,15 @@ def check_cond(condition, where="when"):
 
 
 def dig(value, path):
-    return host._dig_path(value, path)
+    """value["a"]["b"][0] for "a.b.0", or None when any step is missing."""
+    for part in str(path).split("."):
+        if isinstance(value, dict):
+            value = value.get(part)
+        elif isinstance(value, list) and part.isdigit() and int(part) < len(value):
+            value = value[int(part)]
+        else:
+            return None
+    return value
 
 
 def redact(value):
@@ -115,3 +123,27 @@ def scrub(value):
     if isinstance(value, dict):
         return {k: scrub(v) for k, v in value.items()}
     return value
+
+
+def reply_json(handler, status, payload, headers=None):
+    raw = json.dumps(payload).encode()
+    reply_raw(handler, status, raw, "application/json", headers)
+
+
+def reply_raw(handler, status, raw, content_type, headers=None):
+    handler.send_response(status)
+    handler.send_header("Content-Type", content_type)
+    handler.send_header("Content-Length", str(len(raw)))
+    for k, v in (headers or {}).items():
+        handler.send_header(k, str(v))
+    handler.end_headers()
+    handler.wfile.write(raw)
+
+
+def hang_up(handler, mode="close"):
+    """End the connection with no answer, the way a crashed server does."""
+    host.Handler._hang_up(handler, mode)
+
+
+def identity(handler):
+    return dict(getattr(handler, "identity", {}) or {})

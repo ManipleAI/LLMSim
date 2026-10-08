@@ -54,7 +54,7 @@ def case_a_scenario_file_is_a_whole_test(sim):
     assert agent.seen[-1]["body"]["run"] == result["run"]
     # and what it rules installed is gone again
     status, after = sim.chat("order 1182 please", path="/run/%s/agent/support%s" % (result["run"], CHAT))
-    assert "handed it to a manager" not in json.dumps(after), "the run's model script outlived the run"
+    assert "Looking it up" not in json.dumps(after), "the run's model script outlived the run"
 
 
 def case_each_check_fails_when_the_thing_it_checks_is_wrong(sim):
@@ -196,11 +196,13 @@ def case_a_credential_is_used_and_is_in_no_evidence(sim):
     listed = sim.api("GET", "/api/credentials")[1]
     assert "SECRET" not in json.dumps(listed) and listed["credentials"][0]["label"] == "agent-token", listed
     assert oct(os.stat(sim.env["LLMSIM_CREDENTIALS"]).st_mode & 0o777) == "0o600"
-    out = run(sim, scenario(sim.agent, agent=agent_cfg(sim.agent, credential="agent-token")))
+    sim.agent.echo = True          # an agent that repeats the header it was given into its reply
+    out = run(sim, scenario(sim.agent, agent=agent_cfg(sim.agent, credential="agent-token"), turns=[{"say": "I want a refund for order 1182"}]))
+    sim.agent.echo = False
     assert out["verdict"] == "pass"
     assert sim.agent.seen[-1]["headers"]["Authorization"] == "Bearer " + secret, "the driver did not present the credential"
-    # a driver that echoed its header into the reply still leaves nothing behind
-    sim.agent.echo = secret
+    assert "[credential]" in out["turns"][0]["reply"] and secret not in json.dumps(out), out["turns"]
+    # so a driver that echoed its header into the reply still leaves nothing behind
     db = sqlite3.connect(sim.env["LLMSIM_RUNS_DB"])
     dump = "\n".join(str(r) for t in ("events", "docs", "runs") for r in db.execute("select * from %s" % t))
     assert secret not in dump, "the credential is in what the kit stored"

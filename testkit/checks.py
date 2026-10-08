@@ -76,6 +76,14 @@ class RunCtx:
         total["total"] = total["input"] + total["output"]
         return total
 
+    @property
+    def state(self):
+        """The records the run's fake backends held when it was judged, {collection: {key: record}}."""
+        if "state" not in self.__dict__:
+            from . import fakes
+            self.__dict__["state"] = fakes.snapshot(self.run)
+        return self.__dict__["state"]
+
     def view(self):
         counts = {}
         for e in self.events:

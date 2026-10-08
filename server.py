@@ -2845,7 +2845,7 @@ _STATE_TEMPLATE = {
     "mode": "off",          # off | record | replay
     "name": None,
     "entries": [],          # what has been captured, or what is loaded
-    "index": {},            # replay: key -> entry
+    "index": {},            # replay: key -> the entries recorded for it, one per caller
     "since": None,
     "hits": 0, "misses": 0, "diverged": 0,
     "unmatched": [],        # requests replay had no answer for, newest first
@@ -2958,13 +2958,16 @@ def _fingerprint(text):
 
 
 def _recorded_answer(turn):
-    """The part of a turn worth keeping, or None when it said nothing."""
+    """The part of a turn worth keeping.
+
+    An answer with no words and no tool call is kept like any other. It is how
+    an agent's last turn often looks — the work is done, the model has nothing
+    to add and stops — and a recording without it replays every step of a run
+    and then refuses the request that ends it.
+    """
     calls = [{"id": c.get("id") or rand_id("call_", 20), "name": c.get("name", ""), "input": c.get("input") or {}}
              for c in turn.get("tool_calls") or []]
-    text = turn.get("text") or ""
-    if not text and not calls:
-        return None
-    answer = {"text": text, "tool_calls": calls}
+    answer = {"text": turn.get("text") or "", "tool_calls": calls}
     usage = turn.get("usage")
     if usage:
         answer["usage"] = {"input": usage.get("input", 0), "output": usage.get("output", 0),
@@ -2990,8 +2993,6 @@ def session_capture(ctx, route, rule, turn, ms):
     if st["mode"] != "record" or not ctx:
         return
     answer = _recorded_answer(turn)
-    if not answer:
-        return
     ask, n, last, key = exchange_key(ctx["messages"], st)
     entry = {
         "key": key, "ask": ask, "turn": n, "last": _fingerprint(last), "lastText": last[:160],
@@ -3001,19 +3002,47 @@ def session_capture(ctx, route, rule, turn, ms):
     with SESSION_LOCK:
         if st["mode"] != "record":
             return
-        # The same ask at the same point, again: a retry, or the same step of a
-        # second run. The latest is kept — there is one answer per key, because
-        # replay can only give one.
-        st["entries"] = [e for e in st["entries"] if e["key"] != key] + [entry]
+        # The same ask at the same point from the same caller, again: a retry, or
+        # the same step of a second run. The latest is kept, because replay can
+        # only give one. A caller is told apart by the tools it declares — see
+        # _closest for who asks twice at the same point, and why.
+        st["entries"] = [e for e in st["entries"]
+                         if not (e["key"] == key and e.get("tools") == entry["tools"])] + [entry]
         _flush_session(st)
 
 
-def session_replay(messages, st=None):
+def _closest(entries, declared):
+    """Of the answers recorded for one ask at one point, the one for this caller.
+
+    A harness does not only make the request it is there to make. OpenCode asks
+    for a title for the conversation alongside the agent's first real request:
+    the same ask, the same point, two different questions — one wants a tool
+    call that writes a file, the other eight words to show in a sidebar. Which
+    is which shows in the tools each declares, so both are kept and each is
+    given back to the caller that declares the same ones.
+
+    The nearest set rather than only an identical one, because a harness that
+    gains a tool is still the same caller and should not be handed the title.
+    """
+    if len(entries) == 1 or declared is None:
+        return entries[-1]
+    want = set(declared)
+
+    def near(entry):
+        have = set(entry.get("tools") or [])
+        return 1.0 if not (want | have) else len(want & have) / float(len(want | have))
+
+    best = max(near(e) for e in entries)
+    return [e for e in entries if near(e) == best][-1]
+
+
+def session_replay(messages, st=None, declared=None):
     """(entry, differs) for a request the recording can answer, else None."""
     st = st or SESSION
     ask, n, last, key = exchange_key(messages, st)
     with SESSION_LOCK:
-        entry = st["index"].get(key)
+        held = st["index"].get(key)
+        entry = _closest(held, declared) if held else None
         differs = bool(entry) and _fingerprint(last) != entry["last"]
         if entry and differs and st["strict"]:
             entry = None
@@ -3067,8 +3096,6 @@ def _normalize_entry(entry):
               "input": c.get("input") if isinstance(c.get("input"), dict) else {}}
              for c in answer.get("tool_calls") or [] if isinstance(c, dict)]
     text = str(answer.get("text") or "")
-    if not text and not calls:
-        raise ValueError("an entry says nothing")
     try:
         n = int(entry.get("turn", 0))
     except (TypeError, ValueError):
@@ -3238,8 +3265,10 @@ def session_start(mode, name, masks=None, on_miss=None, strict=None, overwrite=F
                   strict=CONFIG["session"]["strict"] if strict is None else strict)
         # Keyed under THIS session's masks, not trusted from the file: the key
         # decides which request gets which answer.
-        st["index"] = {hashlib.sha256(("%s\0%d" % (_mask(e["ask"], st), e["turn"])).encode()).hexdigest()[:16]: e
-                       for e in data["entries"]}
+        st["index"] = {}
+        for e in data["entries"]:
+            key = hashlib.sha256(("%s\0%d" % (_mask(e["ask"], st), e["turn"])).encode()).hexdigest()[:16]
+            st["index"].setdefault(key, []).append(e)
         if run:
             SESSIONS[run] = st
         log("session: replaying %s%s (%d exchange(s), on miss: %s%s)" % (
@@ -6309,7 +6338,7 @@ class Handler(BaseHTTPRequestHandler):
         # answered from it whatever the model is routed to, and that is the
         # point — the run no longer depends on anything that route reaches.
         replaying = st["mode"] == "replay" and not internal
-        replayed = session_replay(messages, st) if replaying else None
+        replayed = session_replay(messages, st, sorted(declared)) if replaying else None
         if replaying and not replayed and st["onMiss"] != "route":
             ask, n, _, _ = exchange_key(messages, st)
             message = ("LLMSim has no recording for this request. Cassette %s, asked %r, %d turn(s) in. "

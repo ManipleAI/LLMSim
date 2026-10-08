@@ -5,7 +5,7 @@ whatever a person can do on a page a harness can do over HTTP.
 """
 
 from . import core, rest_area, run_route
-from . import store, timeline
+from . import checks, credentials, drivers, runner, scenario as scn, store, timeline
 from .core import ok, fail
 
 
@@ -86,3 +86,158 @@ def _stored(method, run, rest, body, query):
     if method == "DELETE":
         return ok({"removed": store.store().delete_run(run)})
     return fail(405, "DELETE removes what is kept for a run.")
+
+
+# -- credentials ---------------------------------------------------------------
+
+@rest_area("credentials")
+def _credentials(method, rest, body, query, host):
+    if method == "GET" and not rest:
+        return ok({"credentials": credentials.listing(), "types": {k: list(v) for k, v in credentials.TYPES.items()}})
+    if method == "PUT" and len(rest) == 1:
+        problems = credentials.put(rest[0], body or {})
+        if problems:
+            return fail(400, "; ".join(problems))
+        return ok({"credentials": credentials.listing()}, message="Stored %s. Its value is never shown again." % rest[0])
+    if method == "DELETE" and len(rest) == 1:
+        if not credentials.drop(rest[0]):
+            return fail(404, "There is no credential called %s." % rest[0])
+        return ok({"credentials": credentials.listing()})
+    return fail(404, "No such route: %s /api/credentials/%s" % (method, "/".join(rest)))
+
+
+# -- what exists: drivers and checks ---------------------------------------------
+
+@rest_area("drivers")
+def _drivers(method, rest, body, query, host):
+    if method == "GET" and not rest:
+        return ok({"drivers": [{"name": n, "required": list(d.required), "doc": (d.__doc__ or "").strip()} for n, d in sorted(drivers.DRIVERS.items())],
+                   "processAllowed": drivers.process_allowed()})
+    if method == "POST" and rest == ["validate"]:
+        problems = drivers.validate(body or {})
+        return ok(valid=not problems, problems=problems)
+    return fail(404, "No such route: %s /api/drivers/%s" % (method, "/".join(rest)))
+
+
+@rest_area("checks")
+def _checks(method, rest, body, query, host):
+    if method == "GET" and not rest:
+        return ok({"types": sorted(checks.CHECKS), "statuses": ["pass", "fail", "no-data", "error"]})
+    if method == "POST" and rest == ["validate"]:
+        problems = checks.validate((body or {}).get("check"))
+        return ok(valid=not problems, problems=problems)
+    if method == "POST" and rest == ["evaluate"]:
+        # Judge checks over a run that already happened — what to reach for when a rule is being written.
+        body = body or {}
+        run, specs = body.get("run"), body.get("checks")
+        if not core.valid_id(run) or not isinstance(specs, list) or not specs or len(specs) > 100:
+            return fail(400, "Give run (a run id) and checks (a list of 1 to 100).")
+        problems = [p for i, s in enumerate(specs) for p in ["checks[%d]: %s" % (i, q) for q in checks.validate(s)]]
+        if problems:
+            return fail(400, "; ".join(problems[:5]), problems=problems)
+        results = checks.evaluate(specs, checks.RunCtx(run))
+        return ok({"verdict": checks.verdict(results), "results": results})
+    return fail(404, "No such route: %s /api/checks/%s" % (method, "/".join(rest)))
+
+
+# -- scenarios ------------------------------------------------------------------
+
+def _scenario_listing():
+    return [{"id": i, "description": b.get("description", ""), "tags": b.get("tags", []), "driver": (b.get("agent") or {}).get("driver"),
+             "agent": (b.get("agent") or {}).get("name", "agent"), "checks": len(b.get("checks") or []), "updated": u}
+            for i, b, u in store.store().docs("scenarios")]
+
+
+def _options(body, query):
+    options = {}
+    for key in ("run", "tier", "label", "seed"):
+        if (body or {}).get(key) is not None:
+            options[key] = body[key]
+    return options
+
+
+def _check_options(options):
+    if "run" in options and not core.valid_id(options["run"]):
+        return "run is a run id"
+    if options.get("tier", "simulated") not in ("simulated", "real"):
+        return "tier is simulated or real"
+    return None
+
+
+@rest_area("scenarios")
+def _scenarios(method, rest, body, query, host):
+    st = store.store()
+    if method == "GET" and not rest:
+        return ok({"scenarios": _scenario_listing()})
+    if method == "POST" and rest == ["validate"]:
+        problems = scn.validate((body or {}).get("scenario"))
+        return ok(valid=not problems, problems=problems)
+    if method == "POST" and rest == ["run"]:
+        scenario = (body or {}).get("scenario")
+        problems = scn.validate(scenario)
+        if problems:
+            return fail(400, "That scenario has %d problem(s): %s" % (len(problems), "; ".join(problems[:5])), problems=problems)
+        return _execute(scenario, body, host)
+    if method == "POST" and not rest:
+        scenario = body or {}
+        problems = scn.validate(scenario)
+        if problems:
+            return fail(400, "That scenario has %d problem(s): %s" % (len(problems), "; ".join(problems[:5])), problems=problems)
+        st.put("scenarios", scenario["id"], scenario)
+        return ok({"scenario": scenario})
+    if len(rest) >= 1 and core.valid_id(rest[0]):
+        sid = rest[0]
+        found = st.get("scenarios", sid)
+        if method == "GET" and len(rest) == 1:
+            return ok({"scenario": found}) if found else fail(404, "There is no scenario called %s." % sid)
+        if method == "PUT" and len(rest) == 1:
+            scenario = dict(body or {}, id=sid)
+            problems = scn.validate(scenario)
+            if problems:
+                return fail(400, "That scenario has %d problem(s): %s" % (len(problems), "; ".join(problems[:5])), problems=problems)
+            st.put("scenarios", sid, scenario)
+            return ok({"scenario": scenario})
+        if method == "DELETE" and len(rest) == 1:
+            return ok(removed=st.drop("scenarios", sid)) if found else fail(404, "There is no scenario called %s." % sid)
+        if method == "POST" and rest[1:] == ["run"]:
+            if not found:
+                return fail(404, "There is no scenario called %s." % sid)
+            return _execute(found, body, host)
+    return fail(404, "No such route: %s /api/scenarios/%s" % (method, "/".join(rest)))
+
+
+def _execute(scenario, body, host):
+    options = _options(body, None)
+    problem = _check_options(options)
+    if problem:
+        return fail(400, problem)
+    if (body or {}).get("wait") is False:
+        run = runner.start_async(scenario, options, host)
+        return 202, {"ok": True, "run": run, "status": "running", "message": "Poll GET /api/results/%s." % run}
+    result = runner.run_scenario(scenario, options, host)
+    return ok({"result": result})
+
+
+# -- results --------------------------------------------------------------------
+
+@rest_area("results")
+def _results(method, rest, body, query, host):
+    st = store.store()
+    if method == "GET" and not rest:
+        rows = []
+        for run, doc, updated in reversed(st.docs("results")):
+            rows.append({"run": run, "scenario": doc.get("scenario"), "verdict": doc.get("verdict"), "status": doc.get("status"),
+                         "tier": doc.get("tier"), "summary": doc.get("summary"), "durationS": doc.get("durationS"),
+                         "finishedAt": doc.get("finishedAt"), "label": doc.get("label", "")})
+        want = (query.get("scenario") or [None])[0]
+        return ok({"results": [r for r in rows if not want or r["scenario"] == want][:_int(query, "limit", 100)]})
+    if method == "GET" and len(rest) >= 1:
+        result = runner.result_of(rest[0])
+        if not result:
+            return fail(404, "There is no result for run %s." % rest[0])
+        if rest[1:] == ["junit"]:
+            return 200, {"ok": True, "junit": runner.junit(result)}, {"raw": runner.junit(result), "content_type": "application/xml"}
+        return ok({"result": result})
+    if method == "DELETE" and len(rest) == 1:
+        return ok(removed=st.drop("results", rest[0]))
+    return fail(404, "No such route: %s /api/results/%s" % (method, "/".join(rest)))

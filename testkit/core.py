@@ -67,12 +67,11 @@ def cond(condition, view):
 
 
 def check_cond(condition, where="when"):
-    """None when a condition is well-formed, else why not."""
+    """A list of problems with a condition; empty when it is well-formed."""
     try:
-        problem = host.validate_cond(condition, where)
+        return list(host.validate_cond(condition, where))
     except Exception as exc:  # noqa: BLE001
-        return "%s: %s" % (where, exc)
-    return problem or None
+        return ["%s: %s" % (where, exc)]
 
 
 def dig(value, path):

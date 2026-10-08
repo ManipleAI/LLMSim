@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+"""llmsim — run agent tests against a LLMSim server, from a shell or a CI job.
+
+    llmsim run scenario.json [--junit out.xml] [--tier simulated|real] [--run ID] [--json]
+    llmsim run --saved ID
+    llmsim validate scenario.json
+    llmsim results [--scenario ID]
+    llmsim timeline RUN
+
+The server is LLMSIM_URL (default http://localhost:8099) or --server. Exit status:
+0 every check passed · 1 a check failed, errored or had no data · 2 could not run.
+Standard library only.
+"""
+
+import argparse
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+
+
+def call(server, method, path, body=None):
+    req = urllib.request.Request(server.rstrip("/") + path, json.dumps(body).encode() if body is not None else None,
+                                 {"Content-Type": "application/json"}, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=3700) as resp:
+            return resp.status, resp.read().decode()
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read().decode()
+    except (urllib.error.URLError, OSError) as exc:
+        print("llmsim: cannot reach %s: %s" % (server, getattr(exc, "reason", exc)), file=sys.stderr)
+        sys.exit(2)
+
+
+def jcall(server, method, path, body=None):
+    status, text = call(server, method, path, body)
+    try:
+        return status, json.loads(text)
+    except ValueError:
+        print("llmsim: %s answered something that is not JSON: %s" % (server, text[:200]), file=sys.stderr)
+        sys.exit(2)
+
+
+def print_result(result):
+    print("%s  run %s  (%s tier, %.1fs)" % (result["verdict"].upper(), result["run"], result["tier"], result.get("durationS") or 0))
+    if result.get("error"):
+        print("  error: %s" % result["error"])
+    for c in result.get("checks") or []:
+        print("  %-8s %s: %s" % (c["status"], c["name"], c["detail"]))
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="llmsim", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--server", default=os.environ.get("LLMSIM_URL", "http://localhost:8099"))
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    run = sub.add_parser("run")
+    run.add_argument("file", nargs="?")
+    run.add_argument("--saved")
+    run.add_argument("--tier", choices=("simulated", "real"))
+    run.add_argument("--run")
+    run.add_argument("--junit")
+    run.add_argument("--json", action="store_true")
+    val = sub.add_parser("validate")
+    val.add_argument("file")
+    res = sub.add_parser("results")
+    res.add_argument("--scenario")
+    tl = sub.add_parser("timeline")
+    tl.add_argument("run")
+    from_ext = sub.add_parser("experiment")
+    from_ext.add_argument("action", choices=("run", "compare", "gate"))
+    from_ext.add_argument("rest", nargs="*")
+    from_ext.add_argument("--dataset")
+    from_ext.add_argument("--baseline")
+    from_ext.add_argument("--label")
+    from_ext.add_argument("--repeat", type=int)
+    from_ext.add_argument("--tier", choices=("simulated", "real"))
+    from_ext.add_argument("--junit")
+    from_ext.add_argument("--json", action="store_true")
+    args = ap.parse_args()
+
+    if args.cmd == "validate":
+        status, body = jcall(args.server, "POST", "/api/scenarios/validate", {"scenario": json.load(open(args.file))})
+        for p in body.get("problems") or []:
+            print("  - " + p)
+        print("valid" if body.get("valid") else "not valid")
+        sys.exit(0 if body.get("valid") else 1)
+    if args.cmd == "results":
+        status, body = jcall(args.server, "GET", "/api/results" + ("?scenario=" + args.scenario if args.scenario else ""))
+        for r in body.get("results", []):
+            print("%-8s %-28s %s" % (r["verdict"], r["run"], r["scenario"]))
+        sys.exit(0)
+    if args.cmd == "timeline":
+        status, body = jcall(args.server, "GET", "/api/runs/%s/timeline" % args.run)
+        if status != 200:
+            print(body.get("message"), file=sys.stderr)
+            sys.exit(2)
+        for e in body["events"]:
+            print("%7.2fs  %-13s %-12s %s" % (e["t"], e["kind"], e["agent"], e["label"]))
+        sys.exit(0)
+    if args.cmd == "experiment":
+        sys.exit(experiment(args))
+
+    options = {k: v for k, v in (("tier", args.tier), ("run", args.run)) if v}
+    if args.saved:
+        status, body = jcall(args.server, "POST", "/api/scenarios/%s/run" % args.saved, options)
+    elif args.file:
+        status, body = jcall(args.server, "POST", "/api/scenarios/run", dict(options, scenario=json.load(open(args.file))))
+    else:
+        run.error("give a scenario file, or --saved ID")
+    if status != 200:
+        print("llmsim: %s" % body.get("message", body), file=sys.stderr)
+        for p in body.get("problems") or []:
+            print("  - " + p, file=sys.stderr)
+        sys.exit(2)
+    result = body["result"]
+    if args.junit:
+        _, text = call(args.server, "GET", "/api/results/%s/junit" % result["run"])
+        with open(args.junit, "w") as fh:
+            fh.write(text)
+    if args.json:
+        print(json.dumps(result, indent=1))
+    else:
+        print_result(result)
+    sys.exit(0 if result["verdict"] == "pass" else 1)
+
+
+def experiment(args):
+    """Run a dataset as an experiment, or compare two. Filled in with the experiments API."""
+    body = {k: v for k, v in (("dataset", args.dataset), ("baseline", args.baseline), ("label", args.label),
+                              ("repeat", args.repeat), ("tier", args.tier)) if v}
+    if args.action == "run":
+        status, out = jcall(args.server, "POST", "/api/experiments/run", body)
+    elif args.action == "compare":
+        status, out = jcall(args.server, "GET", "/api/experiments/%s/compare/%s" % (args.rest[0], args.rest[1]))
+    else:
+        status, out = jcall(args.server, "POST", "/api/experiments/%s/gate" % args.rest[0], body)
+    if status != 200:
+        print("llmsim: %s" % out.get("message", out), file=sys.stderr)
+        return 2
+    exp = out.get("experiment") or out
+    if args.json:
+        print(json.dumps(out, indent=1))
+    else:
+        print(exp.get("report") or json.dumps(exp.get("summary") or exp, indent=1))
+    if args.junit and out.get("junit"):
+        open(args.junit, "w").write(out["junit"])
+    return 0 if (exp.get("verdict") or exp.get("gate", {}).get("verdict")) == "pass" else 1
+
+
+if __name__ == "__main__":
+    main()

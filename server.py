@@ -70,6 +70,8 @@ except ImportError:  # pragma: no cover — the server must run without its kit
         @staticmethod
         def run_sub(*_args): return None
         @staticmethod
+        def run_rules(): return []
+        @staticmethod
         def store_runs(): return []
         @staticmethod
         def forget_run(_run): return 0
@@ -4499,7 +4501,7 @@ def pick_scripted(view, explain=False):
     after writing any rule: why did it not fire?
     """
     checked = []
-    for rule, source in all_rules():
+    for rule, source in testkit.run_rules() + all_rules():
         if rule.get("enabled") is False:
             if explain:
                 checked.append({"rule": rule.get("name"), "source": source, "matched": False, "why": "disabled"})
@@ -5641,6 +5643,14 @@ class Handler(BaseHTTPRequestHandler):
         if self.foreign_origin():
             return self.send_json(403, {"ok": False, "message": "That request came from another site."})
         result = rest_dispatch(method, path, body, query, self.headers.get("Host") or "localhost:%d" % PORT)
+        if len(result) == 3 and result[2].get("raw") is not None:
+            raw = result[2]["raw"].encode()
+            self.send_response(result[0])
+            self.send_header("Content-Type", result[2].get("content_type", "text/plain") + "; charset=utf-8")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+            return
         if len(result) == 3 and result[2].get("download"):
             raw = json.dumps(result[1], indent=1).encode()
             self.send_response(result[0])

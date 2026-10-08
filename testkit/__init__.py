@@ -50,6 +50,8 @@ def attach(module):
     """Bind the server and open its doors. Safe to call once."""
     core.attach(module)
     from . import api            # noqa: F401 — importing registers every area and route
+    from . import credentials
+    credentials.load_secrets()      # so what a driver is trusted with is scrubbed from everything kept
     module.REST_AREAS.update(REST)
     module.REST_PREFIXES = tuple(module.REST_PREFIXES) + tuple("/api/" + a for a in REST if "/api/" + a not in module.REST_PREFIXES)
     core.log("testkit: %d REST area(s), %d protocol route(s); runs kept in %s" % (len(REST), len(ROUTE_TABLE), api.store.store().path))
@@ -88,3 +90,9 @@ def store_runs():
 def forget_run(run):
     from . import store
     return store.store().delete_run(run)
+
+
+def run_rules():
+    """Rules a running scenario brought with it, tried before every other."""
+    from . import runtime
+    return runtime.run_rules()

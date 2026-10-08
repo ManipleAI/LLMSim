@@ -15,6 +15,7 @@ Events:
   tool_call      a tool asked to do something, and what it did
   peer_message   one agent talking to another
   state_change   a record in a fake backend changed
+  state_read     a record in a fake backend was read
   span           a step reported by OpenTelemetry, where LLMSim is not the model
   check, note    a verdict, or a remark
 
@@ -27,7 +28,7 @@ import re
 from . import core
 from .store import store
 
-KINDS = ("user_turn", "agent_reply", "model_call", "tool_call", "peer_message", "state_change", "span", "check", "note")
+KINDS = ("user_turn", "agent_reply", "model_call", "tool_call", "peer_message", "state_change", "state_read", "span", "check", "note")
 
 
 def settings():
@@ -100,7 +101,7 @@ def label(event):
         return (d.get("text") or "")[:100]
     if kind == "peer_message":
         return "%s → %s: %s" % (d.get("from", ""), d.get("to", ""), (d.get("text") or core.dumps(d.get("message", "")))[:80])
-    if kind == "state_change":
+    if kind in ("state_change", "state_read"):
         return "%s %s %s" % (d.get("op", ""), d.get("collection", ""), d.get("key", ""))
     if kind == "span":
         return d.get("name", "")

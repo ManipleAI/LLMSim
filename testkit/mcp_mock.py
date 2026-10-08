@@ -26,7 +26,7 @@ import time
 import urllib.error
 import urllib.request
 
-from . import checks, core, credentials, fakes, route, rest_area, timeline
+from . import checks, core, credentials, fakes, ordering, route, rest_area, timeline
 from .core import fail, ok
 from .store import store
 
@@ -261,7 +261,8 @@ def rpc_response(defn, message, run, agent):
         started = time.time()
         if not any(t["name"] == name for t in defn.get("tools", [])):
             return {"jsonrpc": "2.0", "id": rid, "error": {"code": -32602, "message": "Unknown tool: %s" % name}}
-        result, is_error, fault, special = call_tool(defn, name, arguments, run, agent)
+        with ordering.guard(run, {"kind": "tool", "agent": agent or "", "run": run or "", "tool": name, "arguments": arguments, "server": defn["id"]}):
+            result, is_error, fault, special = call_tool(defn, name, arguments, run, agent)
         if special and special.startswith("drop"):
             return ("drop", special.split(":", 1)[1])
         if run:

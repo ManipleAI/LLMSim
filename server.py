@@ -72,6 +72,10 @@ except ImportError:  # pragma: no cover — the server must run without its kit
         @staticmethod
         def run_rules(): return []
         @staticmethod
+        def model_guard(*_args):
+            import contextlib
+            return contextlib.nullcontext()
+        @staticmethod
         def store_runs(): return []
         @staticmethod
         def forget_run(_run): return 0
@@ -6367,7 +6371,8 @@ class Handler(BaseHTTPRequestHandler):
         model = body.get("model") or (MODELS[self.provider][0])
         self.cap = capture_begin(self, body, shape, model, bool(body.get("stream")))
         try:
-            return self._handle_chat(body, shape)
+            with testkit.model_guard(self, body, shape):      # a test may have put this request in an order
+                return self._handle_chat(body, shape)
         finally:
             capture_finish(self)
 

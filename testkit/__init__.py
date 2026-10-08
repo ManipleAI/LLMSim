@@ -92,6 +92,11 @@ def forget_run(run):
     return store.store().delete_run(run)
 
 
+def model_guard(handler, body, shape):
+    from . import ordering
+    return ordering.model_guard(handler, body, shape)
+
+
 def run_rules():
     """Rules a running scenario brought with it, tried before every other."""
     from . import runtime

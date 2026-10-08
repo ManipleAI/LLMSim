@@ -19,7 +19,7 @@ middle of a run. It names its credentials, never holds them.
 
 from . import checks, core, drivers
 
-TOP = {"id", "description", "tags", "agent", "model", "setup", "teardown", "turns", "user", "stop", "checks", "timeoutS", "notes"}
+TOP = {"id", "description", "tags", "agent", "agents", "model", "setup", "teardown", "turns", "user", "stop", "checks", "timeoutS", "notes", "ordering"}
 SETUP_TYPES = {}                  # type -> (fn(action, run_ctx), validate(action) -> [problems]); phases 2 and 3 register here
 
 
@@ -42,16 +42,44 @@ def validate(scenario):
     tags = scenario.get("tags", [])
     if not isinstance(tags, list) or not all(isinstance(t, str) and 0 < len(t) <= 40 for t in tags):
         problems.append("tags is a list of short words")
-    agent = scenario.get("agent")
-    if not isinstance(agent, dict):
-        problems.append("agent is required: {name?, driver, …}")
+    agent, agents = scenario.get("agent"), scenario.get("agents")
+    if (agent is None) == (agents is None):
+        problems.append("give agent (one agent, with turns) or agents (several, each with its own turns)")
+    elif agent is not None:
+        if not isinstance(agent, dict):
+            problems.append("agent is {name?, driver, …}")
+        else:
+            if "name" in agent and not core.valid_id(agent["name"]):
+                problems.append("agent.name is letters, digits, dot, dash, underscore or colon")
+            problems += ["agent: " + p for p in drivers.validate(agent)]
     else:
-        if "name" in agent and not core.valid_id(agent["name"]):
-            problems.append("agent.name is letters, digits, dot, dash, underscore or colon")
-        problems += ["agent: " + p for p in drivers.validate(agent)]
+        if not isinstance(agents, list) or not 2 <= len(agents) <= 20:
+            problems.append("agents is a list of 2 to 20 agents")
+        else:
+            names = []
+            for i, a in enumerate(agents):
+                if not isinstance(a, dict):
+                    problems.append("agents[%d] is an object" % i)
+                    continue
+                names.append(a.get("name"))
+                if not core.valid_id(a.get("name")):
+                    problems.append("agents[%d].name is required: letters, digits, dot, dash, underscore or colon" % i)
+                problems += ["agents[%d]: %s" % (i, p) for p in drivers.validate(a)]
+                if not (isinstance(a.get("turns"), list) and a["turns"]) and a.get("user") is None:
+                    problems.append("agents[%d] needs turns (what is said to it)" % i)
+                for j, t in enumerate(a.get("turns") or []):
+                    if not isinstance(t, dict) or not isinstance(t.get("say"), str) or not t["say"]:
+                        problems.append("agents[%d].turns[%d] needs say" % (i, j))
+            if len(set(names)) != len(names):
+                problems.append("agent names must be different")
     turns, user = scenario.get("turns"), scenario.get("user")
-    if turns is None and user is None:
+    if agents is None and turns is None and user is None:
         problems.append("give turns (what the user says, in order) or user (a simulated user)")
+    if agents is not None and (turns is not None or user is not None):
+        problems.append("with agents, each agent has its own turns; leave turns and user out")
+    if scenario.get("ordering") is not None:
+        from . import ordering
+        problems += ordering.validate(scenario["ordering"])
     if turns is not None:
         if not isinstance(turns, list) or not turns or len(turns) > 100:
             problems.append("turns is a list of 1 to 100 turns")
@@ -103,7 +131,8 @@ def validate(scenario):
     else:
         for i, spec in enumerate(specs):
             problems += ["checks[%d]: %s" % (i, p) for p in checks.validate(spec)]
-    has_check = specs or any(isinstance(t, dict) and t.get("expect") for t in (turns or []))
+    has_check = specs or any(isinstance(t, dict) and t.get("expect") for t in (turns or [])) or \
+        any(isinstance(t, dict) and t.get("expect") for a in (agents or []) if isinstance(a, dict) for t in a.get("turns") or [])
     if not has_check:
         problems.append("a scenario with no checks and no expectations passes nothing: add checks, or expect on a turn")
     t = scenario.get("timeoutS")

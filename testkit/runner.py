@@ -21,7 +21,7 @@ import threading
 import time
 import traceback
 
-from . import checks, core, drivers, fakes, runtime, scenario as scn, timeline
+from . import checks, core, drivers, fakes, ordering, runtime, scenario as scn, timeline
 from .store import store
 
 JOBS = {}                       # run -> result, while it is running
@@ -32,18 +32,28 @@ def new_run_id(scenario_id):
     return ("%s-%s" % (scenario_id[:40], core.new_id("", 6))).strip(".:-") or core.new_id("r-", 8)
 
 
+def participants_of(scenario):
+    """The agents a scenario drives: one `agent` with the scenario's turns, or each of `agents` with its own."""
+    if "agents" in scenario:
+        return [dict(a, name=a.get("name") or "agent%d" % i) for i, a in enumerate(scenario["agents"])]
+    return [dict(scenario["agent"], name=scenario["agent"].get("name") or "agent", turns=scenario.get("turns"), user=scenario.get("user"))]
+
+
 class RunCtx:
     """What setup actions and checks may use of the run in progress."""
 
     def __init__(self, run, scenario, tier, base_host, options):
         self.run, self.scenario, self.tier, self.base_host, self.options = run, scenario, tier, base_host, options
-        self.agent = (scenario["agent"].get("name") or "agent")
+        self.participants = participants_of(scenario)
+        self.agent = self.participants[0].get("name") or "agent"
+        self.lock = threading.Lock()
         self.cleanup = []                # callables, run in reverse at the end
         self.seed = options.get("seed")
 
-    def base_urls(self):
-        urls = core.host.run_base_urls(self.base_host, self.run, [self.agent])
-        out = dict(urls["agents"][self.agent])
+    def base_urls(self, agent=None):
+        agent = agent or self.agent
+        urls = core.host.run_base_urls(self.base_host, self.run, [agent])
+        out = dict(urls["agents"][agent])
         out["self"] = "http://" + self.base_host
         out["run"] = urls["baseUrls"]
         return out
@@ -90,13 +100,13 @@ def run_scenario(scenario, options=None, base_host="localhost:8099"):
     ctx = RunCtx(run, scenario, tier, base_host, options)
     started = time.time()
     result = {"run": run, "scenario": scenario["id"], "tier": tier, "status": "running", "startedAt": started, "turns": [],
-              "checks": [], "model": {}, "agent": {"name": ctx.agent, "driver": scenario["agent"].get("driver")},
+              "checks": [], "model": {}, "agents": [{"name": p["name"], "driver": p.get("driver")} for p in ctx.participants],
               "label": options.get("label", "")}
     with _LOCK:
         JOBS[run] = result
     store().touch_run(run, label=scenario["id"], meta={"scenario": scenario["id"], "tier": tier, "label": options.get("label", "")})
     store().put("results", run, result)
-    driver = None
+    driver = []
     if options.get("seed") is not None:
         fakes.reseed(options["seed"])
     try:
@@ -106,21 +116,30 @@ def run_scenario(scenario, options=None, base_host="localhost:8099"):
         if problems:
             result["error"] = "; ".join(problems)
         else:
-            dctx = drivers.Ctx(run, ctx.agent, ctx.base_urls(), emit=lambda kind, data: timeline.emit(run, kind, ctx.agent, None, data),
-                               timeout=float(scenario.get("timeoutS") or 120))
-            driver = drivers.make(scenario["agent"], dctx)
             deadline = started + float(scenario.get("timeoutS") or 120)
-            driver.start()
-            _converse(driver, ctx, result, deadline)
+            driver = []
+            for part in ctx.participants:
+                name = part["name"]
+                dctx = drivers.Ctx(run, name, ctx.base_urls(name), emit=(lambda n: lambda kind, data: timeline.emit(run, kind, n, None, data))(name),
+                                   timeout=float(scenario.get("timeoutS") or 120))
+                d = drivers.make(part, dctx)
+                d.start()
+                driver.append((d, part))
+            if scenario.get("ordering") and options.get("order"):
+                bad = ordering.install(run, scenario["ordering"], options["order"])
+                if bad:
+                    raise ValueError("; ".join(bad))
+                ctx.cleanup.append(lambda: result.setdefault("model", {}).__setitem__("orderTimedOut", ordering.remove(run)))
+            _converse_all(driver, ctx, result, deadline)
     except drivers.DriverError as exc:
         result["error"] = "the agent could not be driven: %s" % exc
     except Exception as exc:  # noqa: BLE001
         result["error"] = "%s: %s" % (type(exc).__name__, exc)
         core.log("testkit: run %s: %s" % (run, traceback.format_exc(limit=3).replace("\n", " | ")))
     finally:
-        if driver is not None:
+        for d, _ in driver or []:
             try:
-                driver.end()
+                d.end()
             except Exception:  # noqa: BLE001
                 pass
         _finish_model(ctx, result)
@@ -148,14 +167,39 @@ def run_scenario(scenario, options=None, base_host="localhost:8099"):
     return result
 
 
-def _converse(driver, ctx, result, deadline):
-    scenario, run, agent = ctx.scenario, ctx.run, ctx.agent
-    turns = scenario.get("turns")
+def _converse_all(drivers_, ctx, result, deadline):
+    """Every agent has its conversation at the same time. One agent is the usual case and runs in this thread."""
+    if len(drivers_) == 1:
+        d, part = drivers_[0]
+        return _converse(d, ctx, result, deadline, part)
+    errors = []
+
+    def one(d, part):
+        try:
+            _converse(d, ctx, result, deadline, part)
+        except drivers.DriverError as exc:
+            errors.append("%s: %s" % (part["name"], exc))
+        except Exception as exc:  # noqa: BLE001
+            errors.append("%s: %s: %s" % (part["name"], type(exc).__name__, exc))
+    threads = [threading.Thread(target=one, args=pair, daemon=True) for pair in drivers_]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(max(1.0, deadline - time.time() + 5))
+    if errors:
+        raise drivers.DriverError("; ".join(errors))
+
+
+def _converse(driver, ctx, result, deadline, part):
+    scenario, run, agent = ctx.scenario, ctx.run, part["name"]
+    turns = part.get("turns")
     limit = (scenario.get("stop") or {}).get("maxTurns") or 100
     simulated = None
     if turns is None:
         from . import users
-        simulated = users.make(scenario["user"], ctx)
+        simulated = users.make(part["user"], ctx)
+    multi = "agents" in scenario
+    mine = []
     n = 0
     while n < limit:
         if time.time() > deadline:
@@ -166,7 +210,7 @@ def _converse(driver, ctx, result, deadline):
                 return
             say, expect = turns[n]["say"], turns[n].get("expect")
         else:
-            say, expect = simulated.next(result["turns"]), None
+            say, expect = simulated.next(mine), None
             if say is None:
                 return
         n += 1
@@ -174,9 +218,13 @@ def _converse(driver, ctx, result, deadline):
         reply = driver.send(say)
         timeline.emit(run, "agent_reply", agent, said, {"text": reply.text, "turn": n, "ms": reply.ms, "state": reply.state,
                                                          "inputRequired": reply.input_required})
-        result["turns"].append({"turn": n, "say": say, "reply": reply.text, "ms": reply.ms, "state": reply.state})
-        if expect:
-            ctx.scenario.setdefault("_expect", []).append(dict(expect, type="answer", target=n, name="turn %d" % n))
+        row = {"turn": n, "say": say, "reply": reply.text, "ms": reply.ms, "state": reply.state}
+        mine.append(row)
+        with ctx.lock:
+            result["turns"].append(dict(row, agent=agent) if multi else row)
+            if expect:
+                ctx.scenario.setdefault("_expect", []).append(dict(expect, type="answer", target=n, name="%sturn %d" % (agent + " " if multi else "", n),
+                                                                    **({"agent": agent} if multi else {})))
         stop = (scenario.get("stop") or {}).get("when")
         if stop and core.cond(stop, {"text": reply.text, "turn": n, "state": reply.state, "inputRequired": reply.input_required})[0]:
             return

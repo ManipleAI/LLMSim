@@ -6,7 +6,7 @@ whatever a person can do on a page a harness can do over HTTP.
 
 from . import core, rest_area, run_route
 from . import checks, credentials, drivers, fakes, runner, scenario as scn, store, timeline
-from . import http_mock, mcp_mock, setup_actions, state_checks  # noqa: F401 — registering routes, checks and setup actions
+from . import a2a_peer, http_mock, mcp_mock, multi_checks, ordering, otlp, setup_actions, state_checks  # noqa: F401 — registering routes, checks and setup actions
 from .core import ok, fail
 
 
@@ -301,3 +301,47 @@ def _run_state(method, run, rest, body, query):
     if method == "DELETE":
         return ok(removed=fakes.purge(run))
     return fail(405, "GET reads a run's state, PUT seeds it, DELETE clears it.")
+
+
+@rest_area("interleavings")
+def _interleavings(method, rest, body, query, host):
+    """Run one scenario in several orders and say whether the order changed the outcome."""
+    if method == "POST" and len(rest) == 1 and core.valid_id(rest[0]):
+        scenario = store.store().get("scenarios", rest[0])
+        return _interleave(scenario, body or {}, host) if scenario else fail(404, "There is no scenario called %s." % rest[0])
+    if method == "POST" and not rest:
+        scenario = (body or {}).get("scenario")
+        problems = scn.validate(scenario)
+        if problems:
+            return fail(400, "That scenario has %d problem(s): %s" % (len(problems), "; ".join(problems[:5])), problems=problems)
+        return _interleave(scenario, body or {}, host)
+    return fail(404, "No such route: %s /api/interleavings/%s" % (method, "/".join(rest)))
+
+
+def _interleave(scenario, body, host):
+    spec = scenario.get("ordering")
+    orders = body.get("orders")
+    if not spec:
+        return fail(400, "That scenario has no ordering. Add ordering.steps, then name the orders to try.")
+    if not (isinstance(orders, list) and 2 <= len(orders) <= 12 and all(isinstance(o, list) for o in orders)):
+        return fail(400, "orders is a list of 2 to 12 orders, each a list of step names.")
+    compare = body.get("compare") or ["state"]
+    if not set(compare) <= {"state", "replies"}:
+        return fail(400, "compare is state and/or replies.")
+    runs = []
+    for order in orders:
+        result = runner.run_scenario(scenario, dict(_options(body, None), order=order, run=None), host)
+        replies = {}
+        for t in result.get("turns") or []:
+            replies.setdefault(t.get("agent", "agent"), []).append(t["reply"])
+        runs.append({"order": order, "run": result["run"], "verdict": result["verdict"], "state": result.get("state"), "replies": replies,
+                     "timedOut": (result.get("model") or {}).get("orderTimedOut") or []})
+    differences = []
+    for key in compare:
+        base = runs[0][key]
+        for r in runs[1:]:
+            if r[key] != base:
+                differences.append({"what": key, "between": [runs[0]["order"], r["order"]], "first": base, "second": r[key]})
+    race = bool(differences)
+    verdict = "fail" if race or any(r["verdict"] != "pass" for r in runs) else "pass"
+    return ok({"verdict": verdict, "race": race, "differences": differences[:6], "orders": runs})

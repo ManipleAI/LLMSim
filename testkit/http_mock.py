@@ -22,7 +22,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from . import checks, core, credentials, fakes, mcp_mock, route, rest_area, timeline
+from . import checks, core, credentials, fakes, mcp_mock, ordering, route, rest_area, timeline
 from .core import fail, ok
 from .store import store
 
@@ -299,9 +299,11 @@ def _endpoint(handler, method, path, rest, raw):
             body = json.loads(raw)
         except ValueError:
             return core.reply_json(handler, 400, {"error": "the body is not valid JSON"})
-    status, out, extra, special = serve_call(defn, method, sub.rstrip("/") or "/", query, body, raw, {k.lower(): v for k, v in handler.headers.items()
-                                                                                                      if k.lower() not in ("authorization", "cookie")},
-                                             ident.get("run"), ident.get("agent"))
+    with ordering.guard(ident.get("run"), {"kind": "tool", "agent": ident.get("agent", ""), "run": ident.get("run", ""), "tool": "%s %s" % (method, sub),
+                                           "arguments": body or {}, "server": name}):
+        status, out, extra, special = serve_call(defn, method, sub.rstrip("/") or "/", query, body, raw, {k.lower(): v for k, v in handler.headers.items()
+                                                                                                          if k.lower() not in ("authorization", "cookie")},
+                                                 ident.get("run"), ident.get("agent"))
     if special and special.startswith("drop"):
         return core.hang_up(handler, special.split(":", 1)[1])
     core.reply_json(handler, status, out, extra)

@@ -131,6 +131,14 @@ class Driver:
     def start(self):
         pass
 
+    def ident(self, url):
+        """Headers that say which run and agent this is, when the target is LLMSim itself — so a
+        stub or a proxy it serves puts what it sees in this run. Never sent to anyone else."""
+        mine = self.ctx.base_urls.get("self")
+        if mine and url.startswith(mine):
+            return {"X-LLMSim-Run": self.ctx.run, "X-LLMSim-Agent": self.ctx.agent}
+        return {}
+
     def send(self, text):
         raise NotImplementedError
 
@@ -159,7 +167,7 @@ class HttpDriver(Driver):
         self.turn += 1
         values = {"message": text, "turn": self.turn, "conversation": self.conversation, "run": self.ctx.run, "agent": self.ctx.agent}
         body = fill(self.cfg.get("body") or {"message": "{{message}}"}, values)
-        headers = dict(fill(self.cfg.get("headers") or {}, values), **_auth_headers(self.cfg, self.ctx))
+        headers = dict(fill(self.cfg.get("headers") or {}, values), **_auth_headers(self.cfg, self.ctx), **self.ident(self.cfg["url"]))
         started = time.time()
         stream = self.cfg.get("replyFrom") == "sse"
         status, _, out = http(self.cfg.get("method", "POST"), fill(self.cfg["url"], values), headers, body, self.timeout(),
@@ -208,7 +216,7 @@ class OpenAIDriver(Driver):
         started = time.time()
         url = self.cfg["url"].rstrip("/") + "/chat/completions"
         stream = body["stream"]
-        status, _, out = http("POST", url, _auth_headers(self.cfg, self.ctx), body, self.timeout(), stream_to=sse_events if stream else None)
+        status, _, out = http("POST", url, dict(_auth_headers(self.cfg, self.ctx), **self.ident(url)), body, self.timeout(), stream_to=sse_events if stream else None)
         ms = int((time.time() - started) * 1000)
         if status >= 400:
             raise DriverError("the endpoint answered HTTP %d: %s" % (status, str(out)[:300]))
@@ -303,7 +311,7 @@ class A2ADriver(Driver):
         base = self.cfg["url"].rstrip("/")
         for suffix in ("/.well-known/agent-card.json", "/.well-known/agent.json"):
             try:
-                status, _, text = http("GET", base + suffix, _auth_headers(self.cfg, self.ctx), None, 15)
+                status, _, text = http("GET", base + suffix, dict(_auth_headers(self.cfg, self.ctx), **self.ident(base)), None, 15)
             except DriverError:
                 break
             if status == 200:
@@ -318,7 +326,7 @@ class A2ADriver(Driver):
     def _rpc(self, method, params, stream=False):
         self.rpc_id += 1
         body = {"jsonrpc": "2.0", "id": self.rpc_id, "method": method, "params": params}
-        headers = _auth_headers(self.cfg, self.ctx)
+        headers = dict(_auth_headers(self.cfg, self.ctx), **self.ident(self.endpoint))
         if stream:
             headers["Accept"] = "text/event-stream"
         status, _, out = http("POST", self.endpoint, headers, body, self.timeout(), stream_to=sse_events if stream else None)

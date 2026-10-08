@@ -132,6 +132,7 @@ def run_state_ops(ops, scope, run, agent):
             if before is None:
                 return {"error": "not found", "collection": coll, "key": str(key)}, True
             result = before
+            timeline.emit(run, "state_read", agent, None, {"op": "get", "collection": coll, "key": str(key), "value": before})
         elif kind == "put":
             result = state_write(run, agent, coll, key, op["value"], "put", before)
         elif kind == "update":

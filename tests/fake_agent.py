@@ -7,6 +7,7 @@ it does to this one, so the tests exercise the kit on the same path a real agent
 
 import json
 import threading
+import time
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -38,7 +39,12 @@ class FakeAgent:
                                "session": body.get("session")}
                     except Exception as exc:  # noqa: BLE001 — an agent whose model refused it
                         return self._send(502, {"error": "the model refused: %s" % exc})
-                elif self.path in ("/chat-mcp", "/chat-http"):
+                elif self.path == "/rw":
+                    try:
+                        out = {"output": {"text": agent.read_modify_write(body)}}
+                    except Exception as exc:  # noqa: BLE001
+                        return self._send(502, {"error": "the agent failed: %s" % exc})
+                elif self.path in ("/chat-mcp", "/chat-http", "/chat-a2a"):
                     try:
                         out = {"output": {"text": agent.answer_with_tools(body, self.path)}}
                     except Exception as exc:  # noqa: BLE001
@@ -97,6 +103,40 @@ class FakeAgent:
         except urllib.error.HTTPError as exc:
             return {"error": "HTTP %d" % exc.code, "body": exc.read().decode()[:200]}
 
+    def read_modify_write(self, body):
+        """Read a counter and write it back plus one — through a tool, without asking any model. A race waiting to happen."""
+        url = "%s/run/%s/agent/%s/mcp/%s" % (self.sim_base, body["run"], body["agent"], body["mcp"])
+        got = self.rpc(url, "tools/call", {"name": "read_counter", "arguments": {}})
+        value = got["structuredContent"]["value"]
+        self.rpc(url, "tools/call", {"name": "write_counter", "arguments": {"value": value + 1}})
+        return "%s read %d and wrote %d" % (body["agent"], value, value + 1)
+
+    def delegate(self, base, run, name, to, task):
+        """Ask another agent, over A2A, and wait for it."""
+        url = "%s/run/%s/agent/%s/a2a/%s" % (base, run, name, to)
+        message = {"kind": "message", "role": "user", "messageId": "m1", "parts": [{"kind": "text", "text": task}]}
+        req = urllib.request.Request(url, json.dumps({"jsonrpc": "2.0", "id": 1, "method": "message/send", "params": {"message": message}}).encode(),
+                                     {"Content-Type": "application/json"})
+        try:
+            result = json.loads(urllib.request.urlopen(req, timeout=15).read())
+        except urllib.error.HTTPError as exc:
+            return "error: %s is unavailable (HTTP %d)" % (to, exc.code)
+        if "error" in result:
+            return "error: %s" % result["error"]["message"]
+        result = result["result"]
+        for _ in range(8):
+            if result.get("kind") != "task" or result["status"]["state"] not in ("working", "submitted"):
+                break
+            time.sleep(0.05)
+            req = urllib.request.Request(url, json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tasks/get", "params": {"id": result["id"]}}).encode(),
+                                         {"Content-Type": "application/json"})
+            result = json.loads(urllib.request.urlopen(req, timeout=15).read())["result"]
+        if result.get("kind") == "message":
+            return " ".join(p.get("text", "") for p in result.get("parts", []))
+        said = " ".join(p.get("text", "") for p in ((result.get("status") or {}).get("message") or {}).get("parts", []))
+        said += " ".join(p.get("text", "") for a in result.get("artifacts", []) for p in a.get("parts", []))
+        return said if result["status"]["state"] in ("completed", "input-required") else "error: peer state %s %s" % (result["status"]["state"], said)
+
     def answer_with_tools(self, body, path):
         """An agent whose tools are an MCP server (/chat-mcp) or a REST backend (/chat-http)."""
         run, name, sim = body["run"], body["agent"], self.sim_base
@@ -106,6 +146,10 @@ class FakeAgent:
             self.rpc(url, "notifications/initialized", notify=True)
             tools = [{"type": "function", "function": {"name": t["name"], "description": t.get("description", ""), "parameters": t["inputSchema"]}}
                      for t in self.rpc(url, "tools/list")["tools"]]
+        elif path == "/chat-a2a":
+            tools = [{"type": "function", "function": {"name": "delegate", "description": "Hand a task to another agent",
+                                                       "parameters": {"type": "object", "required": ["to", "task"],
+                                                                      "properties": {"to": {"type": "string"}, "task": {"type": "string"}}}}}]
         else:
             tools = [{"type": "function", "function": {"name": n, "parameters": {"type": "object", "properties": {"id": {"type": "integer"}}}}}
                      for n in ("get_order", "refund_order")]
@@ -121,7 +165,9 @@ class FakeAgent:
                 return msg.get("content") or ""
             for call in msg["tool_calls"]:
                 args = json.loads(call["function"]["arguments"] or "{}")
-                if path == "/chat-mcp":
+                if path == "/chat-a2a":
+                    content = self.delegate(sim, run, name, args.get("to", ""), args.get("task", ""))
+                elif path == "/chat-mcp":
                     got = self.rpc(url, "tools/call", {"name": call["function"]["name"], "arguments": args})
                     content = got["content"][0]["text"]
                 else:

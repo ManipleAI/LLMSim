@@ -72,8 +72,9 @@ curl -X POST localhost:8099/api/assertions/evaluate -d '{"assertions": [
    "none": {"field": "allText", "op": "regex", "value": "\\b\\d{13,16}\\b"}}]}'
 ```
 
-**Record a real run once, replay it for free.** Route to a real model (an API key
-or a ChatGPT plan), record the session, and every later run gets the same answers.
+**Record a real run once, replay it for free.** Route to a real model (Anthropic's
+API, a ChatGPT plan or any upstream), record the session, and every later run gets
+the same answers.
 
 ```bash
 curl -X POST localhost:8099/api/sessions/record -d '{"name": "login-flow"}'
@@ -108,7 +109,7 @@ script uses.
 ## Know before you share it
 
 LLMSim has no login. Anyone who can reach the port can use all of it, and once a
-ChatGPT plan is signed in, can spend that plan. Keep it on your own machine or a
+ChatGPT plan is signed in or an Anthropic key is saved, can spend it. Keep it on your own machine or a
 network you trust.
 
 ## Tests

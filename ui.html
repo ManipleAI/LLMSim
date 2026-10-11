@@ -361,7 +361,7 @@
   <!-- ── Routing ────────────────────────────────────────────────────── -->
   <section class="view" id="v-routing" hidden>
     <div class="head">
-      <div><h1>Routing</h1><p>Whether answers are made up here, or by one real model upstream.</p></div>
+      <div><h1>Routing</h1><p>Whether answers are made up here or come from a real model: an upstream, a ChatGPT plan, or Anthropic's API.</p></div>
     </div>
     <div class="body">
       <div class="card">
@@ -371,6 +371,7 @@
           <button id="def-scripted" onclick="setDefault('scripted')" aria-pressed="false">No upstream — answer here</button>
           <button id="def-relay" onclick="setDefault('relay')" aria-pressed="false">Upstream — relay</button>
           <button id="def-chatgpt" onclick="setDefault('chatgpt')" aria-pressed="false">ChatGPT plan</button>
+          <button id="def-anthropic" onclick="setDefault('anthropic')" aria-pressed="false">Anthropic API</button>
         </div>
         <div id="nourl" class="note warn" hidden>
           Nothing is configured to relay to, so relay routes answer here instead. Set an upstream below.
@@ -442,6 +443,45 @@
         </div>
         <div class="note warn">
           Anyone who can reach this port can spend this plan. Until now nothing here was worth taking; signed in, something is. Keep it on your own machine or a network you trust. Usage counts against the plan's own limits, and a limit reached comes back as a 429.
+        </div>
+      </div>
+
+      <div class="card" id="anthropiccard">
+        <h2>Anthropic API</h2>
+        <p class="help">Answer with a real Claude model, by API key. Every model routed here is answered by it, in whichever format the client asked in, tools and streaming included.</p>
+        <div id="an-status" style="font-size:13px; margin-bottom:4px"></div>
+        <div class="row">
+          <div><label for="an-key">Key <span id="an-keyset" style="color:var(--green)"></span></label>
+            <input id="an-key" class="mono" type="password" autocomplete="new-password" placeholder="sk-ant-…  ·  leave blank to keep the stored one"></div>
+          <div style="flex:0 0 290px"><label for="an-auth">It is</label>
+            <select id="an-auth">
+              <option value="api_key">An Anthropic API key (sent as x-api-key)</option>
+              <option value="bearer">A gateway's token (sent as a Bearer token)</option>
+            </select></div>
+        </div>
+        <div class="row">
+          <div><label for="an-model">Model <span class="hint">· leave blank to use the Claude model each client asks for</span></label>
+            <input id="an-model" class="mono" type="text" list="an-models" placeholder="the model the client asks for">
+            <datalist id="an-models"></datalist></div>
+          <div style="flex:0 0 150px"><label for="an-max">Max tokens <span class="hint">· when not asked</span></label>
+            <input id="an-max" class="mono" type="number" min="1" max="128000" placeholder="4096"></div>
+        </div>
+        <label for="an-url">Base URL <span class="hint">· Anthropic's own, or a gateway that speaks the Messages API</span></label>
+        <input id="an-url" class="mono" type="text" placeholder="https://api.anthropic.com">
+        <label style="display:flex; align-items:center; gap:8px; margin-top:14px; color:var(--ink)">
+          <input id="an-fallback" type="checkbox" style="width:auto"> Answer here if Anthropic cannot be reached
+        </label>
+        <div style="margin-top:14px; display:flex; gap:9px; align-items:center; flex-wrap:wrap">
+          <button class="btn" onclick="saveAnthropic()">Save</button>
+          <button class="btn ghost" onclick="anthropicModels()">List the models this key can use</button>
+          <button class="btn ghost" id="an-forget" onclick="forgetAnthropicKey()" hidden>Forget the key</button>
+          <span id="an-msg" style="font-size:12px"></span>
+        </div>
+        <div class="note warn">
+          Requests on this route are billed to the key. Anyone who can reach this port can spend it, so keep it on your own machine or a network you trust.
+        </div>
+        <div class="note plain">
+          It takes a key, not a Claude sign-in. Anthropic does not permit a tool to route requests through a Free, Pro or Max plan, so a subscription cannot be used here. Use an API key from the Claude Console or a cloud provider.
         </div>
       </div>
 
@@ -911,9 +951,10 @@ const ROUTE_MEANS = {
   scripted: ["Scripted", "Answers are made up here, from your rules. Nothing is called and nothing is spent."],
   relay: ["Upstream", "Requests are relayed to one real model."],
   chatgpt: ["ChatGPT plan", "Requests are answered by a ChatGPT subscription."],
+  anthropic: ["Anthropic API", "Requests are answered by a real Claude model, billed to an API key."],
 };
 const TASKS = [
-  ["routing", "Decide what answers", "Scripted here, relayed to a real model, or a ChatGPT plan"],
+  ["routing", "Decide what answers", "Scripted here, an upstream, a ChatGPT plan or Anthropic's API"],
   ["behaviors", "Write what the model says", "Rules: this ask gets this answer, or this tool call"],
   ["models", "Treat one model differently", "Its own route, a fixed answer, a status or a delay"],
   ["faults", "Make something go wrong", "A dead stream, a bad tool call, a 429, on purpose"],
@@ -936,6 +977,10 @@ function renderOverview() {
     stats.push(CG.signedIn
       ? { k: "ChatGPT plan", v: "Signed in", d: "Requests on this route spend the plan.", go: "routing" }
       : { k: "ChatGPT plan", v: "Not signed in", d: "Requests on this route fail until someone signs in.", go: "routing", warn: true });
+  } else if (d === "anthropic" || Object.values(CFG.routing.models).includes("anthropic")) {
+    stats.push(CFG.anthropic.keySet
+      ? { k: "Anthropic API", v: "Key stored", d: "Requests on this route are billed to it.", go: "routing" }
+      : { k: "Anthropic API", v: "No key", d: "Requests on this route fail until one is saved.", go: "routing", warn: true });
   } else if (d === "relay") {
     stats.push(CFG.upstream.url
       ? { k: "Upstream", v: CFG.upstream.model || "set", d: CFG.upstream.url, go: "routing" }
@@ -970,7 +1015,7 @@ function renderOverview() {
 // a half-typed field is never in two places.
 function parkCards() {
   const park = document.getElementById("cfg-park");
-  for (const id of ["chatgptcard", "upstreamcard"]) {
+  for (const id of ["chatgptcard", "anthropiccard", "upstreamcard"]) {
     const card = document.getElementById(id);
     if (card && card.parentNode !== park) park.appendChild(card);
   }
@@ -984,7 +1029,7 @@ function placeCards() {
   // places to change one setting.
   const route = onModel ? (CFG.routing.models[PICKED] || "") : CFG.routing.default;
   const home = document.getElementById(onModel ? "cfg-slot" : "cfg-home");
-  for (const [id, wants] of [["chatgptcard", "chatgpt"], ["upstreamcard", "relay"]]) {
+  for (const [id, wants] of [["chatgptcard", "chatgpt"], ["anthropiccard", "anthropic"], ["upstreamcard", "relay"]]) {
     const card = document.getElementById(id);
     const shown = !!home && route === wants && (onModel || VIEW === "routing");
     if (shown && card.parentNode !== home) home.appendChild(card);
@@ -993,8 +1038,8 @@ function placeCards() {
 }
 
 function routeOf(m) { return CFG.routing.models[m] || CFG.routing.default; }
-const routeName = (r) => ({ relay: "upstream", chatgpt: "ChatGPT plan" }[r] || "no upstream");
-const routeTag = (r) => `<span class="tag ${({ relay: "relay", chatgpt: "plan", replay: "replay" })[r] || ""}">${({ relay: "up", chatgpt: "plan", replay: "replay" })[r] || "local"}</span>`;
+const routeName = (r) => ({ relay: "upstream", chatgpt: "ChatGPT plan", anthropic: "Anthropic API" }[r] || "no upstream");
+const routeTag = (r) => `<span class="tag ${({ relay: "relay", chatgpt: "plan", anthropic: "plan", replay: "replay" })[r] || ""}">${({ relay: "up", chatgpt: "plan", anthropic: "claude", replay: "replay" })[r] || "local"}</span>`;
 
 function renderList() {
   const q = (document.getElementById("filter").value || "").toLowerCase();
@@ -1030,6 +1075,7 @@ function renderDetail() {
         <button onclick="setRoute('${esc(m)}','scripted')" aria-pressed="${r === "scripted"}">No upstream</button>
         <button onclick="setRoute('${esc(m)}','relay')" aria-pressed="${r === "relay"}">Upstream</button>
         <button onclick="setRoute('${esc(m)}','chatgpt')" aria-pressed="${r === "chatgpt"}">ChatGPT plan</button>
+        <button onclick="setRoute('${esc(m)}','anthropic')" aria-pressed="${r === "anthropic"}">Anthropic API</button>
       </div>
       ${r === "" ? `<p class="help" style="margin:12px 0 0">It follows the default route, <b>${esc(routeName(CFG.routing.default))}</b>. <a href="#routing" onclick="show('routing'); return false">That route's settings are on Routing.</a></p>` : ""}
     </div>
@@ -1065,6 +1111,8 @@ function renderRouting() {
   document.getElementById("def-scripted").setAttribute("aria-pressed", d === "scripted");
   document.getElementById("def-relay").setAttribute("aria-pressed", d === "relay");
   document.getElementById("def-chatgpt").setAttribute("aria-pressed", d === "chatgpt");
+  document.getElementById("def-anthropic").setAttribute("aria-pressed", d === "anthropic");
+  renderAnthropic();
   document.getElementById("nourl").hidden = !!up.url || d !== "relay";
   const r = document.getElementById("routed");
   r.hidden = !routed;
@@ -1143,6 +1191,49 @@ const saveFidelity = () => post({
     unknownModel: document.getElementById("f-unknownModel").checked,
   },
 }, "saved");
+// ── Anthropic API ─────────────────────────────────────────────────────────
+// The key goes one way. The page is told whether one is stored and nothing
+// more, so a field left blank means "keep it".
+function renderAnthropic() {
+  if (!CFG || !CFG.anthropic) return;
+  const a = CFG.anthropic, live = document.activeElement ? document.activeElement.id : "";
+  document.getElementById("an-keyset").textContent = a.keySet ? "· stored" : "";
+  document.getElementById("an-forget").hidden = !a.keySet;
+  document.getElementById("an-status").innerHTML = a.keySet
+    ? `<span class="tag set">key stored</span> Answers with <code>${esc(a.model || "the Claude model each client asks for")}</code>.`
+    : `<span class="tag">no key</span> Requests on this route fail until one is saved.`;
+  if (live !== "an-auth") document.getElementById("an-auth").value = a.auth || "api_key";
+  if (live !== "an-model") document.getElementById("an-model").value = a.model || "";
+  if (live !== "an-max") document.getElementById("an-max").value = a.maxTokens || "";
+  if (live !== "an-url") document.getElementById("an-url").value = a.url || "";
+  if (live !== "an-fallback") document.getElementById("an-fallback").checked = !!a.fallback;
+}
+const anSay = (text, bad) => note("an-msg", text, bad);
+async function saveAnthropic() {
+  const max = document.getElementById("an-max").value.trim();
+  const r = await fetch(api("/api/ui/config"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ anthropic: {
+    key: document.getElementById("an-key").value, auth: document.getElementById("an-auth").value,
+    model: document.getElementById("an-model").value.trim(), url: document.getElementById("an-url").value.trim(),
+    fallback: document.getElementById("an-fallback").checked, ...(max ? { maxTokens: Number(max) } : {}),
+  } }) });
+  const out = await r.json().catch(() => ({}));
+  if (!r.ok) return anSay(out.error || "That could not be saved.", true);
+  document.getElementById("an-key").value = "";
+  anSay("Saved."); await load();
+}
+async function forgetAnthropicKey() {
+  if (!confirm("Forget the Anthropic key? Requests on this route will fail until another is saved.")) return;
+  await REST("POST", "/api/ui/config", { anthropic: { forgetKey: true } });
+  anSay("The key is forgotten."); await load();
+}
+async function anthropicModels() {
+  anSay("Asking Anthropic…");
+  const r = await REST("GET", "/api/ui/anthropic/models");
+  if (!r.ok) return anSay(r.body.error || "The models could not be listed.", true);
+  document.getElementById("an-models").innerHTML = r.body.models.map((m) => `<option value="${esc(m)}">`).join("");
+  anSay(r.body.models.length + " models. Start typing in Model to choose one.");
+}
+
 const saveUpstream = () => post({
   upstream: {
     url: document.getElementById("url").value.trim(),
@@ -2469,6 +2560,11 @@ function renderChat() {
     text = CG.signedIn
       ? `<span class="tag plan">plan</span> Answered by the ChatGPT plan (<code>${esc(CFG.chatgpt.model || CG.default || "its own default model")}</code>), signed in as ${esc(CG.email || "a ChatGPT account")}. This spends the plan.`
       : `<span class="tag err">not signed in</span> This model is routed to the ChatGPT plan and will fail until you sign in. ${go}`;
+  } else if (r === "anthropic") {
+    kind = CFG.anthropic.keySet ? "ok" : "warn";
+    text = CFG.anthropic.keySet
+      ? `<span class="tag plan">claude</span> Answered by Anthropic's API (<code>${esc(CFG.anthropic.model || "the Claude model asked for")}</code>). This is billed to the key.`
+      : `<span class="tag err">no key</span> This model is routed to Anthropic's API and will fail until a key is saved. ${go}`;
   } else if (r === "relay") {
     kind = CFG.upstream.url ? "ok" : "warn";
     text = CFG.upstream.url

@@ -404,6 +404,21 @@ DEFAULTS = {
         "instructions": "You are a helpful assistant.",
         "fallback": False,
     },
+    # A fourth route, "anthropic": a real Claude model, by API key. The same
+    # shape as the ChatGPT plan route — any client format in, that format out —
+    # with a key in place of a sign-in. See "Anthropic: a real Claude model".
+    "anthropic": {
+        "url": os.environ.get("LLMSIM_ANTHROPIC_UPSTREAM", "https://api.anthropic.com").rstrip("/"),
+        "key": os.environ.get("LLMSIM_ANTHROPIC_UPSTREAM_KEY", ""),
+        # How the credential is sent: "api_key" as x-api-key, which is what
+        # Anthropic's API takes, or "bearer" as Authorization: Bearer, which is
+        # what a gateway in front of it usually takes.
+        "auth": os.environ.get("LLMSIM_ANTHROPIC_UPSTREAM_AUTH", "api_key"),
+        # Empty means "the model the client asked for", when that is a Claude model.
+        "model": os.environ.get("LLMSIM_ANTHROPIC_UPSTREAM_MODEL", ""),
+        "maxTokens": 4096,
+        "fallback": False,
+    },
     "upstream": {
         "url": os.environ.get("LLMSIM_UPSTREAM", "").rstrip("/"),
         "key": os.environ.get("LLMSIM_UPSTREAM_KEY", ""),
@@ -468,6 +483,12 @@ CONFIG = load_config()
 def save_config():
     settings = {k: v for k, v in CONFIG.items() if k not in SUITE_KEYS}
     _write_json(CONFIG_PATH, settings)
+    # It can hold an upstream key and an Anthropic key. Nobody else on the
+    # machine needs to read it, so nobody else can.
+    try:
+        os.chmod(CONFIG_PATH, 0o600)
+    except OSError:
+        pass
     save_suite()
 
 
@@ -508,11 +529,16 @@ def public_config():
     out = json.loads(json.dumps(CONFIG))
     out["upstream"]["key"] = ""
     out["upstream"]["keySet"] = bool(CONFIG["upstream"]["key"])
+    out["anthropic"]["key"] = ""
+    out["anthropic"]["keySet"] = bool(CONFIG["anthropic"]["key"])
     return out
 
 
+ROUTES = ("scripted", "relay", "chatgpt", "anthropic")
+
+
 def route_for(model):
-    """scripted, relay or chatgpt, for this model.
+    """scripted, relay, chatgpt or anthropic, for this model.
 
     A named model wins over the default, and a relay route with no upstream
     URL configured is scripted — saying "relay" while having nowhere to relay
@@ -2598,7 +2624,7 @@ def chatgpt_events(resp):
     raise ChatGPTError(502, "upstream_error", "ChatGPT closed the stream before the answer was finished.")
 
 
-def _collect(events, plan):
+def _collect(events, plan, who="ChatGPT"):
     """The whole answer as the {text, tool_calls} turn the script produces, so
     a client that did not ask for a stream is served by the builders every
     other route already uses."""
@@ -2619,7 +2645,7 @@ def _collect(events, plan):
     if calls:
         turn["tool_calls"] = calls
     if not turn:
-        turn["text"] = "(ChatGPT returned no content)"
+        turn["text"] = "(%s returned no content)" % who
     if reason == "length":
         turn["stop_reason"] = "max_tokens"
     turn.update(input_tokens=usage.get("input", 0), output_tokens=usage.get("output", 0),
@@ -2831,6 +2857,272 @@ def chatgpt_encoder(shape, model, body):
     if shape == "responses":
         return _ResponsesEnc(model)
     return _ChatEnc(model, bool((body.get("stream_options") or {}).get("include_usage")))
+
+
+# ── Anthropic: a real Claude model, by API key ───────────────────────────
+#
+# The ChatGPT route answers with a subscription somebody signed in to. This
+# one answers with Anthropic's API and a key: the same two seams, a canonical
+# request in and canonical events out, so a client speaking any of the three
+# formats is answered in its own, tools and streaming included.
+#
+# It takes a key and not a sign-in, on purpose. Anthropic's terms do not permit
+# a tool to offer Claude sign-in, or to route requests through Free, Pro or Max
+# plan credentials on behalf of whoever is calling it — and that is exactly
+# what a simulator answering other tools' requests would be doing. So there is
+# no OAuth here and nothing that presents itself as Claude Code. The credential
+# is an API key from the Claude Console (or a cloud provider's), sent as
+# x-api-key; or, for a gateway that stands in front of the API, whatever token
+# that gateway issues, sent as Authorization: Bearer.
+
+class AnthropicError(ChatGPTError):
+    pass
+
+
+ANTHROPIC_VERSION = "2023-06-01"
+
+
+def save_anthropic_settings(given):
+    """Apply what the console sent. Returns what is wrong with it, or None."""
+    cfg = CONFIG["anthropic"]
+    if "url" in given:
+        url = str(given["url"] or "").strip().rstrip("/") or "https://api.anthropic.com"
+        if not re.match(r"https?://[^\s/]+", url):
+            return "anthropic.url must start with http:// or https://"
+        cfg["url"] = url
+    if "auth" in given:
+        if given["auth"] not in ("api_key", "bearer"):
+            return "anthropic.auth is api_key (sent as x-api-key) or bearer (sent as Authorization: Bearer)"
+        cfg["auth"] = given["auth"]
+    if "model" in given:
+        cfg["model"] = str(given["model"] or "").strip()[:100]
+    if "maxTokens" in given:
+        try:
+            limit = int(given["maxTokens"])
+        except (TypeError, ValueError):
+            return "anthropic.maxTokens must be a whole number"
+        if not 1 <= limit <= 128000:
+            return "anthropic.maxTokens must be between 1 and 128000"
+        cfg["maxTokens"] = limit
+    if "fallback" in given:
+        cfg["fallback"] = bool(given["fallback"])
+    # An empty key means "leave the stored one alone", so a person changing
+    # the model does not have to retype the secret. Forgetting it is said out loud.
+    if given.get("forgetKey"):
+        cfg["key"] = ""
+    elif given.get("key"):
+        cfg["key"] = str(given["key"]).strip()
+    return None
+
+
+def anthropic_model(requested):
+    """The model Anthropic is asked for: the one chosen, or the client's own when it is a Claude model."""
+    chosen = CONFIG["anthropic"]["model"]
+    if chosen:
+        return chosen
+    if str(requested or "").startswith("claude"):
+        return requested
+    raise AnthropicError(502, "upstream_error",
+                         "No Anthropic model is chosen, and %r is not one of theirs. Set a model under Routing, Anthropic API."
+                         % (requested or ""))
+
+
+def _anthropic_auth_headers():
+    cfg = CONFIG["anthropic"]
+    if not cfg["key"]:
+        raise AnthropicError(502, "upstream_error",
+                             "This model is routed to Anthropic and no key is set. Add one under Routing, Anthropic API.")
+    auth = {"Authorization": "Bearer " + cfg["key"]} if cfg["auth"] == "bearer" else {"x-api-key": cfg["key"]}
+    return dict(auth, **{"anthropic-version": ANTHROPIC_VERSION, "content-type": "application/json"})
+
+
+def _anthropic_image(url):
+    match = re.match(r"data:([^;,]+);base64,(.*)$", url or "", re.S)
+    if match:
+        return {"type": "image", "source": {"type": "base64", "media_type": match.group(1), "data": match.group(2)}}
+    return {"type": "image", "source": {"type": "url", "url": url}}
+
+
+def anthropic_payload(canon, model, body):
+    """Canonical request → POST /v1/messages, always streamed.
+
+    Streamed whatever the client asked, for the reason the plan route does it:
+    one way to read the answer, and a client that wanted it whole is served by
+    collecting the stream. A long answer asked for whole would otherwise be
+    refused by the API for being long.
+    """
+    messages = []
+
+    def add(role, block):
+        if messages and messages[-1]["role"] == role:
+            messages[-1]["content"].append(block)
+        else:
+            messages.append({"role": role, "content": [block]})
+
+    for item in canon["items"]:
+        kind = item["kind"]
+        if kind == "text":
+            add("assistant" if item["role"] == "assistant" else "user", {"type": "text", "text": item["text"]})
+        elif kind == "image":
+            add("user", _anthropic_image(item["url"]))
+        elif kind == "call":
+            try:
+                args = json.loads(item["arguments"])
+            except ValueError:
+                args = {"_raw": item["arguments"]}
+            add("assistant", {"type": "tool_use", "id": item["call_id"], "name": item["name"],
+                              "input": args if isinstance(args, dict) else {"value": args}})
+        elif kind == "result":
+            add("user", {"type": "tool_result", "tool_use_id": item["call_id"], "content": item["output"]})
+
+    limit = next((body.get(k) for k in ("max_tokens", "max_completion_tokens", "max_output_tokens")
+                  if isinstance(body.get(k), int) and not isinstance(body.get(k), bool) and body.get(k) > 0), None)
+    payload = {"model": model, "max_tokens": limit or CONFIG["anthropic"]["maxTokens"], "messages": messages, "stream": True}
+    system = "\n\n".join(part for part in canon["system"] if part)
+    if system:
+        payload["system"] = system
+    if canon["tools"]:
+        payload["tools"] = [{"name": t["name"], "description": t["description"], "input_schema": t["parameters"]}
+                            for t in canon["tools"]]
+        choice = canon["tool_choice"]
+        chosen = ({"type": "tool", "name": choice["name"]} if isinstance(choice, dict)
+                  else {"type": "any"} if choice == "required" else {"type": "none"} if choice == "none" else {"type": "auto"})
+        if not canon["parallel"] and chosen["type"] != "none":
+            chosen["disable_parallel_tool_use"] = True
+        if chosen != {"type": "auto"}:
+            payload["tool_choice"] = chosen
+    # The sampling controls the API does take. One of temperature and top_p,
+    # not both: newer models refuse the pair.
+    if isinstance(body.get("temperature"), (int, float)) and not isinstance(body.get("temperature"), bool):
+        payload["temperature"] = body["temperature"]
+    elif isinstance(body.get("top_p"), (int, float)) and not isinstance(body.get("top_p"), bool):
+        payload["top_p"] = body["top_p"]
+    stops = body.get("stop_sequences") or body.get("stop")
+    if isinstance(stops, str):
+        stops = [stops]
+    if isinstance(stops, list) and stops:
+        payload["stop_sequences"] = [str(x) for x in stops][:4]
+    return payload
+
+
+def anthropic_not_sent(canon, body):
+    """What the client asked for that this route has no way to pass on, for the log."""
+    out = [k for k in canon["dropped"] if k.startswith("tool:")]
+    out += [k for k in ("presence_penalty", "frequency_penalty", "seed", "n") if body.get(k) is not None]
+    if canon["effort"]:
+        out.append("reasoning_effort")
+    if canon["text_format"]:
+        out.append("response_format")
+    return out
+
+
+def _anthropic_http_error(exc):
+    """An upstream HTTP failure, as the client's own."""
+    raw = exc.read()[:4000]
+    try:
+        err = (json.loads(raw) or {}).get("error") or {}
+        message = err.get("message") or raw.decode("utf-8", "replace")[:300]
+    except Exception:
+        message = raw.decode("utf-8", "replace")[:300]
+    if exc.code == 429:
+        return AnthropicError(429, "rate_limit_error", "Anthropic's rate limit was reached: " + message)
+    if exc.code == 529:
+        return AnthropicError(529, "overloaded_error", "Anthropic is overloaded: " + message)
+    if exc.code in (400, 404, 413, 422):
+        return AnthropicError(400, "invalid_request_error", "Anthropic rejected the request: " + message)
+    # 401 and 403 are LLMSim's key failing, not the caller's. Passed on as a
+    # 401 they would tell a gateway its own key was wrong.
+    if exc.code in (401, 403):
+        return AnthropicError(502, "upstream_error", "Anthropic refused the key LLMSim holds (%d): %s" % (exc.code, message))
+    return AnthropicError(502, "upstream_error", "Anthropic failed (%d): %s" % (exc.code, message))
+
+
+def anthropic_open(payload):
+    """Open the upstream stream. Raises AnthropicError before any byte is sent
+    to the client, so a failure can still be an honest HTTP status."""
+    headers = dict(_anthropic_auth_headers(), accept="text/event-stream")
+    req = urllib.request.Request(CONFIG["anthropic"]["url"] + "/v1/messages", data=json.dumps(payload).encode(),
+                                 headers=headers, method="POST")
+    try:
+        return urllib.request.urlopen(req, timeout=180)
+    except urllib.error.HTTPError as exc:
+        raise _anthropic_http_error(exc)
+    except Exception as exc:
+        raise AnthropicError(502, "upstream_error", "Could not reach Anthropic at %s: %s" % (CONFIG["anthropic"]["url"], exc))
+
+
+def anthropic_models():
+    """The model ids this key can use, newest first, as the API lists them."""
+    req = urllib.request.Request(CONFIG["anthropic"]["url"] + "/v1/models?limit=100", headers=_anthropic_auth_headers())
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            rows = (json.loads(resp.read()) or {}).get("data") or []
+    except urllib.error.HTTPError as exc:
+        raise _anthropic_http_error(exc)
+    except Exception as exc:
+        raise AnthropicError(502, "upstream_error", "Could not reach Anthropic at %s: %s" % (CONFIG["anthropic"]["url"], exc))
+    return [r.get("id") for r in rows if isinstance(r, dict) and r.get("id")]
+
+
+_ANTHROPIC_STOP = {"end_turn": "stop", "stop_sequence": "stop", "tool_use": "tool_calls", "max_tokens": "length"}
+
+
+def anthropic_events(resp):
+    """Anthropic's stream as the canonical events the encoders take.
+
+    A tool call is passed on when its block closes, whole, the way the plan
+    route does it: the argument fragments are the most format-specific thing
+    in the stream, and no client acts on half a call.
+    """
+    blocks, usage, reason, calls = {}, {"input": 0, "output": 0, "cached": 0, "reasoning": 0}, None, 0
+    for raw in resp:
+        line = raw.decode("utf-8", "replace").strip()
+        if not line.startswith("data:"):
+            continue
+        try:
+            ev = json.loads(line[5:].strip())
+        except json.JSONDecodeError:
+            continue
+        kind = ev.get("type")
+        if kind == "message_start":
+            u = (ev.get("message") or {}).get("usage") or {}
+            cached = u.get("cache_read_input_tokens") or 0
+            # Canonical input is everything that was read, cached or not; the
+            # encoders take the cached part back out where a format wants that.
+            usage["input"] = (u.get("input_tokens") or 0) + cached + (u.get("cache_creation_input_tokens") or 0)
+            usage["cached"] = cached
+        elif kind == "content_block_start":
+            block = ev.get("content_block") or {}
+            blocks[ev.get("index")] = {"type": block.get("type"), "id": block.get("id"), "name": block.get("name"), "json": []}
+        elif kind == "content_block_delta":
+            delta = ev.get("delta") or {}
+            if delta.get("type") == "text_delta" and delta.get("text"):
+                yield "text", delta["text"]
+            elif delta.get("type") == "input_json_delta" and ev.get("index") in blocks:
+                blocks[ev["index"]]["json"].append(delta.get("partial_json") or "")
+        elif kind == "content_block_stop":
+            block = blocks.pop(ev.get("index"), None)
+            if block and block["type"] == "tool_use":
+                calls += 1
+                yield "call", {"id": block["id"] or rand_id("toolu_"), "name": block["name"] or "",
+                               "arguments": "".join(block["json"]) or "{}"}
+        elif kind == "message_delta":
+            reason = (ev.get("delta") or {}).get("stop_reason") or reason
+            u = ev.get("usage") or {}
+            if u.get("output_tokens") is not None:
+                usage["output"] = u["output_tokens"]
+        elif kind == "message_stop":
+            yield "end", {"reason": "tool_calls" if calls else _ANTHROPIC_STOP.get(reason, "stop"), "usage": usage}
+            return
+        elif kind == "error":
+            err = ev.get("error") or {}
+            code, message = err.get("type") or "", err.get("message") or json.dumps(err)[:300]
+            if code == "overloaded_error":
+                raise AnthropicError(529, "overloaded_error", "Anthropic is overloaded: " + message)
+            if code == "rate_limit_error":
+                raise AnthropicError(429, "rate_limit_error", "Anthropic's rate limit was reached: " + message)
+            raise AnthropicError(502, "upstream_error", "Anthropic failed: " + message)
+    raise AnthropicError(502, "upstream_error", "Anthropic closed the stream before the answer was finished.")
 
 
 # ── Sessions: record a conversation once, replay it exactly ───────────────
@@ -4986,7 +5278,7 @@ VIEW_FIELDS = {
     "lastToolOutput": "what the last tool printed", "userText": "everything a person said", "assistantText": "everything the model said so far",
     "allText": "every message, concatenated", "tools": "the tools the agent declared (a list)", "turn": "turns already taken",
     "messageCount": "messages in the request", "model": "the model asked for", "provider": "anthropic, openai or deepseek",
-    "route": "scripted, relay, chatgpt or replay", "rule": "which rule answered", "stream": "whether it streamed",
+    "route": "scripted, relay, chatgpt, anthropic or replay", "rule": "which rule answered", "stream": "whether it streamed",
     "status": "the HTTP status of the answer", "fault": "the fault injected, if any",
     "response.text": "what was answered", "response.toolNames": "the tools the answer called (a list)",
     "response.usage.input": "tokens in", "response.usage.output": "tokens out", "response.error": "the error, if any",
@@ -5434,15 +5726,15 @@ class Handler(BaseHTTPRequestHandler):
 
         default = routing.get("default")
         if default is not None:
-            if default not in ("scripted", "relay", "chatgpt"):
-                return self.send_json(400, {"error": "routing.default must be scripted, relay or chatgpt"})
+            if default not in ROUTES:
+                return self.send_json(400, {"error": "routing.default must be one of %s" % ", ".join(ROUTES)})
             CONFIG["routing"]["default"] = default
 
         if "models" in routing:
             table = {}
             for model, choice in (routing["models"] or {}).items():
-                if choice not in ("scripted", "relay", "chatgpt"):
-                    return self.send_json(400, {"error": "%s: must be scripted, relay or chatgpt" % model})
+                if choice not in ROUTES:
+                    return self.send_json(400, {"error": "%s: must be one of %s" % (model, ", ".join(ROUTES))})
                 # "same as the default" is not an override; storing it would
                 # pin the model the next time the default changes.
                 if choice != CONFIG["routing"]["default"]:
@@ -5502,6 +5794,12 @@ class Handler(BaseHTTPRequestHandler):
                 CONFIG["chatgpt"][field] = value if field == "model" else (value or CONFIG["chatgpt"][field])
         if "fallback" in plan:
             CONFIG["chatgpt"]["fallback"] = bool(plan["fallback"])
+
+        claude = body.get("anthropic")
+        if isinstance(claude, dict):
+            problem = save_anthropic_settings(claude)
+            if problem:
+                return self.send_json(400, {"error": problem})
 
         for field in ("url", "key", "model", "format", "fallback"):
             if field not in upstream:
@@ -5715,6 +6013,12 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/api/ui/session/"):
             return self.session_download(path[len("/api/ui/session/"):])
 
+        if path == "/api/ui/anthropic/models":
+            try:
+                return self.send_json(200, {"models": anthropic_models()})
+            except AnthropicError as exc:
+                return self.send_json(exc.status, {"error": exc.message})
+
         if path == "/api/ui/chatgpt/models":
             try:
                 models, default = chatgpt_models()
@@ -5747,6 +6051,7 @@ class Handler(BaseHTTPRequestHandler):
                               "format": CONFIG["upstream"]["format"],
                               "fallback": CONFIG["upstream"]["fallback"]} if relaying() else None),
                 "chatgpt": {"signedIn": chatgpt_status()["signedIn"], "model": CONFIG["chatgpt"]["model"] or "auto"},
+                "anthropic": {"keySet": bool(CONFIG["anthropic"]["key"]), "model": CONFIG["anthropic"]["model"] or "the client's"},
                 "session": {"mode": SESSION["mode"], "name": SESSION["name"]},
                 "rules": [r.get("name") for r, _ in all_rules()],
             })
@@ -6228,7 +6533,13 @@ class Handler(BaseHTTPRequestHandler):
         return None
 
     def chatgpt_serve(self, resp, shape, model, stream, body, messages, started, plan):
-        """Answer from an open ChatGPT stream, in the shape the client asked.
+        return self.upstream_serve(resp, chatgpt_events(resp), "chatgpt", plan, shape, model, stream, body, messages, started)
+
+    def upstream_serve(self, resp, events, route, plan, shape, model, stream, body, messages, started):
+        """Answer from an open stream of a real model, in the shape the client asked.
+
+        `route` is which real model it is (chatgpt, anthropic) and `plan` the
+        model it was asked for; `events` is its stream as canonical events.
 
         Whole when the client did not ask for a stream, and otherwise piece by
         piece as the plan produces it. In both the failure that matters is the
@@ -6236,23 +6547,22 @@ class Handler(BaseHTTPRequestHandler):
         reported inside the stream in the client's own error form, since
         nothing else is left to say it with.
         """
-        entry = record({"provider": self.provider, "shape": shape, "model": model, "route": "chatgpt",
-                        "rule": "chatgpt:" + plan, "stream": stream, "status": 200, "ms": 0,
+        entry = record({"provider": self.provider, "shape": shape, "model": model, "route": route,
+                        "rule": route + ":" + plan, "stream": stream, "status": 200, "ms": 0,
                         "prompt": subject(messages)[:400], "reply": "", "tools": [], "usage": None, "error": None})
-        self.trace["Rule"] = "chatgpt:" + plan
-        log("%s %s model=%s stream=%s -> chatgpt:%s" % (self.provider, shape, model, stream, plan))
+        self.trace["Rule"] = route + ":" + plan
+        log("%s %s model=%s stream=%s -> %s:%s" % (self.provider, shape, model, stream, route, plan))
 
         def settle(**fields):
             entry.update(fields, ms=int((time.time() - started) * 1000))
 
-        events = chatgpt_events(resp)
         begun = False
         try:
             if not stream:
-                turn = _collect(events, plan)
-                capture_note(self, route="chatgpt", rule="chatgpt:" + plan, text=turn.get("text") or "", usage=_usage_of(turn),
+                turn = _collect(events, plan, "Anthropic" if route == "anthropic" else "ChatGPT")
+                capture_note(self, route=route, rule=route + ":" + plan, text=turn.get("text") or "", usage=_usage_of(turn),
                              toolCalls=[{"id": c.get("id"), "name": c.get("name"), "input": c.get("input")} for c in turn.get("tool_calls") or []])
-                session_capture(self.ctx, "chatgpt", "chatgpt:" + plan, turn, int((time.time() - started) * 1000))
+                session_capture(self.ctx, route, route + ":" + plan, turn, int((time.time() - started) * 1000))
                 settle(reply=(turn.get("text") or "")[:400], usage=turn["usage"],
                        tools=[c["name"] for c in turn.get("tool_calls") or []])
                 build = (anthropic_body if shape == "anthropic"
@@ -6277,16 +6587,16 @@ class Handler(BaseHTTPRequestHandler):
                         made.append({"id": data["id"], "name": data["name"], "input": {"_raw": data["arguments"]}})
                 elif kind == "end":
                     u = data["usage"]
-                    capture_note(self, route="chatgpt", rule="chatgpt:" + plan, text="".join(said), toolCalls=made,
+                    capture_note(self, route=route, rule=route + ":" + plan, text="".join(said), toolCalls=made,
                                  usage={"input": u["input"], "output": u["output"], "cacheRead": u["cached"], "reasoning": u["reasoning"]})
-                    session_capture(self.ctx, "chatgpt", "chatgpt:" + plan, {
+                    session_capture(self.ctx, route, route + ":" + plan, {
                         "text": "".join(said), "tool_calls": made,
                         "usage": {"input": u["input"], "output": u["output"], "cacheRead": u["cached"], "reasoning": u["reasoning"]}},
                         int((time.time() - started) * 1000))
                     settle(reply="".join(said)[:400],
                            usage={"input": u["input"], "output": u["output"], "cacheRead": u["cached"], "model": plan})
         except ChatGPTError as exc:
-            log("chatgpt failed %s: %s" % ("mid-stream" if begun else "before the first word", exc.message))
+            log(route + " failed %s: %s" % ("mid-stream" if begun else "before the first word", exc.message))
             settle(status=exc.status, error=exc.message)
             if not begun:
                 return self.refuse(exc.status, exc.kind, exc.message)
@@ -6507,6 +6817,28 @@ class Handler(BaseHTTPRequestHandler):
                 if canon["dropped"]:
                     log("   not sent to ChatGPT, which does not take them: %s" % ", ".join(canon["dropped"]))
                 return self.chatgpt_serve(resp, shape, model, stream, body, messages, started, plan)
+        elif route == "anthropic":
+            canon = canon_request(shape, body)
+            try:
+                _anthropic_auth_headers()            # no key is the first thing to say, before which model
+                target = anthropic_model(model)
+                resp = anthropic_open(anthropic_payload(canon, target, body))
+            except AnthropicError as exc:
+                log("anthropic failed before it began: %s" % exc.message)
+                if not CONFIG["anthropic"]["fallback"]:
+                    record({"provider": self.provider, "shape": shape, "model": model,
+                            "route": route, "rule": None, "stream": stream, "status": exc.status,
+                            "ms": int((time.time() - started) * 1000),
+                            "prompt": subject(messages)[:400], "reply": None, "tools": [],
+                            "error": exc.message})
+                    return self.refuse(exc.status, exc.kind, exc.message)
+                name, turn = choose_turn(self.provider, model, messages, declared, view)
+                name = "fallback:" + name
+            else:
+                unsent = anthropic_not_sent(canon, body)
+                if unsent:
+                    log("   not sent to Anthropic, which this route cannot pass on: %s" % ", ".join(unsent))
+                return self.upstream_serve(resp, anthropic_events(resp), "anthropic", target, shape, model, stream, body, messages, started)
         else:
             name, turn = choose_turn(self.provider, model, messages, declared, view)
 
@@ -6695,6 +7027,15 @@ def main():
         log("          anyone who can reach this port can spend that plan; keep it off a shared network")
     elif CONFIG["routing"]["default"] == "chatgpt" or routed_to_plan:
         log("chatgpt: routes point at the plan but nobody is signed in — those requests will fail until the console signs in")
+    claude = CONFIG["anthropic"]
+    routed_to_claude = [m for m, r in CONFIG["routing"]["models"].items() if r == "anthropic"]
+    if CONFIG["routing"]["default"] == "anthropic" or routed_to_claude:
+        if claude["key"]:
+            log("anthropic: answers with %s at %s%s — this is billed to the key"
+                % (claude["model"] or "the model each client asks for", claude["url"],
+                   " for the default route" if CONFIG["routing"]["default"] == "anthropic" else ""))
+        else:
+            log("anthropic: routes point at Anthropic but no key is set — those requests will fail until one is")
     log("console: http://localhost:%d/ui   guide: http://localhost:%d/guide" % (PORT, PORT))
     for name in sorted(API_KEYS):
         log("  %-9s http://localhost:%d/%s   key %s" % (name, PORT, name, API_KEYS[name]))

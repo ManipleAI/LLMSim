@@ -69,6 +69,7 @@ Every request takes one **route**. The default applies to every model, and one m
 | Scripted | A rule you wrote, or a shipped one | Nothing. Nothing leaves the machine. |
 | Upstream (relay) | One real model behind an API key | That model's price |
 | ChatGPT plan | A ChatGPT subscription you sign in to | The plan's usage |
+| Anthropic API | A real Claude model, by API key | That model's price, billed to the key |
 | Replay | A recording of an earlier run | Nothing |
 
 Scripted is the default. Routes are set under **Routing** and, for one model, under **Models**.
@@ -106,7 +107,7 @@ One page at `/ui`, with a screen for each job. Every screen has an address, such
 | Screen | What it is for |
 |---|---|
 | **Overview** | What answers right now, each vendor's address and key, and which screen does which job |
-| **Routing** | The default route, the upstream or ChatGPT plan it uses, and how strictly the vendors are imitated |
+| **Routing** | The default route, the upstream, ChatGPT plan or Anthropic key it uses, and how strictly the vendors are imitated |
 | **Models** | One model's own route, a fixed answer, a failure status or a delay |
 | **Answer rules** | What the simulated model says, and when. Includes a dry run that says which rule would answer, and why the others would not. |
 | **Faults** | Failures on purpose |
@@ -310,8 +311,31 @@ curl -X POST localhost:8099/api/sessions/stop   -d '{"run": "r1"}'     # hits, m
 |---|---|---|
 | Upstream | One model behind an API key | Routing → Upstream: URL, model and key |
 | ChatGPT plan | Your ChatGPT subscription | Routing → ChatGPT plan → Sign in |
+| Anthropic API | A real Claude model | Routing → Anthropic API: key and model |
 
 The usual pattern: record a session through a real model once, then replay it for every later test run.
+
+### Anthropic API
+
+A client speaking any of the three formats is answered by Claude in its own format, with its system prompt, its tools and streaming. Save a key under **Routing → Anthropic API**, or start LLMSim with one:
+
+```bash
+LLMSIM_ANTHROPIC_UPSTREAM_KEY=sk-ant-… LLMSIM_ANTHROPIC_UPSTREAM_MODEL=claude-sonnet-5-5 python3 server.py
+```
+
+| Setting | Means |
+|---|---|
+| Key | An API key from the Claude Console, sent as `x-api-key`. It is kept in `llmsim.config.json`, readable by you alone, and is never sent back to the console. |
+| It is | Choose **a gateway's token** when the base URL is a gateway that speaks the Messages API and takes `Authorization: Bearer`. |
+| Model | The Claude model that answers. Left blank, the model each client asks for is used when it is a Claude model, and any other is refused. |
+| Max tokens | Used when the client did not say. Anthropic requires one. |
+| Base URL | Anthropic's own by default. |
+
+The client's `temperature` or `top_p`, stop sequences, tools and tool choice are passed on. `response_format`, `reasoning_effort`, `seed` and the penalties are not, and the log says so when one is dropped.
+
+> **It takes a key, not a Claude sign-in.** Anthropic does not permit a tool to offer Claude sign-in or to route requests through Free, Pro or Max plan credentials, so a subscription cannot be used on this route. Use an API key from the Claude Console or from a cloud provider.
+
+### ChatGPT plan
 
 The ChatGPT sign-in is OpenAI's OAuth flow, and its redirect lands on `127.0.0.1:1455` on the machine LLMSim runs on. On your own machine that just works. When LLMSim runs somewhere else, the console asks you to paste the address your browser ended up on instead.
 
@@ -750,6 +774,8 @@ Set these in the environment before starting `server.py`.
 | `LLMSIM_ANTHROPIC_KEY`, `LLMSIM_OPENAI_KEY`, `LLMSIM_DEEPSEEK_KEY` | The published keys | The key each vendor endpoint accepts |
 | `LLMSIM_UPSTREAM`, `LLMSIM_UPSTREAM_MODEL`, `LLMSIM_UPSTREAM_KEY`, `LLMSIM_UPSTREAM_FORMAT` | none | The upstream a relay goes to |
 | `LLMSIM_UPSTREAM_FALLBACK` | off | Answer here when the upstream cannot be reached |
+| `LLMSIM_ANTHROPIC_UPSTREAM_KEY`, `LLMSIM_ANTHROPIC_UPSTREAM_MODEL` | none | The key and model the Anthropic API route uses |
+| `LLMSIM_ANTHROPIC_UPSTREAM`, `LLMSIM_ANTHROPIC_UPSTREAM_AUTH` | Anthropic's API, `api_key` | Its base URL, and `bearer` for a gateway's token |
 | `LLMSIM_CHATGPT_AUTH` | `llmsim.chatgpt-auth.json` | Where the ChatGPT sign-in is kept |
 | `LLMSIM_CHATGPT_MODEL` | The plan's own choice | The plan model to use |
 | `LLMSIM_RUNS_DB` | `llmsim.runs.db` | Where the test kit keeps runs |
@@ -760,7 +786,7 @@ Set these in the environment before starting `server.py`.
 
 ### What to commit
 
-Commit `llmsim.rules.json`, `llmsim.tests.json`, `llmsim.assertions.json` and the recordings you rely on. Never commit `llmsim.chatgpt-auth.json`, `llmsim.credentials.json` or `llmsim.runs.db`: they hold a sign-in, credentials and what runs said.
+Commit `llmsim.rules.json`, `llmsim.tests.json`, `llmsim.assertions.json` and the recordings you rely on. Never commit `llmsim.config.json`, `llmsim.chatgpt-auth.json`, `llmsim.credentials.json` or `llmsim.runs.db`: they hold an upstream or Anthropic key, a sign-in, credentials and what runs said.
 
 ### In a container
 
@@ -768,7 +794,7 @@ Commit `llmsim.rules.json`, `llmsim.tests.json`, `llmsim.assertions.json` and th
 
 ## Limits
 
-- There is no authentication. Anyone who can reach the port can use everything here, and can spend a signed-in ChatGPT plan. Keep it on your own machine or a network you trust.
+- There is no authentication. Anyone who can reach the port can use everything here, and can spend a signed-in ChatGPT plan or a saved Anthropic key. Keep it on your own machine or a network you trust.
 - Captured requests are held in memory only.
 - An assertion that passes over a request too large to keep whole says so in `warnings`.
 - A streamed answer from a real model is passed through event by event, so only the stream faults can reach it.

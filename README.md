@@ -143,13 +143,20 @@ out as a control plane:
 
 | | |
 |---|---|
+| **Overview** | What it is doing right now, the address and key for each vendor, and which screen does which job. |
+| **Routing** | The default route, and the upstream or ChatGPT plan everything on it goes to. |
 | **Models** | Every model the simulator advertises. Pick one to set what it answers — fixed text, a failure status, a delay — and where its traffic goes. |
-| **Routing** | The default route, and the upstream everything relayed goes to. |
-| **Logs** | Every request as it arrives: model, route taken, what was asked, what came back, how long it took. |
-| **Test Execution** | Functional test cases that drive the simulator to check the **caller**. |
-| **Integrations** | Empty for now. |
+| **Answer rules** | What the simulated model says, and when. |
+| **Faults** | Things that go wrong on purpose. |
+| **Requests** | Every request as it arrives (*Live*), each one in full (*Captured*), checks over them (*Assertions*), and what is kept (*Capture settings*). |
+| **Chat** | Talk to a model by hand, the way a client would. |
+| **Record & replay** | Record a real run once and replay it exactly. |
+| **Functional tests** | Cases that send a prompt and say what must come back. |
+| **Agent tests** | Drive an agent, simulate what it talks to, judge the result. |
 
-### Test Execution
+Every screen has an address (`/ui#routing`, `/ui#lab`), so a page can be linked to.
+
+### Functional tests
 
 The simulator answers; these check that whatever is calling it behaves. A
 case is an ordered list of steps, each one a prompt in and an expectation
@@ -424,8 +431,8 @@ identical every time, which is what a regression test of an agent needs and a
 live model can never give.
 
 ```
-Sessions → name it → Start recording → run the session → Stop and save
-Sessions → Replay
+Record & replay → name it → Start recording → run the session → Stop and save
+Record & replay → Replay
 ```
 
 ### The API a test harness drives
@@ -488,7 +495,7 @@ that replay and no other. They default to the console's settings but are not
 those settings: a test that wants strictness for one run must not change what the
 next run, or the console, does.
 
-**The functional cases are exempt.** The cases on *Test Execution* check a
+**The functional cases are exempt.** The cases on *Functional tests* check a
 *caller* against the script's rules. LLMSim answers them from the script whatever
 the default route is — a relay or the ChatGPT plan would spend something and say
 something else, and the cases would fail — and leaves them out of any recording,
@@ -561,7 +568,7 @@ that is a better place to check an agent from than inside it.
 
 Four things, sharing one description of a request (a *view*) and one language for
 saying something about it (a *condition*). All of it is configurable on the console
-(**Behaviors**, **Faults**, **Evidence**) and over HTTP: the console is a client of
+(**Answer rules**, **Faults**, **Requests**) and over HTTP: the console is a client of
 the same API a test harness uses.
 
 ### Who sent it
@@ -576,7 +583,7 @@ POST /api/runs {"run": "r1", "agents": ["planner", "worker"]}  → the URLs, rea
 That is the one thing every agent platform has to support, so it needs nothing of
 the platform — not a header, not a plugin. Identity can also be read from a header
 (`X-LLMSim-Run`, `-Agent`, `-App` by default), a body field or the credential, with
-rules you configure under *Evidence → Settings*: which header a given gateway
+rules you configure under *Requests → Capture settings*: which header a given gateway
 forwards is a fact about that gateway, so it is configured and not assumed.
 
 Which **credential** arrived is recorded too, as a fingerprint — never the key.

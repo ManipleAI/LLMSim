@@ -171,6 +171,44 @@ def case_the_console_page_is_valid_javascript_and_names_every_area(sim):
         assert check.returncode == 0, check.stderr[:400]
 
 
+def case_every_console_screen_can_be_reached_and_none_is_a_dead_end(sim):
+    """The console is one page of many screens, and the ways it has gone wrong are structural:
+    a screen nothing links to, a link to a screen that is not there, a job with no screen, an
+    area on the agent-tests page that belongs to no group and so is never drawn."""
+    import re
+    page = open(os.path.join(ROOT, "ui.html")).read()
+    nav = re.findall(r'<button data-view="([a-z]+)" onclick="show\(\'([a-z]+)\'\)"', page)
+    assert nav and all(a == b for a, b in nav), "a navigation entry opens a screen other than its own: %s" % nav
+    linked = [a for a, _b in nav]
+    assert len(linked) == len(set(linked)), "a screen is in the navigation twice: %s" % linked
+    views = re.findall(r'<section class="view" id="v-([a-z]+)"', page)
+    assert sorted(views) == sorted(linked), "screens and navigation disagree: only as screens %s, only in navigation %s" % (
+        sorted(set(views) - set(linked)), sorted(set(linked) - set(views)))
+    assert linked[0] == "overview", "the console does not open on the overview"
+    assert len(re.findall(r'<section class="view" id="v-[a-z]+">', page)) == 1, "more than one screen is showing before the script runs"
+
+    # Every job the overview offers goes to a screen that exists, and every screen is offered.
+    tasks = re.findall(r'\n  \["([a-z]+)", "[^"]+", "[^"]+"\],', page.split("const TASKS = [")[1].split("];")[0])
+    assert sorted(tasks) == sorted(v for v in views if v != "overview"), "the overview's jobs and the screens disagree: %s" % tasks
+
+    # A screen that was renamed or folded away is still an address.
+    aliases = dict(re.findall(r'(\w+): "(\w+)"', page.split("const VIEW_ALIAS = {")[1].split("}")[0]))
+    assert aliases.get("logs") == "evidence" and all(target in views for target in aliases.values()), aliases
+    for tab in ("live", "requests", "assertions", "settings"):
+        assert 'id="ev-tab-%s"' % tab in page and 'id="ev-%s"' % tab in page, "the requests screen has no %s tab" % tab
+
+    # Every area of the agent-tests page is in a group that is drawn.
+    groups = re.findall(r'\n  \["(\w+)", "[^"]+", "[^"]+"\],', page.split("const LAB_GROUPS = [")[1].split("];")[0])
+    areas = re.findall(r'\n  (\w+): \{ title: "[^"]+", group: "(\w+)",', page)
+    assert len(areas) == 13, "an agent-tests area has no group: %d of 13 have one" % len(areas)
+    assert all(g in groups for _a, g in areas) and all(any(g == h for _a, h in areas) for g in groups), (groups, areas)
+
+    # The addresses on the overview are the ones the server answers on.
+    for provider in ("anthropic", "openai", "deepseek"):
+        assert re.search(r"\n  %s: \{ name:" % provider, page), "the overview does not say how to reach %s" % provider
+    assert sim.call("GET", "/ui")[0] == 200
+
+
 def main():
     sim = Sim().start()
     sim.agent = FakeAgent(sim.base)

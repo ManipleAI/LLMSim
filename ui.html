@@ -75,7 +75,40 @@
   .head h1 { margin:0; font-size:20px; letter-spacing:-.02em; font-weight:700; }
   .head p { margin:0; color:var(--muted); font-size:12.5px; }
   .head .spacer { flex:1; }
-  .body { padding:22px 28px 40px; max-width:1100px; }
+  /* An action in a page's heading is one line: a button that wraps to two reads as two buttons. */
+  .head .btn, .head .seg button { white-space:nowrap; flex:0 0 auto; }
+  .head > div:first-child { min-width:0; }
+  .body { padding:22px 28px 40px; max-width:1240px; }
+
+  /* ── overview ───────────────────────────────────────────────────── */
+  .ov-stats { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:12px; }
+  .ov-stat { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:13px 15px; }
+  .ov-stat .k { font:600 10px/1 var(--mono); letter-spacing:.14em; text-transform:uppercase; color:var(--muted); }
+  .ov-stat .v { font-size:15px; font-weight:650; margin-top:7px; letter-spacing:-.01em; }
+  .ov-stat .d { color:var(--muted); font-size:12px; margin-top:2px; }
+  .ov-stat.warn { border-color:#e6cf9f; background:var(--amber-tint); }
+  .ov-tasks { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; }
+  .ov-task { display:flex; gap:12px; align-items:flex-start; text-align:left; width:100%; cursor:pointer;
+    background:#fff; border:1px solid var(--border); border-radius:9px; padding:12px 14px; font:inherit; color:inherit; }
+  .ov-task:hover { border-color:#c9c2b6; background:var(--subtle); }
+  .ov-task b { display:block; font-size:13.5px; }
+  .ov-task span { color:var(--muted); font-size:12.5px; }
+  .ov-task .go { margin-left:auto; color:var(--faint); font:600 10px/1 var(--mono); letter-spacing:.1em; text-transform:uppercase; white-space:nowrap; padding-top:3px; }
+  .ov-connect td { vertical-align:middle; }
+  .copy { border:1px solid var(--border); background:#fff; border-radius:6px; font:500 11px/1 inherit; padding:5px 8px; cursor:pointer; color:var(--muted); }
+  .copy:hover { color:var(--ink); border-color:#c9c2b6; }
+  .card a { color:var(--primary); }
+  @media (max-width:1000px) { .ov-stats { grid-template-columns:repeat(2, minmax(0, 1fr)); } .ov-tasks { grid-template-columns:1fr; } }
+
+  /* ── agent tests: the areas, grouped by what they are for ───────── */
+  .lab-groups { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:14px 18px; }
+  .lab-group h3 { font:600 10px/1 var(--mono); letter-spacing:.14em; text-transform:uppercase; color:var(--muted); margin:0 0 3px; }
+  .lab-group p { color:var(--faint); font-size:11.5px; margin:0 0 8px; }
+  .lab-group button { display:block; width:100%; text-align:left; background:none; border:0; border-radius:6px;
+    padding:6px 8px; margin:0 -8px; font:500 13px/1.3 inherit; color:var(--ink); cursor:pointer; }
+  .lab-group button:hover { background:var(--subtle); }
+  .lab-group button[aria-current=true] { background:var(--primary-tint); color:var(--primary); font-weight:600; }
+  @media (max-width:1000px) { .lab-groups { grid-template-columns:repeat(2, minmax(0, 1fr)); } }
   .view[hidden] { display:none; }
   /* A layout rule such as .row sets display and would otherwise beat the hidden attribute. */
   .body [hidden] { display:none !important; }
@@ -212,29 +245,29 @@
     <div><b>LLMSim</b><span>the vendors' APIs, simulated</span></div>
   </div>
 
-  <div class="group">Simulate</div>
-  <button data-view="models" onclick="show('models')"><span>Models</span><span class="n" id="n-models">0</span></button>
+  <button data-view="overview" onclick="show('overview')" style="margin-top:4px"><span>Overview</span></button>
+
+  <!-- Grouped by what somebody came to do, in the order they usually do it:
+       decide what answers, watch what was asked, try it, then test with it. -->
+  <div class="group">Answers</div>
   <button data-view="routing" onclick="show('routing')"><span>Routing</span><span class="n" id="n-routing">—</span></button>
-  <button data-view="behaviors" onclick="show('behaviors')"><span>Behaviors</span></button>
+  <button data-view="models" onclick="show('models')"><span>Models</span><span class="n" id="n-models">0</span></button>
+  <button data-view="behaviors" onclick="show('behaviors')"><span>Answer rules</span></button>
   <button data-view="faults" onclick="show('faults')"><span>Faults</span><span class="n" id="n-faults"></span></button>
 
-  <div class="group">Observe</div>
-  <button data-view="logs" onclick="show('logs')"><span>Logs</span><span class="n" id="n-logs">0</span></button>
-  <button data-view="evidence" onclick="show('evidence')"><span>Evidence</span></button>
+  <div class="group">Traffic</div>
+  <button data-view="evidence" onclick="show('evidence')"><span>Requests</span><span class="n" id="n-logs">0</span></button>
 
-  <div class="group">Verify</div>
+  <div class="group">Try it</div>
   <button data-view="chat" onclick="show('chat')"><span>Chat</span></button>
-  <button data-view="sessions" onclick="show('sessions')"><span>Sessions</span><span class="n" id="n-sessions"></span></button>
-  <button data-view="tests" onclick="show('tests')"><span>Test Execution</span><span class="n" id="n-tests">0</span></button>
+  <button data-view="sessions" onclick="show('sessions')"><span>Record &amp; replay</span><span class="n" id="n-sessions"></span></button>
 
-  <div class="group">Test agents</div>
+  <div class="group">Test</div>
+  <button data-view="tests" onclick="show('tests')"><span>Functional tests</span><span class="n" id="n-tests">0</span></button>
   <button data-view="lab" onclick="show('lab')"><span>Agent tests</span></button>
 
-  <div class="group">Connect</div>
-  <button data-view="integrations" onclick="show('integrations')"><span>Integrations</span></button>
-
-  <div class="group">Learn</div>
-  <button onclick="window.open(api('/guide'), '_blank', 'noopener')"><span>How to use it</span><span class="n">↗</span></button>
+  <div class="group">Help</div>
+  <button onclick="window.open(api('/guide'), '_blank', 'noopener')"><span>Guide</span><span class="n">↗</span></button>
 
   <div class="foot">
     <div class="status"><span id="dot" class="dot"></span><span id="conn">connected</span></div>
@@ -243,8 +276,37 @@
 </nav>
 
 <main>
+  <!-- ── Overview ───────────────────────────────────────────────────── -->
+  <!-- What it is doing now, how to point a client at it, and where each job
+       is done. The first screen, because every other one assumes you know
+       these three things. -->
+  <section class="view" id="v-overview">
+    <div class="head">
+      <div><h1>Overview</h1><p>What LLMSim is doing right now, how to point a client at it, and where to go next.</p></div>
+    </div>
+    <div class="body">
+      <div class="ov-stats" id="ov-stats"></div>
+
+      <div class="card" style="margin-top:16px">
+        <h2>Connect a client</h2>
+        <p class="help">Set your client's base URL to one of these and use the key beside it. LLMSim answers in that vendor's own wire format, whichever model name is asked for.</p>
+        <table class="ov-connect">
+          <thead><tr><th style="width:110px">Vendor</th><th>Base URL</th><th style="width:210px">Request</th><th>Key</th></tr></thead>
+          <tbody id="ov-connect"></tbody>
+        </table>
+        <p class="help" style="margin:12px 0 0">These are the keys LLMSim publishes: fake by construction, they open nothing but a simulator. A server started with <code>LLMSIM_*_KEY</code> set uses its own instead.</p>
+      </div>
+
+      <div class="card">
+        <h2>What do you want to do?</h2>
+        <p class="help">Each job has one screen.</p>
+        <div class="ov-tasks" id="ov-tasks"></div>
+      </div>
+    </div>
+  </section>
+
   <!-- ── Models ─────────────────────────────────────────────────────── -->
-  <section class="view" id="v-models">
+  <section class="view" id="v-models" hidden>
     <div class="head">
       <div><h1>Models</h1><p>What each model answers, and where its traffic goes.</p></div>
     </div>
@@ -367,33 +429,13 @@
       </div>
   </div>
 
-  <!-- ── Logs ───────────────────────────────────────────────────────── -->
-  <section class="view" id="v-logs" hidden>
-    <div class="head">
-      <div><h1>Logs</h1><p>Every request as it arrives.</p></div>
-      <span class="spacer"></span>
-      <button class="btn ghost" onclick="REQS=[];renderLogs()">Clear</button>
-    </div>
-    <div class="body" style="max-width:none">
-      <div class="card" style="padding:14px 8px 8px">
-        <table>
-          <thead><tr>
-            <th style="width:62px">Time</th><th style="width:78px">Route</th><th style="width:190px">Model</th>
-            <th style="width:30%">Asked</th><th>Answered</th><th style="width:54px">ms</th>
-          </tr></thead>
-          <tbody id="logs"></tbody>
-        </table>
-        <div id="logsempty" class="empty"><b>Nothing yet</b>Point an agent, a gateway or a curl at this port.</div>
-      </div>
-    </div>
-  </section>
 
 
   <!-- ── Test Execution ─────────────────────────────────────────────── -->
   <!-- ── Behaviors ──────────────────────────────────────────────────── -->
   <section class="view" id="v-behaviors" hidden>
     <div class="head">
-      <div><h1>Behaviors</h1><p>What the simulated model answers, and when — including what it does with what a tool printed. Your rules are tried before the shipped ones.</p></div>
+      <div><h1>Answer rules</h1><p>What the simulated model answers, and when — including what it does with what a tool printed. Used wherever a model is answered here rather than by an upstream. Your rules are tried before the shipped ones.</p></div>
       <span class="spacer"></span>
       <button class="btn ghost" onclick="bhReload()" title="Re-read responses.json and llmsim.rules.json">Reload files</button>
       <button class="btn" onclick="bhNew()">New rule</button>
@@ -468,17 +510,38 @@
   <!-- ── Evidence ───────────────────────────────────────────────────── -->
   <section class="view" id="v-evidence" hidden>
     <div class="head">
-      <div><h1>Evidence</h1><p>What each agent actually sent to the model, what answered it, and checks over both.</p></div>
+      <div><h1>Requests</h1><p>Everything that was asked and what answered it: a live tail, the full captured evidence, and checks over it.</p></div>
       <span class="spacer"></span>
-      <div class="seg" role="group" aria-label="Evidence view">
-        <button id="ev-tab-requests" onclick="evTab('requests')" aria-pressed="true">Requests</button>
-        <button id="ev-tab-assertions" onclick="evTab('assertions')" aria-pressed="false">Assertions</button>
-        <button id="ev-tab-settings" onclick="evTab('settings')" aria-pressed="false">Settings</button>
+      <div class="seg" role="group" aria-label="Requests view">
+        <button id="ev-tab-live" onclick="evTab('live')" aria-pressed="true" title="Every request as it arrives">Live</button>
+        <button id="ev-tab-requests" onclick="evTab('requests')" aria-pressed="false" title="What was sent and what came back, in full, by run and agent">Captured</button>
+        <button id="ev-tab-assertions" onclick="evTab('assertions')" aria-pressed="false" title="Checks over what was captured">Assertions</button>
+        <button id="ev-tab-settings" onclick="evTab('settings')" aria-pressed="false" title="What is captured, and who may send requests">Capture settings</button>
       </div>
     </div>
     <div class="body">
 
-      <div id="ev-requests">
+      <!-- The tail: the last 300 requests, kept in the page, always on. The
+           Captured tab is the same traffic kept by the server in full. -->
+      <div id="ev-live">
+        <div class="card" style="padding:14px 8px 8px">
+          <div style="display:flex; align-items:center; gap:10px; padding:0 10px 10px">
+            <span class="help" style="margin:0; color:var(--muted); font-size:12.5px">Every request as it arrives, newest first. Open <b>Captured</b> to read one in full.</span>
+            <span style="flex:1"></span>
+            <button class="btn ghost" onclick="REQS=[];renderLogs()">Clear</button>
+          </div>
+          <table>
+            <thead><tr>
+              <th style="width:62px">Time</th><th style="width:78px">Route</th><th style="width:190px">Model</th>
+              <th style="width:30%">Asked</th><th>Answered</th><th style="width:54px">ms</th>
+            </tr></thead>
+            <tbody id="logs"></tbody>
+          </table>
+          <div id="logsempty" class="empty"><b>Nothing yet</b>Point an agent, a gateway or a curl at this port. The Overview has the addresses.</div>
+        </div>
+      </div>
+
+      <div id="ev-requests" hidden>
         <div class="card">
           <div class="row" style="align-items:flex-end">
             <div><label for="ev-f-run" style="margin-top:0">Run</label><input id="ev-f-run" class="mono" type="text" oninput="evRefresh(true)"></div>
@@ -572,7 +635,7 @@
   <!-- ── Sessions ───────────────────────────────────────────────────── -->
   <section class="view" id="v-sessions" hidden>
     <div class="head">
-      <div><h1>Sessions</h1><p>Record a real run once — a Maniple session, say — and replay it exactly, offline and free.</p></div>
+      <div><h1>Record &amp; replay</h1><p>Record a real run once — a Maniple session, say — and replay it exactly, offline and free.</p></div>
     </div>
     <div class="body">
       <div class="card">
@@ -629,7 +692,7 @@
   <!-- ── Chat ───────────────────────────────────────────────────────── -->
   <section class="view" id="v-chat" hidden>
     <div class="head">
-      <div><h1>Chat</h1><p>Talk to a model through LLMSim, on whatever route it is set to. It goes the same way a client's request does, and shows up in Logs.</p></div>
+      <div><h1>Chat</h1><p>Talk to a model through LLMSim, on whatever route it is set to. It goes the same way a client's request does, and shows up under Requests.</p></div>
       <span class="spacer"></span>
       <button class="btn ghost" onclick="chatClear()">New conversation</button>
     </div>
@@ -668,7 +731,7 @@
 
   <section class="view" id="v-tests" hidden>
     <div class="head">
-      <div><h1>Test Execution</h1><p>Drive the simulator to check the caller. A case is a sequence of steps, run in order.
+      <div><h1>Functional tests</h1><p>Send a model a prompt and say what must come back: the answer, the tool it calls, the status, how fast. It goes down whatever route that model is on. A case is a sequence of steps, run in order.
         Cases and plans are saved to <span class="mono">llmsim.tests.json</span> — commit it, or hand it over with Export.</p></div>
       <span class="spacer"></span>
       <button class="btn ghost" onclick="exportSuite()">Export</button>
@@ -700,12 +763,12 @@
       <div><h1>Agent tests</h1><p>Drive an agent, simulate its tools and its peers, judge what it did, keep the cases and compare versions. Everything here is the same API a CI job uses; the guide lists the routes.</p></div>
     </div>
     <div class="body">
-      <div class="card"><div id="lab-tabs" class="row" style="flex-wrap:wrap;gap:6px"></div></div>
+      <div class="card"><div id="lab-tabs" class="lab-groups"></div></div>
       <div class="card">
         <h2 id="lab-title"></h2>
         <p class="help" id="lab-help"></p>
         <div id="lab-list"></div>
-        <div class="row" style="margin-top:12px"><button class="btn" id="lab-new" onclick="labNew()">New</button><button class="btn ghost" onclick="labLoad()">Refresh</button><span id="lab-listnote"></span></div>
+        <div style="margin-top:12px; display:flex; gap:9px; align-items:center"><button class="btn" id="lab-new" onclick="labNew()">New</button><button class="btn ghost" onclick="labLoad()">Refresh</button><span id="lab-listnote"></span></div>
       </div>
       <div class="card" id="lab-editor" hidden>
         <h2 id="lab-editing"></h2>
@@ -717,23 +780,10 @@
     </div>
   </section>
 
-  <section class="view" id="v-integrations" hidden>
-    <div class="head">
-      <div><h1>Integrations</h1><p>What this simulator is wired into.</p></div>
-    </div>
-    <div class="body">
-      <div class="card">
-        <div class="empty" style="padding:44px 10px">
-          <b>Nothing here yet</b>
-          This is where connected gateways, routers and agents will be listed.
-        </div>
-      </div>
-    </div>
-  </section>
 </main>
 
 <script>
-let CFG = null, MODELS = {}, ALL = [], REQS = [], SINCE = 0, VIEW = "models", PICKED = null;
+let CFG = null, MODELS = {}, ALL = [], REQS = [], SINCE = 0, VIEW = "overview", PICKED = null, RULES = [];
 let CG = { signedIn: false }, CG_URL = null, CG_LISTED = false;
 let CHAT = { turns: [], busy: false, abort: null };
 let SESS = { mode: "off", cassettes: [], settings: {} };
@@ -745,8 +795,14 @@ let CASE = null, PLAN = null, RUN = null, RUNNING = false;
 const api = (p) => new URL(p, location.origin).toString();
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
 
+// Screens that were renamed or folded into another keep working as addresses.
+const VIEW_ALIAS = { logs: "evidence", integrations: "overview" };
 function show(v) {
+  if (v === "logs") EV.tab = "live";
+  v = VIEW_ALIAS[v] || v;
+  if (!document.getElementById("v-" + v)) v = "overview";
   VIEW = v;
+  if (location.hash !== "#" + v) history.replaceState(null, "", "#" + v);
   for (const s of document.querySelectorAll(".view")) s.hidden = s.id !== "v-" + v;
   for (const b of document.querySelectorAll("nav button[data-view]")) b.setAttribute("aria-current", b.dataset.view === v);
   if (CFG) { renderDetail(); placeCards(); renderChatGPT(); renderChat(); renderSessions(); }
@@ -766,11 +822,11 @@ async function load() {
   }
   document.getElementById("dot").className = "dot";
   document.getElementById("conn").textContent = "connected";
-  CFG = s.config; MODELS = s.models; ALL = s.allModels; CG = s.chatgpt || CG; SESS = s.session || SESS;
+  CFG = s.config; MODELS = s.models; ALL = s.allModels; CG = s.chatgpt || CG; SESS = s.session || SESS; RULES = s.rules || RULES;
   for (const row of s.requests) { REQS.unshift(row); SINCE = Math.max(SINCE, row.n); }
   if (REQS.length > 300) REQS.length = 300;
   if (!PICKED) PICKED = ALL[0];
-  renderChrome(); renderList(); renderDetail(); renderRouting(); renderChatGPT(); renderChat(); renderSessions(); renderLogs(); renderTests();
+  renderChrome(); renderOverview(); renderList(); renderDetail(); renderRouting(); renderChatGPT(); renderChat(); renderSessions(); renderLogs(); renderTests();
 }
 
 // The state poll repaints every panel every 1.5 seconds, which is right for
@@ -795,6 +851,68 @@ function renderChrome() {
     + (SESS.mode === "record" ? " · recording " + SESS.name : SESS.mode === "replay" ? " · replaying " + SESS.name : "");
 }
 
+// The published keys, as the README gives them. Not read from the server: a
+// deployment may have set its own, and a console with no sign-in is not the
+// place to show a key somebody chose.
+const PUBLISHED = {
+  anthropic: { name: "Anthropic", path: "POST /v1/messages", header: "x-api-key", key: "sk-ant-llmsim-000000000000000000000000" },
+  openai: { name: "OpenAI", path: "POST /v1/chat/completions", header: "Authorization: Bearer", key: "sk-llmsim-000000000000000000000000" },
+  deepseek: { name: "DeepSeek", path: "POST /v1/chat/completions", header: "Authorization: Bearer", key: "sk-llmsim-deepseek-0000000000000000" },
+};
+const ROUTE_MEANS = {
+  scripted: ["Scripted", "Answers are made up here, from your rules. Nothing is called and nothing is spent."],
+  relay: ["Upstream", "Requests are relayed to one real model."],
+  chatgpt: ["ChatGPT plan", "Requests are answered by a ChatGPT subscription."],
+};
+const TASKS = [
+  ["routing", "Decide what answers", "Scripted here, relayed to a real model, or a ChatGPT plan"],
+  ["behaviors", "Write what the model says", "Rules: this ask gets this answer, or this tool call"],
+  ["models", "Treat one model differently", "Its own route, a fixed answer, a status or a delay"],
+  ["faults", "Make something go wrong", "A dead stream, a bad tool call, a 429, on purpose"],
+  ["evidence", "See what was asked", "A live tail, and every request in full"],
+  ["chat", "Try it by hand", "Talk to a model the way a client would"],
+  ["sessions", "Record a real run and replay it", "Exactly, offline and free"],
+  ["tests", "Check a model answers as intended", "Send a prompt, say what must come back, keep it as a case"],
+  ["lab", "Test an agent end to end", "Drive it, simulate its tools and peers, judge the result"],
+];
+function copyBtn(text) { return `<button class="copy" onclick="copyText('${esc(text)}'); this.textContent='Copied'; setTimeout(() => this.textContent='Copy', 1200)">Copy</button>`; }
+function renderOverview() {
+  if (!CFG || !document.getElementById("ov-stats")) return;
+  const d = CFG.routing.default, [mode, means] = ROUTE_MEANS[d] || [d, ""];
+  const routed = Object.keys(CFG.routing.models).length;
+  // From the state every screen shares, so it is right before Faults has been opened.
+  const faults = (CFG.chaos && CFG.chaos.paused) ? 0 : (CFG.faults || []).filter((f) => f.enabled !== false).length;
+  const stats = [];
+  stats.push({ k: "Answers come from", v: mode, d: means + (routed ? ` ${routed} model${routed === 1 ? " is" : "s are"} set differently.` : ""), go: "routing" });
+  if (d === "chatgpt" || Object.values(CFG.routing.models).includes("chatgpt")) {
+    stats.push(CG.signedIn
+      ? { k: "ChatGPT plan", v: "Signed in", d: "Requests on this route spend the plan.", go: "routing" }
+      : { k: "ChatGPT plan", v: "Not signed in", d: "Requests on this route fail until someone signs in.", go: "routing", warn: true });
+  } else if (d === "relay") {
+    stats.push(CFG.upstream.url
+      ? { k: "Upstream", v: CFG.upstream.model || "set", d: CFG.upstream.url, go: "routing" }
+      : { k: "Upstream", v: "No address", d: "Relayed requests fail until one is set.", go: "routing", warn: true });
+  } else {
+    stats.push({ k: "Rules", v: RULES.length + " loaded", d: "Tried in order; the first that matches answers.", go: "behaviors" });
+  }
+  stats.push(SESS.mode === "record" ? { k: "Recording", v: SESS.name, d: "Every answer is being kept.", go: "sessions", warn: true }
+    : SESS.mode === "replay" ? { k: "Replaying", v: SESS.name, d: "Answers come from this recording, not from the route above.", go: "sessions", warn: true }
+    : { k: "Record & replay", v: "Off", d: (SESS.cassettes || []).length + " recording(s) kept.", go: "sessions" });
+  stats.push({ k: "Requests seen", v: String(REQS.length >= 300 ? "300+" : REQS.length), d: faults ? `${faults} fault rule${faults === 1 ? "" : "s"} active.` : "No fault is active.", go: faults ? "faults" : "evidence", warn: faults > 0 });
+  document.getElementById("ov-stats").innerHTML = stats.map((x) => `<div class="ov-stat ${x.warn ? "warn" : ""}" style="cursor:pointer" onclick="show('${x.go}')">
+    <div class="k">${esc(x.k)}</div><div class="v">${esc(x.v)}</div><div class="d">${esc(x.d)}</div></div>`).join("");
+  document.getElementById("ov-connect").innerHTML = Object.keys(MODELS).map((p) => {
+    const v = PUBLISHED[p] || { name: p, path: "", header: "", key: "" };
+    const base = location.origin + "/" + p;
+    return `<tr><td><b>${esc(v.name)}</b></td>
+      <td class="mono">${esc(base)} ${copyBtn(base)}</td>
+      <td class="mono" style="color:var(--muted)">${esc(v.path)}</td>
+      <td class="mono">${esc(v.key)} ${v.key ? copyBtn(v.key) : ""}<div style="color:var(--faint); font-size:11px">${esc(v.header)}</div></td></tr>`;
+  }).join("");
+  document.getElementById("ov-tasks").innerHTML = TASKS.map(([v, title, what]) => `<button class="ov-task" onclick="show('${v}')">
+    <div><b>${esc(title)}</b><span>${esc(what)}</span></div><span class="go">${esc(document.querySelector(`nav button[data-view="${v}"] span`).textContent)} →</span></button>`).join("");
+}
+
 // Where the two route cards belong right now, and which of them.
 //
 // A card is shown only for the route being looked at: under Default on the
@@ -812,7 +930,11 @@ function parkCards() {
 function placeCards() {
   if (!CFG) return;
   const onModel = VIEW === "models" && PICKED;
-  const route = onModel ? routeOf(PICKED) : CFG.routing.default;
+  // On a model's page the settings shown are for a route chosen for that
+  // model. One left on the default says so and points at Routing: the whole
+  // plan or upstream form under every one of seventy models read as seventy
+  // places to change one setting.
+  const route = onModel ? (CFG.routing.models[PICKED] || "") : CFG.routing.default;
   const home = document.getElementById(onModel ? "cfg-slot" : "cfg-home");
   for (const [id, wants] of [["chatgptcard", "chatgpt"], ["upstreamcard", "relay"]]) {
     const card = document.getElementById(id);
@@ -861,6 +983,7 @@ function renderDetail() {
         <button onclick="setRoute('${esc(m)}','relay')" aria-pressed="${r === "relay"}">Upstream</button>
         <button onclick="setRoute('${esc(m)}','chatgpt')" aria-pressed="${r === "chatgpt"}">ChatGPT plan</button>
       </div>
+      ${r === "" ? `<p class="help" style="margin:12px 0 0">It follows the default route, <b>${esc(routeName(CFG.routing.default))}</b>. <a href="#routing" onclick="show('routing'); return false">That route's settings are on Routing.</a></p>` : ""}
     </div>
     <div id="cfg-slot"></div>
 
@@ -1338,11 +1461,11 @@ PAGES.faults = { enter: ftLoad, poll: ftLoad };
 
 
 // ── Evidence ──────────────────────────────────────────────────────────────
-let EV = { tab: "requests", picked: null, last: "" };
+let EV = { tab: "live", picked: null, last: "" };
 
 function evTab(t) {
   EV.tab = t;
-  for (const name of ["requests", "assertions", "settings"]) {
+  for (const name of ["live", "requests", "assertions", "settings"]) {
     document.getElementById("ev-" + name).hidden = name !== t;
     document.getElementById("ev-tab-" + name).setAttribute("aria-pressed", name === t);
   }
@@ -1566,55 +1689,66 @@ PAGES.evidence = { enter: evEnter, poll: evPoll };
 // One generic page over the kit's REST areas: a list, a JSON editor, and the actions an area has.
 // It does nothing the API does not, so whatever a person does here a CI job can do too.
 const LAB = {
-  scenarios: { title: "Scenarios", help: "One test of an agent, as a file: how to reach it, what the user says, what the model says, and what must hold afterwards.", list: "/api/scenarios", key: "scenarios", id: "id",
+  scenarios: { title: "Scenarios", group: "cases", help: "One test of an agent, as a file: how to reach it, what the user says, what the model says, and what must hold afterwards.", list: "/api/scenarios", key: "scenarios", id: "id",
     cols: (r) => `${r.driver || ""} · ${r.checks} check(s)`, one: (id) => "/api/scenarios/" + id, oneKey: "scenario", put: (id) => "/api/scenarios/" + id, del: (id) => "/api/scenarios/" + id,
     actions: [["Run", (id) => ["POST", "/api/scenarios/" + id + "/run", {}]], ["Validate", (id, doc) => ["POST", "/api/scenarios/validate", { scenario: doc }]]],
     blank: { id: "my-scenario", agent: { name: "agent", driver: "http", url: "http://localhost:9000/chat", body: { input: "{{message}}" }, reply: "reply" }, model: { rules: [] }, turns: [{ say: "hello", expect: { contains: "hi" } }], checks: [] } },
-  results: { title: "Results", help: "What each run did and which checks held. Open one to read it; its timeline is below.", list: "/api/results", key: "results", id: "run",
+  results: { title: "Results", group: "cases", help: "What each run did and which checks held. Open one to read it; its timeline is below.", list: "/api/results", key: "results", id: "run",
     cols: (r) => `${r.verdict} · ${r.scenario} · ${r.tier}`, one: (id) => "/api/results/" + id, oneKey: "result", readonly: true,
     actions: [["Timeline", (id) => ["GET", "/api/runs/" + id + "/timeline"]], ["JUnit", (id) => ["GET", "/api/results/" + id + "/junit"]]] },
-  datasets: { title: "Datasets", help: "Scenarios kept together as immutable versions. Saving changes makes a new version; tag one \"baseline\".", list: "/api/datasets", key: "datasets", id: "id",
+  datasets: { title: "Datasets", group: "cases", help: "Scenarios kept together as immutable versions. Saving changes makes a new version; tag one \"baseline\".", list: "/api/datasets", key: "datasets", id: "id",
     cols: (r) => `v${r.version} · ${r.items} case(s)`, one: (id) => "/api/datasets/" + id, oneKey: null, put: (id) => "/api/datasets/" + id, del: (id) => "/api/datasets/" + id,
     actions: [["Run experiment", (id) => ["POST", "/api/experiments/run", { dataset: id }]], ["Versions", (id) => ["GET", "/api/datasets/" + id + "/versions"]], ["Tag current baseline", (id) => ["POST", "/api/datasets/" + id + "/tag", { tag: "baseline" }]]],
     blank: { description: "", items: [{ id: "case-1", scenario: { id: "case-1", agent: { driver: "http", url: "http://localhost:9000/chat", body: { input: "{{message}}" }, reply: "reply" }, turns: [{ say: "hello", expect: { contains: "hi" } }], checks: [] } }] } },
-  experiments: { title: "Experiments", help: "A dataset version run against an agent version, case by case. Mark one as the baseline, then gate the next against it.", list: "/api/experiments", key: "experiments", id: "id",
+  experiments: { title: "Experiments", group: "cases", help: "A dataset version run against an agent version, case by case. Mark one as the baseline, then gate the next against it.", list: "/api/experiments", key: "experiments", id: "id",
     cols: (r) => `${r.verdict || r.status} · ${r.dataset} v${r.version} · ${r.tier}${r.label ? " · " + r.label : ""}`, one: (id) => "/api/experiments/" + id, oneKey: "experiment", readonly: true,
     actions: [["Make baseline", (id) => ["POST", "/api/experiments/" + id + "/baseline", {}]], ["Gate against baseline", (id) => ["POST", "/api/experiments/" + id + "/gate", {}]]] },
-  mcp: { title: "Mock tool servers (MCP)", help: "An MCP server whose tools are written down. Point the agent at /run/<run>/agent/<name>/mcp/<id>.", list: "/api/mcp", key: "servers", id: "id",
+  mcp: { title: "Mock tool servers (MCP)", group: "world", help: "An MCP server whose tools are written down. Point the agent at /run/<run>/agent/<name>/mcp/<id>.", list: "/api/mcp", key: "servers", id: "id",
     cols: (r) => (r.tools || []).join(", ") || r.proxy, one: (id) => "/api/mcp/" + id, oneKey: "server", put: (id) => "/api/mcp/" + id, del: (id) => "/api/mcp/" + id,
     actions: [["URL", (id) => ["GET", "/api/mcp/" + id + "/url?run=RUN&agent=AGENT"]]],
     blank: { id: "orders", tools: [{ name: "lookup_order", description: "Look an order up", inputSchema: { type: "object", properties: { id: { type: "integer" } } }, results: [{ when: {}, result: { status: "shipped" } }] }] } },
-  mocks: { title: "Mock backends (REST)", help: "A REST API an agent's tool calls, by hand or imported from OpenAPI, with its contract enforced. Served at /run/<run>/agent/<name>/mock/<id>.", list: "/api/mocks", key: "backends", id: "id",
+  mocks: { title: "Mock backends (REST)", group: "world", help: "A REST API an agent's tool calls, by hand or imported from OpenAPI, with its contract enforced. Served at /run/<run>/agent/<name>/mock/<id>.", list: "/api/mocks", key: "backends", id: "id",
     cols: (r) => (r.routes || []).length + " route(s)", one: (id) => "/api/mocks/" + id, oneKey: "backend", put: (id) => "/api/mocks/" + id, del: (id) => "/api/mocks/" + id,
     actions: [["URL", (id) => ["GET", "/api/mocks/" + id + "/url?run=RUN&agent=AGENT"]]],
     blank: { id: "crm", routes: [{ method: "GET", path: "/orders/{id}", default: { result: { id: 1, status: "open" } } }] } },
-  a2a: { title: "Stub agents (A2A)", help: "Another agent, written down. Your agent delegates to it; every message is on the run's timeline.", list: "/api/a2a", key: "stubs", id: "id",
+  a2a: { title: "Stub agents (A2A)", group: "world", help: "Another agent, written down. Your agent delegates to it; every message is on the run's timeline.", list: "/api/a2a", key: "stubs", id: "id",
     cols: (r) => (r.rules || 0) + " rule(s)", one: (id) => "/api/a2a/" + id, oneKey: "stub", put: (id) => "/api/a2a/" + id, del: (id) => "/api/a2a/" + id,
     actions: [["URL", (id) => ["GET", "/api/a2a/" + id + "/url?run=RUN&agent=AGENT"]]],
     blank: { id: "billing", description: "Billing", results: [{ when: { field: "text", op: "contains", value: "refund" }, result: "Refund approved." }, { when: {}, result: "I only handle refunds." }] } },
-  a2aproxies: { title: "Agent proxies (A2A)", help: "LLMSim between your agent and a real one: forward, record once, replay without it.", list: "/api/a2aproxies", key: "proxys", id: "id",
+  a2aproxies: { title: "Agent proxies (A2A)", group: "world", help: "LLMSim between your agent and a real one: forward, record once, replay without it.", list: "/api/a2aproxies", key: "proxys", id: "id",
     cols: (r) => `${r.mode} · ${r.url}`, one: (id) => "/api/a2aproxies/" + id, oneKey: "proxy", put: (id) => "/api/a2aproxies/" + id, del: (id) => "/api/a2aproxies/" + id,
     actions: [["Forget recording", (id) => ["DELETE", "/api/a2aproxies/" + id + "/cassette"]]], blank: { id: "real-agent", url: "https://agent.example", mode: "record" } },
-  kitfaults: { title: "Tool and peer faults", help: "A tool that errors, stalls, rate-limits or answers with half of it; a peer that is down, lies or never finishes. Same gates and seed as every fault.", list: "/api/kitfaults", key: "faults", id: "id",
+  kitfaults: { title: "Tool and peer faults", group: "world", help: "A tool that errors, stalls, rate-limits or answers with half of it; a peer that is down, lies or never finishes. Same gates and seed as every fault.", list: "/api/kitfaults", key: "faults", id: "id",
     cols: (r) => `${r.target} · ${(r.fault || {}).type} · fired ${r.fired}/${r.seen}`, one: (id) => "/api/kitfaults", oneKey: "faults", pick: true, put: (id) => "/api/kitfaults/" + id, del: (id) => "/api/kitfaults/" + id,
     blank: { target: "tool", match: { field: "tool", op: "eq", value: "lookup_order" }, fault: { type: "error", message: "the backend is down" }, probability: 1 } },
-  judges: { title: "Judges", help: "A model that decides what a rule cannot, and must say why. A named judge gates only after it has been calibrated against people's labels.", list: "/api/judges", key: "judges", id: "id",
+  judges: { title: "Judges", group: "judging", help: "A model that decides what a rule cannot, and must say why. A named judge gates only after it has been calibrated against people's labels.", list: "/api/judges", key: "judges", id: "id",
     cols: (r) => (r.canGate ? "can gate" : "cannot gate: " + r.why), one: (id) => "/api/judges/" + id, oneKey: "judge", put: (id) => "/api/judges/" + id, del: (id) => "/api/judges/" + id,
     actions: [["Calibrate from reviews", (id) => ["POST", "/api/judges/" + id + "/calibrate", { fromReviews: true }]]],
     blank: { id: "helpful", rubric: "Did the assistant help the user with what they asked?", minAgreement: 0.8 } },
-  reviews: { title: "Review queue", help: "Runs waiting for a person. A verdict calibrates judges; a correction becomes what the case is checked against.", list: "/api/reviews", key: "reviews", id: "id",
+  reviews: { title: "Review queue", group: "judging", help: "Runs waiting for a person. A verdict calibrates judges; a correction becomes what the case is checked against.", list: "/api/reviews", key: "reviews", id: "id",
     cols: (r) => `${r.status} · ${r.run}`, one: (id) => "/api/reviews/" + id, oneKey: "review", readonly: true,
     actions: [["Pass", (id) => ["POST", "/api/reviews/" + id + "/submit", { verdict: "pass" }]], ["Fail", (id) => ["POST", "/api/reviews/" + id + "/submit", { verdict: "fail" }]]] },
-  variations: { title: "Variations", help: "Inputs a model proposed near an existing case. Nothing enters a dataset until a person accepts it.", list: "/api/variations", key: "variations", id: "id",
+  variations: { title: "Variations", group: "judging", help: "Inputs a model proposed near an existing case. Nothing enters a dataset until a person accepts it.", list: "/api/variations", key: "variations", id: "id",
     cols: (r) => `${r.dataset}/${r.item} · ${r.accepted}/${r.proposals} accepted`, one: (id) => "/api/variations/" + id, oneKey: "variations", readonly: true,
     actions: [["Accept first", (id) => ["POST", "/api/variations/" + id + "/accept", { accept: [{ index: 0 }] }]]] },
-  credentials: { title: "Credentials", help: "What a driver uses to reach an agent. Values are never shown again, and are scrubbed from everything the kit keeps.", list: "/api/credentials", key: "credentials", id: "label",
+  credentials: { title: "Credentials", group: "setup", help: "What a driver uses to reach an agent. Values are never shown again, and are scrubbed from everything the kit keeps.", list: "/api/credentials", key: "credentials", id: "label",
     cols: (r) => `${r.type} · ${r.fingerprint}`, put: (id) => "/api/credentials/" + id, del: (id) => "/api/credentials/" + id, blank: { type: "bearer", token: "…" }, template: true },
 };
 let LABK = "scenarios", LABROWS = [], LABID = null, LABNEW = false;
 
+// Thirteen areas in one row is a wall. They are four kinds of thing, in the
+// order a test is put together: the cases, what the agent talks to while it
+// runs, how its work is judged, and what reaching it needs.
+const LAB_GROUPS = [
+  ["cases", "Cases and runs", "What is tested, and how it went"],
+  ["world", "What the agent talks to", "Simulated tools, backends and other agents"],
+  ["judging", "Judging", "Deciding what a rule cannot"],
+  ["setup", "Setup", "Reaching the agent"],
+];
 function labTabs() {
-  document.getElementById("lab-tabs").innerHTML = Object.entries(LAB).map(([k, a]) => `<button class="btn ${k === LABK ? "" : "ghost"}" style="flex:0 0 auto;white-space:nowrap" onclick="labSelect('${k}')">${esc(a.title)}</button>`).join("");
+  document.getElementById("lab-tabs").innerHTML = LAB_GROUPS.map(([g, title, what]) => `<div class="lab-group"><h3>${esc(title)}</h3><p>${esc(what)}</p>`
+    + Object.entries(LAB).filter(([, a]) => a.group === g).map(([k, a]) => `<button aria-current="${k === LABK}" onclick="labSelect('${k}')">${esc(a.title)}</button>`).join("")
+    + `</div>`).join("");
 }
 function labSelect(k) { LABK = k; LABID = null; LABNEW = false; document.getElementById("lab-editor").hidden = true; document.getElementById("lab-out-card").hidden = true; labTabs(); labLoad(); }
 async function labLoad() {
@@ -2416,7 +2550,8 @@ const runAll = () => execute({}, "all");
 const runOne = (id) => execute({ testIds: [id] });
 const runPlan = (id) => execute({ planId: id });
 
-show("models");
+show((location.hash || "").slice(1) || "overview");
+window.addEventListener("hashchange", () => { const v = (location.hash || "").slice(1); if (v && v !== VIEW) show(v); });
 load();
 setInterval(load, 1500);
 </script>

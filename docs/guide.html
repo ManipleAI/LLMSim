@@ -145,11 +145,11 @@ LLMSIM_PORT=9000 python3 server.py</pre></div>
 http://localhost:8099<span class="k">/run/r1/agent/worker</span>/anthropic</pre></div>
       <p>Or ask for the URLs:</p>
       <div class="code"><pre>curl -X POST localhost:8099/api/runs -d '{"run": "r1", "agents": ["planner", "worker"]}'</pre></div>
-      <p>If your traffic comes through a gateway that carries an identity in a header or a body field, set that up under <b>Evidence &rarr; Settings</b>. The headers <code>X-LLMSim-Run</code>, <code>X-LLMSim-Agent</code> and <code>X-LLMSim-App</code> work without any setup.</p>
+      <p>If your traffic comes through a gateway that carries an identity in a header or a body field, set that up under <b>Requests &rarr; Capture settings</b>. The headers <code>X-LLMSim-Run</code>, <code>X-LLMSim-Agent</code> and <code>X-LLMSim-App</code> work without any setup.</p>
     </section>
 
     <section id="behaviors">
-      <span class="where">Console: Behaviors</span>
+      <span class="where">Console: Answer rules</span>
       <h2>Decide what the model says</h2>
       <p>A rule says: when a request looks like this, answer with these turns. The first turn answers the first request of a conversation, the second answers the next, and so on.</p>
       <div class="code"><pre>curl -X POST localhost:8099/api/rules -d '{"rule": {
@@ -213,7 +213,7 @@ http://localhost:8099<span class="k">/run/r1/agent/worker</span>/anthropic</pre>
     </section>
 
     <section id="evidence">
-      <span class="where">Console: Evidence &rarr; Requests</span>
+      <span class="where">Console: Requests &rarr; Captured</span>
       <h2>See what was sent</h2>
       <p>Every request is kept: the system prompt, declared tools, messages, who sent it, which credential it used, and what answered it.</p>
       <div class="code"><pre>curl 'localhost:8099/api/captures?run=r1&amp;agent=worker'   <span class="c"># a list</span>
@@ -222,7 +222,7 @@ curl localhost:8099/api/captures/12                       <span class="c"># one 
     </section>
 
     <section id="assertions">
-      <span class="where">Console: Evidence &rarr; Assertions</span>
+      <span class="where">Console: Requests &rarr; Assertions</span>
       <h2>Check it</h2>
       <p>An assertion is a claim about the requests an agent made. Each one has a <code>scope</code> and exactly one check.</p>
       <div class="code"><pre>curl -X POST localhost:8099/api/assertions/evaluate -d '{
@@ -261,7 +261,7 @@ curl localhost:8099/api/captures/12                       <span class="c"># one 
     </section>
 
     <section id="sessions">
-      <span class="where">Console: Sessions</span>
+      <span class="where">Console: Record &amp; replay</span>
       <h2>Record once, replay</h2>
       <p>Run a session once and keep every answer. Later runs get the same answers back, offline and for free.</p>
       <div class="code"><pre>curl -X POST localhost:8099/api/sessions/record -d '{"name": "login-flow", "run": "r1"}'
@@ -319,7 +319,7 @@ curl -X POST localhost:8099/api/sessions/stop   -d '{"run": "r1"}'     <span cla
     {"id": "no-writes", "name": "It never called a write tool",
      "none": {"field": "response.toolNames", "op": "includes", "value": "Write"}}
   ]}'</pre></div></li>
-        <li><b>Read the verdict.</b> A <code>fail</code> lists the request numbers. Open one under Evidence to see exactly what the agent sent.</li>
+        <li><b>Read the verdict.</b> A <code>fail</code> lists the request numbers. Open one under Requests &rarr; Captured to see exactly what the agent sent.</li>
         <li><b>Clean up.</b> <code>curl -X DELETE localhost:8099/api/runs/t1</code> forgets the run's requests and stops its session.</li>
       </ol>
     </section>

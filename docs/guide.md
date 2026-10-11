@@ -70,12 +70,12 @@ curl -X POST localhost:8099/api/runs -d '{"run": "r1", "agents": ["planner", "wo
 ```
 
 If your traffic comes through a gateway that carries an identity in a header or
-a body field, set that up under **Evidence → Settings**. The headers
+a body field, set that up under **Requests → Capture settings**. The headers
 `X-LLMSim-Run`, `X-LLMSim-Agent` and `X-LLMSim-App` work without any setup.
 
 ## Decide what the model says
 
-*Console: Behaviors*
+*Console: Answer rules*
 
 A rule says: when a request looks like this, answer with these turns. The first
 turn answers the first request of a conversation, the second answers the next,
@@ -168,7 +168,7 @@ so it never costs a call.
 
 ## See what was sent
 
-*Console: Evidence → Requests*
+*Console: Requests → Captured*
 
 Every request is kept: the system prompt, declared tools, messages, who sent it,
 which credential it used, and what answered it.
@@ -183,7 +183,7 @@ set. Redaction patterns apply to everything shown or exported.
 
 ## Check it
 
-*Console: Evidence → Assertions*
+*Console: Requests → Assertions*
 
 An assertion is a claim about the requests an agent made. Each one has a `scope`
 and exactly one check.
@@ -239,7 +239,7 @@ and assert that the token turns up in the second agent's request.
 
 ## Record once, replay
 
-*Console: Sessions*
+*Console: Record & replay*
 
 Run a session once and keep every answer. Later runs get the same answers back,
 offline and for free.
@@ -326,7 +326,7 @@ denied, and it must never send a card number to the model.
      ]}'
    ```
 6. **Read the verdict.** A `fail` lists the request numbers. Open one under
-   Evidence to see exactly what the agent sent.
+   Requests → Captured to see exactly what the agent sent.
 7. **Clean up.** `curl -X DELETE localhost:8099/api/runs/t1` forgets the run's
    requests and stops its session.
 

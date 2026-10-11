@@ -1,316 +1,238 @@
 <title>LLMSim Guide</title>
 <style>
-  /* Layout: a contents rail that stays put beside one reading column; a single column on a phone. */
   :root {
     --page:#efece6; --surface:#ffffff; --subtle:#f5f2ec; --ink:#14181f; --muted:#5a6068; --faint:#868b93;
-    --border:#e2dcd1; --primary:#b23a22; --primary-tint:#f7ece8; --green:#2a6f4e; --green-tint:#e4f0e9;
-    --amber:#8f5a08; --amber-tint:#fbf0dd; --code-bg:#14181f; --code-fg:#e6e1d6; --code-dim:#8d95a0; --code-key:#f0a48f;
+    --border:#e2dcd1; --primary:#b23a22; --primary-tint:#f7ece8; --amber:#8f5a08; --amber-tint:#fbf0dd;
+    --code-bg:#14181f; --code-fg:#e6e1d6; --chrome:#14181f; --chrome-fg:#d6d0c6; --chrome-dim:#7d8590;
     --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   }
-  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  @media (prefers-color-scheme: dark) { :root {
     --page:#12151b; --surface:#1a1f27; --subtle:#212731; --ink:#ece8df; --muted:#a9afb8; --faint:#7c838d;
-    --border:#2c333e; --primary:#e8806a; --primary-tint:#3a221d; --green:#7cc7a0; --green-tint:#1c3329;
-    --amber:#e0b266; --amber-tint:#392c15; --code-bg:#0c0f14; --code-fg:#e6e1d6; --code-dim:#8d95a0; --code-key:#f0a48f;
-    color-scheme: dark } }
-  :root[data-theme="dark"] {
-    --page:#12151b; --surface:#1a1f27; --subtle:#212731; --ink:#ece8df; --muted:#a9afb8; --faint:#7c838d;
-    --border:#2c333e; --primary:#e8806a; --primary-tint:#3a221d; --green:#7cc7a0; --green-tint:#1c3329;
-    --amber:#e0b266; --amber-tint:#392c15; --code-bg:#0c0f14; --code-fg:#e6e1d6; --code-dim:#8d95a0; --code-key:#f0a48f;
-    color-scheme: dark }
-
-  * { box-sizing: border-box; }
-  body { margin:0; background:var(--page); color:var(--ink); font:16px/1.6 var(--sans); -webkit-font-smoothing:antialiased; }
-  .wrap { max-width:1120px; margin:0 auto; padding-inline:20px; padding-block:32px 72px; display:grid; grid-template-columns:220px minmax(0,1fr); gap:48px; }
-  @media (max-width:860px) { .wrap { grid-template-columns:minmax(0,1fr); gap:20px; padding-block:20px 56px; } }
-
-  nav.toc { position:sticky; top:calc(env(safe-area-inset-top, 0px) + 24px); align-self:start; font-size:14px; }
-  @media (max-width:860px) { nav.toc { position:static; } }
-  nav.toc .mark { display:flex; align-items:center; gap:9px; margin-bottom:18px; font-weight:700; letter-spacing:-.01em; }
-  nav.toc .mark svg { flex:0 0 22px; }
-  nav.toc ol { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:2px; }
-  @media (max-width:860px) { nav.toc ol { flex-direction:row; flex-wrap:wrap; gap:6px; } }
-  nav.toc a { display:block; padding:5px 10px; border-radius:6px; color:var(--muted); text-decoration:none; }
-  nav.toc a:hover { background:var(--subtle); color:var(--ink); }
-  nav.toc a:focus-visible, a:focus-visible, button:focus-visible { outline:2px solid var(--primary); outline-offset:2px; }
-  @media (max-width:860px) { nav.toc a { border:1px solid var(--border); background:var(--surface); } }
-
-  main { min-width:0; }
-  header h1 { margin:0 0 10px; font-size:clamp(28px, 4.5vw, 38px); line-height:1.12; letter-spacing:-.025em; text-wrap:balance; }
-  header p.lede { margin:0; max-width:62ch; font-size:18px; color:var(--muted); }
-  section { margin-top:52px; scroll-margin-top:24px; }
-  h2 { margin:0 0 10px; font-size:23px; letter-spacing:-.018em; line-height:1.25; text-wrap:balance; }
-  h3 { margin:26px 0 6px; font-size:16px; }
-  p, li { max-width:68ch; }
-  p { margin:0 0 12px; }
-  ul, ol.steps { margin:0 0 12px; padding-left:22px; }
-  li { margin-bottom:5px; }
-  code { font:0.88em var(--mono); background:var(--subtle); border:1px solid var(--border); border-radius:4px; padding:1px 5px; overflow-wrap:anywhere; }
+    --border:#2c333e; --primary:#e7826d; --primary-tint:#3a221d; --amber:#e6b96a; --amber-tint:#352b17; --code-bg:#0c0f14;
+  } }
+  * { box-sizing:border-box; }
+  html { scroll-padding-top:18px; }
+  body { margin:0; background:var(--page); color:var(--ink); font:15px/1.65 var(--sans); -webkit-font-smoothing:antialiased; }
+  .layout { display:flex; align-items:flex-start; }
+  /* The contents: every section and what is under it, always in reach. */
+  .rail { position:sticky; top:0; flex:0 0 272px; width:272px; height:100vh; overflow-y:auto; background:var(--chrome); color:var(--chrome-fg); padding:18px 0 28px; }
+  .rail .brand { padding:0 20px 14px; font-weight:700; font-size:15px; color:#fff; }
+  .rail .brand span { display:block; font-weight:400; font-size:11.5px; color:var(--chrome-dim); margin-top:2px; }
+  .rail input { display:block; width:calc(100% - 40px); margin:0 20px 12px; background:#1c212a; border:1px solid #2a313c; border-radius:7px; color:#fff; padding:7px 10px; font:13px var(--sans); }
+  .rail input:focus { outline:none; border-color:var(--primary); }
+  .rail a { display:block; padding:5px 20px; color:var(--chrome-fg); text-decoration:none; font-size:13px; line-height:1.4; }
+  .rail a.h3 { padding-left:34px; font-size:12.5px; color:var(--chrome-dim); }
+  .rail a:hover { color:#fff; background:#1c212a; }
+  .rail a.on { color:#fff; box-shadow:inset 2px 0 0 var(--primary); background:#222833; }
+  .rail a.h2 { margin-top:9px; font-weight:600; }
+  .rail .none { padding:6px 20px; color:var(--chrome-dim); font-size:12.5px; }
+  main { flex:1; min-width:0; padding:34px 44px 90px; }
+  .doc { max-width:860px; }
+  h1 { font-size:30px; letter-spacing:-.025em; line-height:1.2; margin:0 0 12px; }
+  h2 { font-size:22px; letter-spacing:-.02em; margin:52px 0 10px; padding-top:22px; border-top:1px solid var(--border); }
+  h3 { font-size:16.5px; letter-spacing:-.01em; margin:30px 0 6px; }
+  h4 { font-size:14px; margin:22px 0 4px; }
+  p { margin:10px 0; }
   a { color:var(--primary); }
-
-  .where { display:inline-block; font:600 11px/1 var(--mono); letter-spacing:.1em; text-transform:uppercase; color:var(--primary);
-           background:var(--primary-tint); border-radius:4px; padding:5px 8px; margin-bottom:10px; }
-
-  .code { position:relative; margin:10px 0 16px; }
-  .code pre { margin:0; padding:14px 16px; background:var(--code-bg); color:var(--code-fg); border-radius:9px; overflow-x:auto;
-              font:13px/1.6 var(--mono); tab-size:2; }
-  .code pre .c { color:var(--code-dim); }
-  .code pre .k { color:var(--code-key); }
-  .code button { position:absolute; top:8px; right:8px; font:600 11px/1 var(--sans); color:var(--code-fg); background:#2a313c;
-                 border:1px solid #3a4250; border-radius:5px; padding:6px 9px; cursor:pointer; }
-  .code button:hover { background:#353d4a; }
-
-  .tablewrap { overflow-x:auto; margin:10px 0 16px; border:1px solid var(--border); border-radius:9px; background:var(--surface); }
-  table { border-collapse:collapse; width:100%; font-size:14.5px; }
-  th { text-align:left; font:600 11px/1 var(--mono); letter-spacing:.1em; text-transform:uppercase; color:var(--faint); padding:12px 14px 9px; white-space:nowrap; }
-  td { padding:9px 14px; border-top:1px solid var(--border); vertical-align:top; }
+  code { font:12.5px var(--mono); background:var(--subtle); border:1px solid var(--border); border-radius:5px; padding:1px 5px; overflow-wrap:anywhere; }
+  .code { position:relative; margin:14px 0; }
+  .code pre { margin:0; background:var(--code-bg); color:var(--code-fg); border-radius:10px; padding:14px 16px; overflow-x:auto; font:12.5px/1.6 var(--mono); }
+  .code pre code { background:none; border:0; padding:0; color:inherit; font:inherit; overflow-wrap:normal; }
+  .code .copy { position:absolute; top:8px; right:8px; background:#232a34; color:#c9c3b8; border:1px solid #333b47; border-radius:6px; font:11px var(--sans); padding:4px 9px; cursor:pointer; opacity:0; }
+  .code:hover .copy, .code .copy:focus { opacity:1; }
+  .table { overflow-x:auto; margin:14px 0; }
+  table { border-collapse:collapse; width:100%; font-size:13.5px; background:var(--surface); border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+  th { text-align:left; font:600 10.5px var(--mono); letter-spacing:.1em; text-transform:uppercase; color:var(--muted); background:var(--subtle); padding:9px 12px; }
+  td { padding:9px 12px; border-top:1px solid var(--border); vertical-align:top; }
   td:first-child { white-space:nowrap; }
-  td code { white-space:nowrap; }
-
-  .note { border-radius:9px; padding:12px 15px; margin:12px 0 16px; max-width:72ch; font-size:15px; }
-  .note.warn { background:var(--amber-tint); color:var(--amber); }
-  .note.ok { background:var(--green-tint); color:var(--green); }
-  .note b { color:inherit; }
-
-  /* The picture of where LLMSim sits: the one thing this page has that no other would. */
-  .seat { display:grid; grid-template-columns:minmax(0,1fr) auto minmax(0,1.25fr) auto minmax(0,1fr); gap:10px; align-items:stretch; margin:18px 0 8px; }
-  @media (max-width:640px) { .seat { grid-template-columns:minmax(0,1fr); } .seat .arrow { transform:rotate(90deg); justify-self:center; } }
-  .seat .box { background:var(--surface); border:1px solid var(--border); border-radius:9px; padding:13px 14px; font-size:14px; min-width:0; }
-  .seat .box b { display:block; font-size:15px; margin-bottom:3px; }
-  .seat .box.sim { border-color:var(--primary); box-shadow:inset 0 0 0 1px var(--primary); }
-  .seat .box.off { border-style:dashed; color:var(--faint); }
-  .seat .arrow { align-self:center; color:var(--faint); font:18px var(--mono); }
-  .sees { font:13px/1.5 var(--mono); color:var(--muted); margin:4px 0 0; }
-
-  footer { margin-top:56px; padding-top:18px; border-top:1px solid var(--border); color:var(--faint); font-size:14px; }
+  td:first-child code { white-space:nowrap; }
+  blockquote { margin:16px 0; padding:11px 15px; background:var(--amber-tint); color:var(--amber); border-radius:9px; font-size:14px; }
+  blockquote p { margin:4px 0; }
+  blockquote code { background:rgba(255,255,255,.55); border-color:transparent; }
+  ul, ol { padding-left:22px; margin:10px 0; }
+  li { margin:5px 0; }
+  hr { border:0; border-top:1px solid var(--border); margin:40px 0; }
+  .lead { color:var(--muted); font-size:16.5px; margin-top:0; }
+  .menu { display:none; }
+  @media (max-width:900px) {
+    .layout { display:block; }
+    .rail { position:fixed; z-index:20; transform:translateX(-100%); transition:transform .15s; }
+    body.open .rail { transform:none; }
+    main { padding:60px 20px 70px; }
+    .menu { display:block; position:fixed; z-index:30; top:12px; left:12px; background:var(--chrome); color:#fff; border:0; border-radius:8px; padding:8px 12px; font:13px var(--sans); }
+    td:first-child, td:first-child code { white-space:normal; }
+  }
+  @media print { .rail, .menu, .copy { display:none !important; } main { padding:0; } }
 </style>
-
-<div class="wrap">
-  <nav class="toc" aria-label="Contents">
-    <div class="mark">
-      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M12 3 3 9l9 6 9-6-9-6Z" fill="none" stroke="var(--primary)" stroke-width="2" stroke-linejoin="round"/><path d="m3 14 9 6 9-6" fill="none" stroke="var(--primary)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      LLMSim
-    </div>
-    <ol>
-      <li><a href="#start">Start it</a></li>
-      <li><a href="#point">Point an agent at it</a></li>
-      <li><a href="#behaviors">Decide what the model says</a></li>
-      <li><a href="#faults">Make things go wrong</a></li>
-      <li><a href="#evidence">See what was sent</a></li>
-      <li><a href="#assertions">Check it</a></li>
-      <li><a href="#sessions">Record once, replay</a></li>
-      <li><a href="#real">Answer with a real model</a></li>
-      <li><a href="#example">A worked example</a></li>
-      <li><a href="#api">The API on one page</a></li>
-      <li><a href="#limits">What it cannot see</a></li>
-    </ol>
-  </nav>
-
-  <main>
-    <header>
-      <h1>Test an agent by playing its model</h1>
-      <p class="lede">LLMSim answers in Anthropic, OpenAI and DeepSeek wire formats, so any agent that takes a base URL can be pointed at it. You decide what the model says, break it on purpose, and check what the agent sent.</p>
-    </header>
-
-    <div class="seat" role="img" aria-label="An agent sends requests to LLMSim, which plays the model. LLMSim sees every request. It does not see the agent's tools.">
-      <div class="box"><b>Your agent</b>harness, tools, guardrails</div>
-      <div class="arrow" aria-hidden="true">&rarr;</div>
-      <div class="box sim"><b>LLMSim plays the model</b>scripts the answers, injects faults, keeps every request</div>
-      <div class="arrow" aria-hidden="true">&#8943;</div>
-      <div class="box off"><b>The agent's tools</b>files, APIs, other agents</div>
-    </div>
-    <p class="sees">LLMSim sees: system prompt &middot; declared tools &middot; every message &middot; tool results &middot; turn count &middot; credential used</p>
-
-    <section id="start">
-      <h2>Start it</h2>
-      <p>Python 3.9 or newer. Nothing to install.</p>
-      <div class="code"><pre>python3 server.py            <span class="c"># serves on port 8099</span>
-LLMSIM_PORT=9000 python3 server.py</pre></div>
-      <p>The console is at <code>http://localhost:8099/ui</code>. Everything on it can also be done over HTTP, and this guide shows both.</p>
-    </section>
-
-    <section id="point">
-      <h2>Point an agent at it</h2>
-      <p>Give the agent a base URL and the matching key. The keys are fake and published; a wrong one gets the vendor's own 401.</p>
-      <div class="tablewrap"><table>
-        <tr><th>Format</th><th>Base URL</th><th>Key</th></tr>
-        <tr><td>Anthropic</td><td><code>http://localhost:8099/anthropic</code></td><td><code>sk-ant-llmsim-000000000000000000000000</code></td></tr>
-        <tr><td>OpenAI</td><td><code>http://localhost:8099/openai/v1</code></td><td><code>sk-llmsim-000000000000000000000000</code></td></tr>
-        <tr><td>DeepSeek</td><td><code>http://localhost:8099/deepseek/v1</code></td><td><code>sk-llmsim-deepseek-0000000000000000</code></td></tr>
-      </table></div>
-
-      <h3>Say who is asking</h3>
-      <p>Put a run and an agent name in the URL. LLMSim then knows which requests belong together, and which agent sent each one.</p>
-      <div class="code"><pre>http://localhost:8099<span class="k">/run/r1/agent/planner</span>/openai/v1
-http://localhost:8099<span class="k">/run/r1/agent/worker</span>/anthropic</pre></div>
-      <p>Or ask for the URLs:</p>
-      <div class="code"><pre>curl -X POST localhost:8099/api/runs -d '{"run": "r1", "agents": ["planner", "worker"]}'</pre></div>
-      <p>If your traffic comes through a gateway that carries an identity in a header or a body field, set that up under <b>Evidence &rarr; Settings</b>. The headers <code>X-LLMSim-Run</code>, <code>X-LLMSim-Agent</code> and <code>X-LLMSim-App</code> work without any setup.</p>
-    </section>
-
-    <section id="behaviors">
-      <span class="where">Console: Behaviors</span>
-      <h2>Decide what the model says</h2>
-      <p>A rule says: when a request looks like this, answer with these turns. The first turn answers the first request of a conversation, the second answers the next, and so on.</p>
-      <div class="code"><pre>curl -X POST localhost:8099/api/rules -d '{"rule": {
+<button class="menu" id="menu" type="button">Contents</button>
+<div class="layout">
+<nav class="rail"><div class="brand">LLMSim<span>Documentation</span></div><input id="find" type="search" placeholder="Find in the docs…" aria-label="Find in the docs"><a class="h2" href="#start-here">Start here</a><a class="h3" href="#run-it">Run it</a><a class="h3" href="#point-a-client-at-it">Point a client at it</a><a class="h3" href="#send-a-first-request">Send a first request</a><a class="h3" href="#what-to-read-next">What to read next</a><a class="h2" href="#how-it-works">How it works</a><a class="h3" href="#where-an-answer-comes-from">Where an answer comes from</a><a class="h3" href="#rules-and-turns">Rules and turns</a><a class="h3" href="#runs-and-agents">Runs and agents</a><a class="h3" href="#what-llmsim-sees-and-what-it-cannot">What LLMSim sees, and what it cannot</a><a class="h2" href="#the-console">The console</a><a class="h2" href="#script-the-model">Script the model</a><a class="h3" href="#what-a-rule-can-match-on">What a rule can match on</a><a class="h3" href="#what-a-turn-can-say">What a turn can say</a><a class="h3" href="#find-out-why-a-rule-did-not-fire">Find out why a rule did not fire</a><a class="h3" href="#one-model-one-answer">One model, one answer</a><a class="h2" href="#make-things-go-wrong">Make things go wrong</a><a class="h2" href="#see-what-was-sent">See what was sent</a><a class="h3" href="#see-which-credential-arrived">See which credential arrived</a><a class="h2" href="#check-it">Check it</a><a class="h3" href="#check-a-handoff-between-two-agents">Check a handoff between two agents</a><a class="h2" href="#record-once-replay">Record once, replay</a><a class="h2" href="#answer-with-a-real-model">Answer with a real model</a><a class="h3" href="#anthropic-api">Anthropic API</a><a class="h3" href="#chatgpt-plan">ChatGPT plan</a><a class="h2" href="#functional-tests">Functional tests</a><a class="h2" href="#a-worked-example">A worked example</a><a class="h2" href="#test-an-agent">Test an agent</a><a class="h3" href="#a-scenario-is-a-test">A scenario is a test</a><a class="h3" href="#drivers">Drivers</a><a class="h3" href="#checks">Checks</a><a class="h3" href="#stand-in-for-its-tools">Stand in for its tools</a><a class="h3" href="#stand-in-for-other-agents">Stand in for other agents</a><a class="h3" href="#datasets-experiments-and-the-gate">Datasets, experiments and the gate</a><a class="h3" href="#judge-with-a-model">Judge with a model</a><a class="h3" href="#run-it-in-ci">Run it in CI</a><a class="h3" href="#what-was-not-verified">What was not verified</a><a class="h2" href="#api-reference">API reference</a><a class="h3" href="#the-vendors-endpoints">The vendors' endpoints</a><a class="h3" href="#runs">Runs</a><a class="h3" href="#rules">Rules</a><a class="h3" href="#faults">Faults</a><a class="h3" href="#requests">Requests</a><a class="h3" href="#assertions">Assertions</a><a class="h3" href="#recordings">Recordings</a><a class="h3" href="#settings">Settings</a><a class="h3" href="#test-kit-scenarios-and-results">Test kit: scenarios and results</a><a class="h3" href="#test-kit-datasets-and-experiments">Test kit: datasets and experiments</a><a class="h3" href="#test-kit-tools-and-peers">Test kit: tools and peers</a><a class="h3" href="#test-kit-judging-and-setup">Test kit: judging and setup</a><a class="h3" href="#the-consoles-own-routes">The console's own routes</a><a class="h2" href="#configuration">Configuration</a><a class="h3" href="#what-to-commit">What to commit</a><a class="h3" href="#in-a-container">In a container</a><a class="h2" href="#limits">Limits</a><a class="h3" href="#tests">Tests</a><div class="none" id="none" hidden>Nothing mentions that.</div></nav>
+<main><div class="doc">
+<h1 id="llmsim-documentation">LLMSim documentation</h1>
+<p class="lead">LLMSim plays the model an agent talks to. It answers in Anthropic's, OpenAI's and DeepSeek's wire formats, so anything that takes a base URL can be pointed at it. You decide what the model says, break it on purpose, keep every request, and check what the agent did.</p>
+<div class="code"><button class="copy" type="button">Copy</button><pre><code>Your agent  ──►  LLMSim plays the model  ···  The agent's tools
+(harness,        (scripts the answers,        (files, APIs,
+ tools,           injects faults,              other agents)
+ guardrails)      keeps every request)</code></pre></div>
+<p>This is the whole documentation. LLMSim serves it at <code>http://localhost:8099/guide</code>, built from <a href="https://github.com/ManipleAI/LLMSim/blob/main/docs/guide.md" target="_blank" rel="noopener"><code>docs/guide.md</code></a> by <code>bin/build-docs</code>. The reasons behind each decision are in <a href="https://github.com/ManipleAI/LLMSim/blob/main/docs/design.md" target="_blank" rel="noopener">the design notes</a>.</p>
+<h2 id="start-here">Start here</h2>
+<h3 id="run-it">Run it</h3>
+<p>Python 3.9 or newer. There is nothing to install.</p>
+<div class="code" data-lang="bash"><button class="copy" type="button">Copy</button><pre><code>python3 server.py                     # serves on port 8099
+LLMSIM_PORT=9000 python3 server.py    # or another port</code></pre></div>
+<p>The console is at <code>http://localhost:8099/ui</code>. Everything on it is also an HTTP API, and this documentation shows both.</p>
+<h3 id="point-a-client-at-it">Point a client at it</h3>
+<p>Give the client a base URL and the matching key. The keys are fake and published. A wrong one gets the vendor's own 401.</p>
+<div class="table"><table><thead><tr><th>Vendor</th><th>Base URL</th><th>Key</th></tr></thead><tbody><tr><td>Anthropic</td><td><code>http://localhost:8099/anthropic</code></td><td><code>sk-ant-llmsim-000000000000000000000000</code></td></tr><tr><td>OpenAI</td><td><code>http://localhost:8099/openai/v1</code></td><td><code>sk-llmsim-000000000000000000000000</code></td></tr><tr><td>DeepSeek</td><td><code>http://localhost:8099/deepseek/v1</code></td><td><code>sk-llmsim-deepseek-0000000000000000</code></td></tr></tbody></table></div>
+<p>The console's <strong>Overview</strong> shows the same addresses for the port it is really on, with a copy button.</p>
+<h3 id="send-a-first-request">Send a first request</h3>
+<div class="code" data-lang="bash"><button class="copy" type="button">Copy</button><pre><code>curl localhost:8099/openai/v1/chat/completions \
+  -H "Authorization: Bearer sk-llmsim-000000000000000000000000" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "gpt-5", "messages": [{"role": "user", "content": "hello"}]}'</code></pre></div>
+<p>The answer comes from a rule called <code>hello</code>. Open <strong>Requests</strong> in the console and the request is there, with the rule that answered it.</p>
+<h3 id="what-to-read-next">What to read next</h3>
+<div class="table"><table><thead><tr><th>You want to</th><th>Read</th></tr></thead><tbody><tr><td>Decide what the model says</td><td><a href="#script-the-model">Script the model</a></td></tr><tr><td>See how an agent copes when the vendor fails</td><td><a href="#make-things-go-wrong">Make things go wrong</a></td></tr><tr><td>Know exactly what an agent sent</td><td><a href="#see-what-was-sent">See what was sent</a> and <a href="#check-it">Check it</a></td></tr><tr><td>Run a real session once and replay it for free</td><td><a href="#record-once-replay">Record once, replay</a></td></tr><tr><td>Test an agent end to end, with its tools and its peers</td><td><a href="#test-an-agent">Test an agent</a></td></tr><tr><td>Call something from a script or CI</td><td><a href="#api-reference">API reference</a></td></tr></tbody></table></div>
+<h2 id="how-it-works">How it works</h2>
+<h3 id="where-an-answer-comes-from">Where an answer comes from</h3>
+<p>Every request takes one <strong>route</strong>. The default applies to every model, and one model can be given its own.</p>
+<div class="table"><table><thead><tr><th>Route</th><th>The answer comes from</th><th>Costs</th></tr></thead><tbody><tr><td>Scripted</td><td>A rule you wrote, or a shipped one</td><td>Nothing. Nothing leaves the machine.</td></tr><tr><td>Upstream (relay)</td><td>One real model behind an API key</td><td>That model's price</td></tr><tr><td>ChatGPT plan</td><td>A ChatGPT subscription you sign in to</td><td>The plan's usage</td></tr><tr><td>Anthropic API</td><td>A real Claude model, by API key</td><td>That model's price, billed to the key</td></tr><tr><td>Replay</td><td>A recording of an earlier run</td><td>Nothing</td></tr></tbody></table></div>
+<p>Scripted is the default. Routes are set under <strong>Routing</strong> and, for one model, under <strong>Models</strong>.</p>
+<h3 id="rules-and-turns">Rules and turns</h3>
+<p>A <strong>rule</strong> says: when a request looks like this, answer with these <strong>turns</strong>. The first turn answers the first request of a conversation, the second answers the next, and so on. A turn is some text, tool calls, or both. That is how an agent loop is scripted: the model asks for a tool, the agent runs it and reports back, the model says the next thing.</p>
+<p>Your rules are kept in <code>llmsim.rules.json</code> and are tried before the shipped ones in <code>responses.json</code>. The first rule that matches answers.</p>
+<h3 id="runs-and-agents">Runs and agents</h3>
+<p>A <strong>run</strong> groups the requests that belong to one test. An <strong>agent</strong> name says which agent sent each one. Put both in the URL and LLMSim keeps them apart from everything else:</p>
+<div class="code"><button class="copy" type="button">Copy</button><pre><code>http://localhost:8099/run/r1/agent/planner/openai/v1
+http://localhost:8099/run/r1/agent/worker/anthropic</code></pre></div>
+<p>The headers <code>X-LLMSim-Run</code>, <code>X-LLMSim-Agent</code> and <code>X-LLMSim-App</code> do the same without changing the URL, and so does a W3C <code>traceparent</code>, whose trace id becomes the run. For a gateway that carries an identity in its own header or body field, set that up under <strong>Requests → Capture settings</strong>.</p>
+<h3 id="what-llmsim-sees-and-what-it-cannot">What LLMSim sees, and what it cannot</h3>
+<p>LLMSim sees what crosses the model boundary: the system prompt, the declared tools, every message, tool results as the agent reports them, the turn count and the credential used.</p>
+<ul><li>It does not see what a tool actually did. A file written or an API called happens outside the model's traffic. The <a href="#test-an-agent">test kit</a> closes that gap by standing in for the tools too.</li><li>It does not see messages between agents that never pass through a model. The test kit's stub agents and proxies do.</li><li>It cannot test an agent that cannot change its base URL.</li><li>A scripted model shows what an agent does when the model says exactly that. It does not show how good the agent is with a real one.</li></ul>
+<h2 id="the-console">The console</h2>
+<p>One page at <code>/ui</code>, with a screen for each job. Every screen has an address, such as <code>/ui#routing</code>.</p>
+<div class="table"><table><thead><tr><th>Screen</th><th>What it is for</th></tr></thead><tbody><tr><td><strong>Overview</strong></td><td>What answers right now, each vendor's address and key, and which screen does which job</td></tr><tr><td><strong>Routing</strong></td><td>The default route, the upstream, ChatGPT plan or Anthropic key it uses, and how strictly the vendors are imitated</td></tr><tr><td><strong>Models</strong></td><td>One model's own route, a fixed answer, a failure status or a delay</td></tr><tr><td><strong>Answer rules</strong></td><td>What the simulated model says, and when. Includes a dry run that says which rule would answer, and why the others would not.</td></tr><tr><td><strong>Faults</strong></td><td>Failures on purpose</td></tr><tr><td><strong>Requests</strong></td><td><em>Live</em>: every request as it arrives. <em>Captured</em>: each one in full. <em>Assertions</em>: checks over them. <em>Capture settings</em>: what is kept, redaction, and who may send requests.</td></tr><tr><td><strong>Chat</strong></td><td>Talk to a model by hand, the way a client would</td></tr><tr><td><strong>Record &amp; replay</strong></td><td>Record a run, and replay a recording</td></tr><tr><td><strong>Functional tests</strong></td><td>Cases that send a prompt and say what must come back</td></tr><tr><td><strong>Agent tests</strong></td><td>Drive an agent, simulate what it talks to, and judge the result</td></tr></tbody></table></div>
+<h2 id="script-the-model">Script the model</h2>
+<p><em>Console: Answer rules</em></p>
+<div class="code" data-lang="bash"><button class="copy" type="button">Copy</button><pre><code>curl -X POST localhost:8099/api/rules -d '{"rule": {
   "name": "needs-capability",
   "when": {"contains": "reconcile the ledger"},
   "turns": [
     {"text": "Checking what I am granted.",
      "tool_calls": [{"name": "granted", "input": {}}]},
     {"text": "Unclear. Asking.",
-     <span class="k">"branches"</span>: [
+     "branches": [
        {"when": {"toolOutput": {"contains": "SAP.Invoice.Read"}},
         "turn": {"text": "Granted. Reading the invoices."}},
        {"when": {"toolOutput": {"regex": "^\\[\\]$"}},
-        "turn": {"text": "Nothing is granted. Stopping."}}]}]}}'</pre></div>
-      <p>The second turn <b>branches on what the tool printed</b>. That is how you test that an agent carries on when a request is granted and stops when it is denied.</p>
-
-      <h3>What a rule can test</h3>
-      <div class="tablewrap"><table>
-        <tr><th>Condition</th><th>Tests</th></tr>
-        <tr><td><code>contains</code>, <code>regex</code></td><td>The ask: the last thing a person said that was not tool output</td></tr>
-        <tr><td><code>toolOutput</code>, <code>anyToolOutput</code></td><td>What the last tool printed, or any tool so far</td></tr>
-        <tr><td><code>turn</code></td><td>Which turn this is: <code>2</code> or <code>{"min": 1}</code></td></tr>
-        <tr><td><code>identity</code></td><td><code>{"agent": "worker"}</code>, so two agents get different answers</td></tr>
-        <tr><td><code>system</code>, <code>header</code></td><td>The system prompt, or a request header</td></tr>
-        <tr><td><code>tool</code>, <code>model</code>, <code>provider</code>, <code>stream</code></td><td>The request itself</td></tr>
-        <tr><td><code>not</code>, <code>all</code>, <code>any</code></td><td>Combine the others</td></tr>
-      </table></div>
-
-      <h3>Exact token counts</h3>
-      <p>For a cost or budget test, a turn can state its usage. Zero is a real count.</p>
-      <div class="code"><pre>{"text": "counted", "input_tokens": 1000, "output_tokens": 250, "cached_tokens": 400}</pre></div>
-
-      <h3>Find out why a rule did not fire</h3>
-      <p>The dry run names the rule that would answer and, for every rule that would not, the reason. Nothing is sent or captured.</p>
-      <div class="code"><pre>curl -X POST localhost:8099/api/rules/test -d '{"ask": "please reconcile the ledger"}'</pre></div>
-      <p>Your rules are saved in <code>llmsim.rules.json</code> and are tried before the shipped ones in <code>responses.json</code>. Commit the file.</p>
-    </section>
-
-    <section id="faults">
-      <span class="where">Console: Faults</span>
-      <h2>Make things go wrong</h2>
-      <p>A real vendor will not fail on demand. A fault rule makes LLMSim fail for the requests you choose.</p>
-      <div class="code"><pre>curl -X POST localhost:8099/api/faults -d '{
+        "turn": {"text": "Nothing is granted. Stopping."}}]}]}}'</code></pre></div>
+<p>The second turn <strong>branches on what the tool printed</strong>. That is how you test that an agent carries on when a request is granted and stops when it is denied.</p>
+<h3 id="what-a-rule-can-match-on">What a rule can match on</h3>
+<div class="table"><table><thead><tr><th>Condition</th><th>Tests</th></tr></thead><tbody><tr><td><code>contains</code>, <code>regex</code></td><td>The ask: the last thing a person said that was not tool output</td></tr><tr><td><code>toolOutput</code>, <code>anyToolOutput</code></td><td>What the last tool printed, or any tool so far</td></tr><tr><td><code>turn</code></td><td>Which turn this is: <code>2</code> or <code>{"min": 1}</code></td></tr><tr><td><code>identity</code></td><td><code>{"agent": "worker"}</code>, so two agents get different answers</td></tr><tr><td><code>system</code>, <code>header</code></td><td>The system prompt, or a request header</td></tr><tr><td><code>tool</code>, <code>model</code>, <code>provider</code>, <code>stream</code></td><td>The request itself</td></tr><tr><td><code>not</code>, <code>all</code>, <code>any</code></td><td>Combine the others</td></tr></tbody></table></div>
+<h3 id="what-a-turn-can-say">What a turn can say</h3>
+<div class="table"><table><thead><tr><th>Field</th><th>Does</th></tr></thead><tbody><tr><td><code>text</code></td><td>What the model says</td></tr><tr><td><code>tool_calls</code></td><td>A list of <code>{name, input}</code> the model asks for</td></tr><tr><td><code>branches</code></td><td>A list of <code>{when, turn}</code>: the first whose condition holds is the turn</td></tr><tr><td><code>input_tokens</code>, <code>output_tokens</code>, <code>cached_tokens</code>, <code>reasoning_tokens</code></td><td>Exact usage, for a cost or budget test. Zero is a real count.</td></tr><tr><td><code>fault</code></td><td>A fault on this one turn, such as <code>{"type": "abort_stream", "after": 2}</code></td></tr><tr><td><code>error</code>, <code>delay_ms</code></td><td>Answer with an error instead, or wait first</td></tr><tr><td><code>stop_reason</code>, <code>description</code></td><td>The stop reason reported, and a note for whoever reads the rule</td></tr></tbody></table></div>
+<h3 id="find-out-why-a-rule-did-not-fire">Find out why a rule did not fire</h3>
+<p>The dry run names the rule that would answer and, for every rule that would not, the reason. Nothing is sent or captured.</p>
+<div class="code" data-lang="bash"><button class="copy" type="button">Copy</button><pre><code>curl -X POST localhost:8099/api/rules/test -d '{"ask": "please reconcile the ledger"}'</code></pre></div>
+<h3 id="one-model-one-answer">One model, one answer</h3>
+<p>To make a single model answer the same thing every time, or fail, set it on that model's page under <strong>Models</strong>: fixed text, a status such as 429 or 529, or a delay in milliseconds. It overrides the rules for that model alone.</p>
+<h2 id="make-things-go-wrong">Make things go wrong</h2>
+<p><em>Console: Faults</em></p>
+<p>A real vendor will not fail on demand. A fault rule makes LLMSim fail for the requests you choose.</p>
+<div class="code" data-lang="bash"><button class="copy" type="button">Copy</button><pre><code>curl -X POST localhost:8099/api/faults -d '{
   "name": "cut-stream",
   "match": {"stream": true, "identity": {"agent": "worker"}},
   "fault": {"type": "abort_stream", "after": 3},
-  "probability": 0.5, "seed": 7}'</pre></div>
-      <div class="tablewrap"><table>
-        <tr><th>Fault</th><th>What the agent experiences</th></tr>
-        <tr><td><code>status</code></td><td>The vendor's own error, such as a 429 or 529, with an optional <code>retry_after</code></td></tr>
-        <tr><td><code>abort_stream</code></td><td>A stream that stops after N events, closed or reset</td></tr>
-        <tr><td><code>stall</code>, <code>slow_stream</code></td><td>A stream that pauses once, or between every event</td></tr>
-        <tr><td><code>drop</code>, <code>delay</code></td><td>A connection hung up before any answer, or a long wait</td></tr>
-        <tr><td><code>malformed_tool_args</code></td><td>A tool call whose arguments are not valid JSON</td></tr>
-        <tr><td><code>unknown_tool</code></td><td>A call to a tool the agent never declared</td></tr>
-        <tr><td><code>garbage</code>, <code>empty</code>, <code>huge</code></td><td>A corrupt frame or body, a 200 that says nothing, an oversized answer</td></tr>
-      </table></div>
-      <p>The gates choose which matching requests are hit: <code>after</code> skips the first few, <code>every</code> takes each Nth, <code>limit</code> stops after a number, and <code>probability</code> rolls a die. Set a <code>seed</code> and the same run fails the same way next time.</p>
-      <p>A fault can also sit on one scripted turn: <code>{"text": "…", "fault": {"type": "abort_stream", "after": 2}}</code>.</p>
-      <div class="note ok">A <code>status</code> or <code>drop</code> fault is applied before anything is sent to a real model, so it never costs a call.</div>
-    </section>
-
-    <section id="evidence">
-      <span class="where">Console: Evidence &rarr; Requests</span>
-      <h2>See what was sent</h2>
-      <p>Every request is kept: the system prompt, declared tools, messages, who sent it, which credential it used, and what answered it.</p>
-      <div class="code"><pre>curl 'localhost:8099/api/captures?run=r1&amp;agent=worker'   <span class="c"># a list</span>
-curl localhost:8099/api/captures/12                       <span class="c"># one request in full</span></pre></div>
-      <p>Requests are held in memory only, and the oldest are dropped past a limit you set. Redaction patterns apply to everything shown or exported.</p>
-    </section>
-
-    <section id="assertions">
-      <span class="where">Console: Evidence &rarr; Assertions</span>
-      <h2>Check it</h2>
-      <p>An assertion is a claim about the requests an agent made. Each one has a <code>scope</code> and exactly one check.</p>
-      <div class="code"><pre>curl -X POST localhost:8099/api/assertions/evaluate -d '{
+  "probability": 0.5, "seed": 7}'</code></pre></div>
+<div class="table"><table><thead><tr><th>Fault</th><th>What the agent experiences</th></tr></thead><tbody><tr><td><code>status</code></td><td>The vendor's own error, such as a 429 or 529, with an optional <code>retry_after</code></td></tr><tr><td><code>abort_stream</code></td><td>A stream that stops after N events, closed or reset</td></tr><tr><td><code>stall</code>, <code>slow_stream</code></td><td>A stream that pauses once, or between every event</td></tr><tr><td><code>drop</code>, <code>delay</code></td><td>A connection hung up before any answer, or a long wait</td></tr><tr><td><code>malformed_tool_args</code></td><td>A tool call whose arguments are not valid JSON</td></tr><tr><td><code>unknown_tool</code></td><td>A call to a tool the agent never declared</td></tr><tr><td><code>garbage</code>, <code>empty</code>, <code>huge</code></td><td>A corrupt frame or body, a 200 that says nothing, an oversized answer</td></tr></tbody></table></div>
+<p>The gates choose which matching requests are hit: <code>after</code> skips the first few, <code>every</code> takes each Nth, <code>limit</code> stops after a number, and <code>probability</code> rolls a die. Set a <code>seed</code> and the same run fails the same way next time.</p>
+<p>A <code>status</code> or <code>drop</code> fault is applied before anything is sent to a real model, so it never costs a call. The functional test cases are never faulted.</p>
+<h2 id="see-what-was-sent">See what was sent</h2>
+<p><em>Console: Requests → Captured</em></p>
+<p>Every request is kept: the system prompt, declared tools, messages, who sent it, which credential it used, and what answered it.</p>
+<div class="code" data-lang="bash"><button class="copy" type="button">Copy</button><pre><code>curl 'localhost:8099/api/captures?run=r1&amp;agent=worker'   # a list
+curl localhost:8099/api/captures/12                       # one request in full</code></pre></div>
+<p>Requests are held in memory only, and the oldest are dropped past a limit you set. Redaction patterns apply to everything shown or exported.</p>
+<h3 id="see-which-credential-arrived">See which credential arrived</h3>
+<p>To find out which key a gateway really sends, accept any key and register the ones you know. Only a fingerprint is stored.</p>
+<div class="code" data-lang="bash"><button class="copy" type="button">Copy</button><pre><code>curl -X PUT  localhost:8099/api/settings -d '{"auth": {"mode": "any"}}'
+curl -X POST localhost:8099/api/settings/credentials -d '{"label": "platform-token", "key": "…"}'</code></pre></div>
+<p>Each captured request then shows its credential's label, and an assertion can test <code>credential.label</code>.</p>
+<h2 id="check-it">Check it</h2>
+<p><em>Console: Requests → Assertions</em></p>
+<p>An assertion is a claim about the requests an agent made. Each one has a scope and exactly one check.</p>
+<div class="code" data-lang="bash"><button class="copy" type="button">Copy</button><pre><code>curl -X POST localhost:8099/api/assertions/evaluate -d '{
   "run": "r1",
   "assertions": [
     {"id": "no-cards", "name": "No card number reaches the model",
-     <span class="k">"none"</span>: {"field": "allText", "op": "regex", "value": "\\b\\d{13,16}\\b"}},
+     "none": {"field": "allText", "op": "regex", "value": "\\b\\d{13,16}\\b"}},
 
     {"id": "preamble", "name": "Every request carries the safety preamble",
-     <span class="k">"each"</span>: {"system": "SAFETY"}},
+     "each": {"system": "SAFETY"}},
 
     {"id": "one-write", "name": "The worker writes at most once",
      "scope": {"identity": {"agent": "worker"}},
-     <span class="k">"count"</span>: {"max": 1},
+     "count": {"max": 1},
      "where": {"field": "response.toolNames", "op": "includes", "value": "Write"}},
 
     {"id": "order", "name": "The planner asked before the worker",
-     <span class="k">"sequence"</span>: [{"identity": {"agent": "planner"}}, {"identity": {"agent": "worker"}}]}
-  ]}'</pre></div>
-      <div class="tablewrap"><table>
-        <tr><th>Check</th><th>Passes when</th></tr>
-        <tr><td><code>each</code></td><td>Every request in scope satisfies it</td></tr>
-        <tr><td><code>none</code></td><td>No request in scope satisfies it. Use this for "must not".</td></tr>
-        <tr><td><code>count</code></td><td>The number of requests in scope, or of those matching <code>where</code>, is within <code>min</code> and <code>max</code></td></tr>
-        <tr><td><code>sequence</code></td><td>Requests matching each step exist, in that order</td></tr>
-      </table></div>
-      <p>Each result comes back as <code>pass</code>, <code>fail</code> or <code>no-data</code>, with the request numbers and an excerpt as evidence.</p>
-      <div class="note warn"><b>No data is not a pass.</b> If the scope selects no requests, the result is <code>no-data</code>. An agent that never ran would otherwise pass every "must not". Add <code>"allowEmpty": true</code> when an empty result really is fine.</div>
-      <p>Save a list as a named set with <code>POST /api/assertion-sets</code> and run it with <code>{"set": "my-set", "run": "r1"}</code>. Sets are saved in <code>llmsim.assertions.json</code>.</p>
-
-      <h3>Check a handoff between two agents</h3>
-      <p>LLMSim does not see messages that pass between agents. It does see what each agent then tells its model. Script the first agent's answer to carry a token, and assert that the token turns up in the second agent's request.</p>
-      <div class="code"><pre>{"id": "handoff", "name": "The worker was told what the planner answered",
+     "sequence": [{"identity": {"agent": "planner"}}, {"identity": {"agent": "worker"}}]}
+  ]}'</code></pre></div>
+<div class="table"><table><thead><tr><th>Check</th><th>Passes when</th></tr></thead><tbody><tr><td><code>each</code></td><td>Every request in scope satisfies it</td></tr><tr><td><code>none</code></td><td>No request in scope satisfies it. Use this for "must not".</td></tr><tr><td><code>count</code></td><td>The number of requests in scope, or of those matching <code>where</code>, is within <code>min</code> and <code>max</code></td></tr><tr><td><code>sequence</code></td><td>Requests matching each step exist, in that order</td></tr></tbody></table></div>
+<p>Each result comes back as <code>pass</code>, <code>fail</code> or <code>no-data</code>, with the request numbers and an excerpt as evidence. <code>GET /api/assertions/catalog</code> lists every field and operator a condition can use.</p>
+<blockquote><p><strong>No data is not a pass.</strong> If the scope selects no requests, the result is <code>no-data</code>. An agent that never ran would otherwise pass every "must not". Add <code>"allowEmpty": true</code> when an empty result really is fine.</p></blockquote>
+<p>Save a list as a named set with <code>POST /api/assertion-sets</code> and run it with <code>{"set": "my-set", "run": "r1"}</code>. Sets are kept in <code>llmsim.assertions.json</code>.</p>
+<h3 id="check-a-handoff-between-two-agents">Check a handoff between two agents</h3>
+<p>LLMSim does not see messages that pass between agents. It does see what each agent then tells its model. Script the first agent's answer to carry a token, and assert that the token turns up in the second agent's request.</p>
+<div class="code" data-lang="json"><button class="copy" type="button">Copy</button><pre><code>{"id": "handoff", "name": "The worker was told what the planner answered",
  "scope": {"identity": {"agent": "worker"}}, "count": {"min": 1},
- "where": {"field": "allText", "op": "contains", "value": "TRACE-7f3a9c"}}</pre></div>
-    </section>
-
-    <section id="sessions">
-      <span class="where">Console: Sessions</span>
-      <h2>Record once, replay</h2>
-      <p>Run a session once and keep every answer. Later runs get the same answers back, offline and for free.</p>
-      <div class="code"><pre>curl -X POST localhost:8099/api/sessions/record -d '{"name": "login-flow", "run": "r1"}'
-<span class="c"># …run the agent…</span>
+ "where": {"field": "allText", "op": "contains", "value": "TRACE-7f3a9c"}}</code></pre></div>
+<h2 id="record-once-replay">Record once, replay</h2>
+<p><em>Console: Record &amp; replay</em></p>
+<p>Run a session once and keep every answer. Later runs get the same answers back, offline and for free.</p>
+<div class="code" data-lang="bash"><button class="copy" type="button">Copy</button><pre><code>curl -X POST localhost:8099/api/sessions/record -d '{"name": "login-flow", "run": "r1"}'
+# …run the agent…
 curl -X POST localhost:8099/api/sessions/stop   -d '{"run": "r1"}'
-curl localhost:8099/api/sessions/login-flow &gt; login-flow.json     <span class="c"># keep it in your repository</span>
+curl localhost:8099/api/sessions/login-flow &gt; login-flow.json     # keep it in your repository
 
 curl -X PUT 'localhost:8099/api/sessions/login-flow?overwrite=1' -d @login-flow.json
 curl -X POST localhost:8099/api/sessions/replay -d '{"name": "login-flow", "run": "r1"}'
-<span class="c"># …run the agent again…</span>
-curl -X POST localhost:8099/api/sessions/stop   -d '{"run": "r1"}'     <span class="c"># hits, misses, what was not recorded</span></pre></div>
-      <ul>
-        <li>A replay matches a request by what was asked and how many turns in it is. It does not compare whole requests, which contain timestamps and never repeat.</li>
-        <li>A harness that asks two things at the same point — OpenCode asks for a conversation title alongside the agent's first request — gets both answers kept. They are told apart by the tools each request declares.</li>
-        <li>An empty answer is recorded too. It is how an agent's last turn often looks.</li>
-        <li>A request the recording does not hold gets a 404 that names it. Pass <code>"onMiss": "route"</code> to let it take its normal route instead.</li>
-        <li>If your prompts contain something that changes every run, such as a run id made from the clock, add a mask: <code>"masks": ["\\d{8}-\\d{6}"]</code>.</li>
-        <li>Leave out <code>run</code> to record or replay every request that names no run. Several runs can record at once without seeing each other.</li>
-        <li><code>POST /api/sessions/auto</code> replays if the recording exists and records if it does not.</li>
-      </ul>
-      <div class="note warn">A recording holds the model's answers, and an answer can quote what it was shown. Read a cassette before you commit it.</div>
-    </section>
-
-    <section id="real">
-      <span class="where">Console: Routing</span>
-      <h2>Answer with a real model</h2>
-      <p>By default every answer is scripted and nothing leaves your machine. Two other routes use a real model, for one model or for all of them.</p>
-      <div class="tablewrap"><table>
-        <tr><th>Route</th><th>Answers come from</th><th>Set it up</th></tr>
-        <tr><td>Relay</td><td>One model behind an API key</td><td>Routing &rarr; Upstream: URL, model and key</td></tr>
-        <tr><td>ChatGPT plan</td><td>Your ChatGPT subscription</td><td>Routing &rarr; ChatGPT plan &rarr; Sign in</td></tr>
-      </table></div>
-      <p>The usual pattern: record a session through a real model once, then replay it for every later test run.</p>
-      <div class="note warn"><b>Once you sign in, LLMSim holds a real subscription.</b> It listens on every network interface and the console has no login, so anyone who can reach the port can spend the plan. Keep it on your own machine or a network you trust.</div>
-    </section>
-
-    <section id="example">
-      <h2>A worked example</h2>
-      <p>The agent under test is a read-only assistant. It must stop when a capability is denied, and it must never send a card number to the model.</p>
-      <ol class="steps">
-        <li><b>Give it a run.</b> Point the agent at <code>http://localhost:8099/run/t1/agent/assistant/openai/v1</code>.</li>
-        <li><b>Script the model.</b> Add the <code>needs-capability</code> rule from <a href="#behaviors">above</a>. Its second turn says "Stopping" when the tool prints <code>[]</code>.</li>
-        <li><b>Break something.</b> Add a fault so one answer arrives with tool arguments that are not JSON:
-          <div class="code"><pre>curl -X POST localhost:8099/api/faults -d '{
+# …run the agent again…
+curl -X POST localhost:8099/api/sessions/stop   -d '{"run": "r1"}'     # hits, misses, what was not recorded</code></pre></div>
+<ul><li>A replay matches a request by what was asked and how many turns in it is. It does not compare whole requests, which contain timestamps and never repeat.</li><li>A harness that asks two things at the same point gets both answers kept. They are told apart by the tools each request declares.</li><li>An empty answer is recorded too. It is how an agent's last turn often looks.</li><li>A request the recording does not hold gets a 404 that names it. Pass <code>"onMiss": "route"</code> to let it take its normal route instead.</li><li>If your prompts contain something that changes every run, such as a run id made from the clock, add a mask: <code>"masks": ["\\d{8}-\\d{6}"]</code>.</li><li>Leave out <code>run</code> to record or replay every request that names no run. Several runs can record at once without seeing each other.</li><li><code>POST /api/sessions/auto</code> replays if the recording exists and records if it does not.</li></ul>
+<blockquote><p>A recording holds the model's answers, and an answer can quote what it was shown. Read a recording before you commit it.</p></blockquote>
+<h2 id="answer-with-a-real-model">Answer with a real model</h2>
+<p><em>Console: Routing</em></p>
+<div class="table"><table><thead><tr><th>Route</th><th>Answers come from</th><th>Set it up</th></tr></thead><tbody><tr><td>Upstream</td><td>One model behind an API key</td><td>Routing → Upstream: URL, model and key</td></tr><tr><td>ChatGPT plan</td><td>Your ChatGPT subscription</td><td>Routing → ChatGPT plan → Sign in</td></tr><tr><td>Anthropic API</td><td>A real Claude model</td><td>Routing → Anthropic API: key and model</td></tr></tbody></table></div>
+<p>The usual pattern: record a session through a real model once, then replay it for every later test run.</p>
+<h3 id="anthropic-api">Anthropic API</h3>
+<p>A client speaking any of the three formats is answered by Claude in its own format, with its system prompt, its tools and streaming. Save a key under <strong>Routing → Anthropic API</strong>, or start LLMSim with one:</p>
+<div class="code" data-lang="bash"><button class="copy" type="button">Copy</button><pre><code>LLMSIM_ANTHROPIC_UPSTREAM_KEY=sk-ant-… LLMSIM_ANTHROPIC_UPSTREAM_MODEL=claude-sonnet-5-5 python3 server.py</code></pre></div>
+<div class="table"><table><thead><tr><th>Setting</th><th>Means</th></tr></thead><tbody><tr><td>Key</td><td>An API key from the Claude Console, sent as <code>x-api-key</code>. It is kept in <code>llmsim.config.json</code>, readable by you alone, and is never sent back to the console.</td></tr><tr><td>It is</td><td>Choose <strong>a gateway's token</strong> when the base URL is a gateway that speaks the Messages API and takes <code>Authorization: Bearer</code>.</td></tr><tr><td>Model</td><td>The Claude model that answers. Left blank, the model each client asks for is used when it is a Claude model, and any other is refused.</td></tr><tr><td>Max tokens</td><td>Used when the client did not say. Anthropic requires one.</td></tr><tr><td>Base URL</td><td>Anthropic's own by default.</td></tr></tbody></table></div>
+<p>The client's <code>temperature</code> or <code>top_p</code>, stop sequences, tools and tool choice are passed on. <code>response_format</code>, <code>reasoning_effort</code>, <code>seed</code> and the penalties are not, and the log says so when one is dropped.</p>
+<blockquote><p><strong>It takes a key, not a Claude sign-in.</strong> Anthropic does not permit a tool to offer Claude sign-in or to route requests through Free, Pro or Max plan credentials, so a subscription cannot be used on this route. Use an API key from the Claude Console or from a cloud provider.</p></blockquote>
+<h3 id="chatgpt-plan">ChatGPT plan</h3>
+<p>The ChatGPT sign-in is OpenAI's OAuth flow, and its redirect lands on <code>127.0.0.1:1455</code> on the machine LLMSim runs on. On your own machine that just works. When LLMSim runs somewhere else, the console asks you to paste the address your browser ended up on instead.</p>
+<blockquote><p><strong>Once you sign in, LLMSim holds a real subscription.</strong> It listens on every network interface and the console has no login, so anyone who can reach the port can spend the plan. Keep it on your own machine or a network you trust.</p></blockquote>
+<p>The sign-in is kept in <code>llmsim.chatgpt-auth.json</code> beside the server. A container with no volume loses it on restart and goes back to scripted answers.</p>
+<h2 id="functional-tests">Functional tests</h2>
+<p><em>Console: Functional tests</em></p>
+<p>A case sends a model a prompt and says what must come back. It goes down whatever route that model is on, so the same cases check a script, a recording or a real model. A case is a sequence of steps, run in one conversation and stopped at the first failure.</p>
+<div class="table"><table><thead><tr><th>A step can assert</th><th>Meaning</th></tr></thead><tbody><tr><td>Text</td><td><code>contains</code>, <code>regex</code> or <code>equals</code> against the answer</td></tr><tr><td>Tool</td><td>A tool the caller was offered and should have called</td></tr><tr><td>Tool arguments</td><td><code>file_path=HELLO.md</code>, one per line, by dotted path</td></tr><tr><td>HTTP status</td><td>So "this key is over its quota and must answer 429" is a test</td></tr><tr><td>Must not contain</td><td>The negative: "never invents a figure it could not read"</td></tr><tr><td>Must not be called</td><td>A tool the step forbids</td></tr><tr><td>Answer within (ms)</td><td>A deadline</td></tr></tbody></table></div>
+<p>Tick <strong>sent as tool output</strong> for a step that is a tool reporting back rather than a person speaking. That is what comes next in a real agent loop, and it keeps the conversation on the rule its opening ask chose.</p>
+<p>Cases and plans are kept in <code>llmsim.tests.json</code>. Export and Import move a suite between machines.</p>
+<h2 id="a-worked-example">A worked example</h2>
+<p>The agent under test is a read-only assistant. It must stop when a capability is denied, and it must never send a card number to the model.</p>
+<p><strong>1. Give it a run.</strong> Point the agent at <code>http://localhost:8099/run/t1/agent/assistant/openai/v1</code>.</p>
+<p><strong>2. Script the model.</strong> Add the <code>needs-capability</code> rule from <a href="#script-the-model">Script the model</a>. Its second turn says "Stopping" when the tool prints <code>[]</code>.</p>
+<p><strong>3. Break something.</strong> Add a fault so one answer arrives with tool arguments that are not JSON:</p>
+<div class="code" data-lang="bash"><button class="copy" type="button">Copy</button><pre><code>curl -X POST localhost:8099/api/faults -d '{
   "name": "bad-json", "match": {"identity": {"run": "t1"}}, "limit": 1,
-  "fault": {"type": "malformed_tool_args", "mode": "truncated"}}'</pre></div></li>
-        <li><b>Run the agent</b> on "please reconcile the ledger".</li>
-        <li><b>Check what it did.</b>
-          <div class="code"><pre>curl -X POST localhost:8099/api/assertions/evaluate -d '{
+  "fault": {"type": "malformed_tool_args", "mode": "truncated"}}'</code></pre></div>
+<p><strong>4. Run the agent</strong> on "please reconcile the ledger".</p>
+<p><strong>5. Check what it did.</strong></p>
+<div class="code" data-lang="bash"><button class="copy" type="button">Copy</button><pre><code>curl -X POST localhost:8099/api/assertions/evaluate -d '{
   "run": "t1",
   "assertions": [
     {"id": "stopped", "name": "It stopped within four requests", "count": {"max": 4}},
@@ -318,66 +240,134 @@ curl -X POST localhost:8099/api/sessions/stop   -d '{"run": "r1"}'     <span cla
      "none": {"field": "allText", "op": "regex", "value": "\\b\\d{13,16}\\b"}},
     {"id": "no-writes", "name": "It never called a write tool",
      "none": {"field": "response.toolNames", "op": "includes", "value": "Write"}}
-  ]}'</pre></div></li>
-        <li><b>Read the verdict.</b> A <code>fail</code> lists the request numbers. Open one under Evidence to see exactly what the agent sent.</li>
-        <li><b>Clean up.</b> <code>curl -X DELETE localhost:8099/api/runs/t1</code> forgets the run's requests and stops its session.</li>
-      </ol>
-    </section>
-
-    <section id="api">
-      <h2>The API on one page</h2>
-      <div class="tablewrap"><table>
-        <tr><th>Area</th><th>Routes</th></tr>
-        <tr><td>Runs</td><td><code>GET&nbsp;POST /api/runs</code> &middot; <code>GET&nbsp;DELETE /api/runs/&lt;run&gt;</code></td></tr>
-        <tr><td>Rules</td><td><code>GET&nbsp;POST /api/rules</code> &middot; <code>PUT&nbsp;DELETE /api/rules/&lt;name&gt;</code> &middot; <code>POST /api/rules/test</code> &middot; <code>/validate</code> &middot; <code>/order</code> &middot; <code>/reload</code></td></tr>
-        <tr><td>Faults</td><td><code>GET&nbsp;POST /api/faults</code> &middot; <code>PUT&nbsp;DELETE /api/faults/&lt;id&gt;</code> &middot; <code>POST /api/faults/pause</code> &middot; <code>/resume</code> &middot; <code>/reset</code></td></tr>
-        <tr><td>Requests</td><td><code>GET&nbsp;DELETE /api/captures</code> &middot; <code>GET /api/captures/&lt;n&gt;</code> &middot; <code>GET /api/captures/export</code></td></tr>
-        <tr><td>Assertions</td><td><code>POST /api/assertions/evaluate</code> &middot; <code>GET /api/assertions/catalog</code> &middot; <code>/api/assertion-sets</code></td></tr>
-        <tr><td>Sessions</td><td><code>GET /api/sessions</code> &middot; <code>POST /api/sessions/record</code> &middot; <code>/replay</code> &middot; <code>/auto</code> &middot; <code>/stop</code> &middot; <code>GET&nbsp;PUT&nbsp;DELETE /api/sessions/&lt;name&gt;</code></td></tr>
-        <tr><td>Settings</td><td><code>GET&nbsp;PUT /api/settings</code> &middot; <code>POST /api/settings/credentials</code></td></tr>
-      </table></div>
-      <div class="tablewrap"><table>
-        <tr><th>Status</th><th>Means</th></tr>
-        <tr><td><code>400</code></td><td>The request was wrong. The body lists every problem under <code>problems</code>.</td></tr>
-        <tr><td><code>404</code></td><td>There is no such rule, fault, cassette or run.</td></tr>
-        <tr><td><code>409</code></td><td>The current state forbids it, for example a recording is already running.</td></tr>
-        <tr><td><code>403</code></td><td>The request came from a page on another website.</td></tr>
-      </table></div>
-
-      <h3>See which credential arrived</h3>
-      <p>To find out which key a gateway really sends, accept any key and register the ones you know. Only a fingerprint is stored.</p>
-      <div class="code"><pre>curl -X PUT  localhost:8099/api/settings -d '{"auth": {"mode": "any"}}'
-curl -X POST localhost:8099/api/settings/credentials -d '{"label": "platform-token", "key": "…"}'</pre></div>
-      <p>Each captured request then shows its credential's label, and an assertion can test <code>credential.label</code>.</p>
-    </section>
-
-    <section id="limits">
-      <h2>What it cannot see</h2>
-      <ul>
-        <li><b>What tools actually did.</b> Files written and calls made happen outside the model's traffic.</li>
-        <li><b>Messages between agents</b> that never pass through a model.</li>
-        <li><b>An agent that cannot change its base URL,</b> or one that runs in a vendor's cloud.</li>
-        <li><b>How good the agent is with a real model.</b> A scripted model shows what the agent does when the model says exactly that.</li>
-      </ul>
-      <p>Two more things to know. An assertion that passes over a request too large to keep whole says so in <code>warnings</code>. And a streamed answer from a real model is passed through event by event, so only the stream faults can reach it.</p>
-    </section>
-
-    <footer>LLMSim &middot; standard-library Python, one process, no install &middot; tests: <code>python3 tests/test_behaviors.py</code> and <code>python3 tests/test_chatgpt_plan.py</code></footer>
-  </main>
+  ]}'</code></pre></div>
+<p><strong>6. Read the verdict.</strong> A <code>fail</code> lists the request numbers. Open one under Requests → Captured to see exactly what the agent sent.</p>
+<p><strong>7. Clean up.</strong> <code>curl -X DELETE localhost:8099/api/runs/t1</code> forgets the run's requests and stops its session.</p>
+<h2 id="test-an-agent">Test an agent</h2>
+<p><em>Console: Agent tests</em></p>
+<p>Everything above puts LLMSim on one side of an agent: the model. The <strong>test kit</strong> puts it on the other sides as well. It drives the agent, stands in for the tools it calls and the agents it hands work to, keeps the whole run as one timeline, and gives a verdict a CI job can act on.</p>
+<div class="code"><button class="copy" type="button">Copy</button><pre><code>                 ┌── model ─────── scripted, recorded, faulted
+driver ──▶ AGENT ┼── tools ─────── mock MCP server, mock REST backend, state, faults
+                 └── peer agents ─ A2A stub, or a proxy to a real one
+                          │
+                every event, in order ──▶ a run on disk ──▶ checks ──▶ a verdict</code></pre></div>
+<p>Nothing in it is specific to one product. A platform enters in two places: a <strong>driver</strong>, which is how a conversation with it is started, and an <strong>importer</strong>, which reads its test cases.</p>
+<h3 id="a-scenario-is-a-test">A scenario is a test</h3>
+<p>A scenario says how to reach the agent, what the user says, what the model says, and what must hold afterwards.</p>
+<div class="code" data-lang="json"><button class="copy" type="button">Copy</button><pre><code>{
+  "id": "refund-over-limit",
+  "agent": {"name": "support", "driver": "http", "url": "https://agent.example/chat",
+            "body": {"input": "{{message}}", "run": "{{run}}", "agent": "{{agent}}"}, "reply": "output.text"},
+  "model": {"rules": [{"name": "order-flow", "when": {"contains": "order 1182"},
+                       "turns": [{"text": "Looking it up.", "tool_calls": [{"name": "lookup_order", "input": {"id": 1182}}]},
+                                 {"text": "It is over the limit, so I have handed it to a manager."}]}]},
+  "turns": [{"say": "refund order 1182", "expect": {"contains": "manager"}}],
+  "checks": [
+    {"type": "path", "mode": "strict", "expected": [{"tool": "lookup_order", "arguments": {"id": 1182}}]},
+    {"type": "budget", "tokens": {"total": 20000}, "steps": {"modelCalls": 6}}
+  ]
+}</code></pre></div>
+<p>Save it and run it:</p>
+<div class="code" data-lang="bash"><button class="copy" type="button">Copy</button><pre><code>curl -X PUT  localhost:8099/api/scenarios/refund-over-limit -d @scenario.json
+curl -X POST localhost:8099/api/scenarios/refund-over-limit/run -d '{}'</code></pre></div>
+<p>Or from a file, with an exit code a build can use (0 pass, 1 fail, 2 could not run):</p>
+<div class="code" data-lang="bash"><button class="copy" type="button">Copy</button><pre><code>bin/llmsim run scenario.json --junit out.xml</code></pre></div>
+<p>A scenario is checked when it is saved, not when it first fails in the middle of a run, and every problem is listed at once. The model's script, and anything else a scenario installs, applies to that run only and is removed with it.</p>
+<p>In the console, a scenario is a form: the agent and its driver's own fields, the turns, the model's script, the checks. The <strong>JSON</strong> switch beside it shows exactly what is sent.</p>
+<div class="table"><table><thead><tr><th>Scenario field</th><th>Holds</th></tr></thead><tbody><tr><td><code>id</code>, <code>description</code>, <code>tags</code></td><td>Its name, what it proves, and labels</td></tr><tr><td><code>agent</code></td><td>One agent: <code>name</code>, <code>driver</code>, the driver's fields, an optional <code>credential</code></td></tr><tr><td><code>agents</code></td><td>Two to twenty agents, each with its own <code>turns</code>, driven at the same time</td></tr><tr><td><code>turns</code></td><td>What the user says, in order: <code>say</code>, and an optional <code>expect</code> on the reply</td></tr><tr><td><code>user</code></td><td>A simulated user instead of fixed turns: <code>{persona, goal}</code></td></tr><tr><td><code>model</code></td><td>For this run only: <code>rules</code>, or a <code>cassette</code> with <code>mode</code> <code>replay</code>, <code>record</code> or <code>auto</code></td></tr><tr><td><code>setup</code>, <code>teardown</code></td><td>Actions before and after, such as seeding state or adding a mock</td></tr><tr><td><code>checks</code></td><td>What must hold when the conversation ends</td></tr><tr><td><code>stop</code></td><td><code>maxTurns</code>, and <code>when</code>: a condition on a reply that ends it early</td></tr><tr><td><code>timeoutS</code>, <code>repeat</code>, <code>ordering</code></td><td>A time limit, running a case several times, and who goes first</td></tr></tbody></table></div>
+<h3 id="drivers">Drivers</h3>
+<p>A driver is how LLMSim talks to the agent under test. <code>GET /api/drivers</code> lists them with their fields.</p>
+<div class="table"><table><thead><tr><th>Driver</th><th>Reaches</th><th>Its fields</th></tr></thead><tbody><tr><td><code>http</code></td><td>Anything that takes a POST</td><td><code>url</code>, <code>method</code>, <code>body</code> (a template), <code>headers</code>, <code>reply</code> (a path into the answer), <code>replyFrom</code> (<code>sse</code> or <code>text</code>), <code>conversation</code></td></tr><tr><td><code>openai</code></td><td>An OpenAI-compatible chat endpoint</td><td><code>url</code>, <code>model</code>, <code>system</code>, <code>stream</code>, <code>extra</code></td></tr><tr><td><code>a2a</code></td><td>An Agent2Agent agent, over JSON-RPC</td><td><code>url</code>, <code>rpcUrl</code>, <code>wait</code> (<code>poll</code>, <code>push</code> or <code>stream</code>), <code>pollMs</code>, <code>blocking</code>, <code>callbackBase</code></td></tr><tr><td><code>agentforce</code></td><td>Salesforce's Agent API</td><td><code>domain</code>, <code>agentId</code>, <code>apiBase</code>, <code>stream</code>, <code>bypassUser</code>, <code>variables</code></td></tr><tr><td><code>process</code></td><td>A local program: the message on stdin, the reply on stdout</td><td><code>command</code>, <code>cwd</code>, <code>env</code></td></tr></tbody></table></div>
+<p>In a <code>body</code> template, <code>{{message}}</code> is what the user says, and <code>{{conversation}}</code>, <code>{{run}}</code> and <code>{{agent}}</code> are filled in too. The <code>process</code> driver is off unless LLMSim is started with <code>LLMSIM_ALLOW_PROCESS=1</code>, because anyone who can reach the port could otherwise name a command.</p>
+<p>Credentials are kept apart from scenarios, in an owner-only file. A scenario names one; it never holds it. A value is never shown again, and every value the kit holds is scrubbed from everything it stores or shows.</p>
+<h3 id="checks">Checks</h3>
+<div class="table"><table><thead><tr><th>Check</th><th>Says</th></tr></thead><tbody><tr><td><code>answer</code></td><td>The reply contains, equals or matches something, has a JSON shape, or holds a number within a tolerance</td></tr><tr><td><code>path</code></td><td>The tool calls made, against a reference: <code>strict</code>, <code>unordered</code>, <code>subset</code> or <code>superset</code></td></tr><tr><td><code>budget</code></td><td>Tokens, cost, latency and steps, per run or per agent, and which limit was passed</td></tr><tr><td><code>state</code></td><td>A record has these fields, is untouched or is gone; only these records changed; nothing was deleted</td></tr><tr><td><code>leak</code></td><td>A secret, or an injected instruction's marker, turned up in a reply, a tool call or a message to a peer</td></tr><tr><td><code>routing</code>, <code>handoff</code></td><td>The right agent got the task; what was passed on carried what it must and nothing it must not</td></tr><tr><td><code>authority</code></td><td>An agent used only the tools and records it may, also when a peer asked it to</td></tr><tr><td><code>termination</code></td><td>No loop, no ping-pong, bounded depth and chatter</td></tr><tr><td><code>duplication</code></td><td>No two agents did the same work, or wrote the same record differently</td></tr><tr><td><code>degradation</code></td><td>When a peer or tool failed, the answer said so and did not claim success</td></tr><tr><td><code>memory</code></td><td>What one agent wrote to shared memory is what the other acted on</td></tr><tr><td><code>run</code>, <code>assertions</code></td><td>Anything the condition language, or an assertion set, can say about the run</td></tr><tr><td><code>code</code></td><td>A Python function in a file the operator controls</td></tr><tr><td><code>judge</code>, <code>conversation</code></td><td>A model decides, against a rubric, and must say why</td></tr></tbody></table></div>
+<blockquote><p><strong>No data is not a pass.</strong> An agent that never ran satisfies every "must not". A check with nothing to judge says <code>no-data</code>, and so does the run.</p></blockquote>
+<h3 id="stand-in-for-its-tools">Stand in for its tools</h3>
+<ul><li><strong>Mock MCP server.</strong> <code>PUT /api/mcp/&lt;id&gt;</code>, then point the agent at <code>/run/&lt;run&gt;/agent/&lt;name&gt;/mcp/&lt;id&gt;</code>. Tools are written down: arguments are validated against <code>inputSchema</code>, and results are chosen by condition or are state operations (<code>get</code>, <code>put</code>, <code>update</code>, <code>delete</code>, <code>list</code>) on a per-run record store. A write in turn two is what a read in turn four returns, and the next run starts clean.</li><li><strong>Mock REST backend.</strong> <code>PUT /api/mocks/&lt;id&gt;</code>, or <code>POST /api/mocks/&lt;id&gt;/openapi</code> with an OpenAPI 3 document as JSON. A request outside its contract is refused and says why. It is served at <code>/run/&lt;run&gt;/agent/&lt;name&gt;/mock/&lt;id&gt;</code>.</li><li><strong>Record a real one, replay without it.</strong> Give either a <code>proxy</code> with <code>mode</code> <code>record</code> or <code>replay</code>. A call that was not recorded is refused loudly. It is never invented.</li><li><strong>Faults.</strong> <code>PUT /api/kitfaults/&lt;id&gt;</code>: <code>error</code>, <code>timeout</code>, <code>delay</code>, <code>rate_limit</code>, <code>partial</code>, <code>stale</code>, <code>wrong_shape</code>, <code>empty</code> and <code>drop</code> for tools. They use the same gates and seed as the model's faults.</li><li><strong>Injection.</strong> <code>"inject": {"preset": "ignore-instructions"}</code> on a tool or a stub plants a prompt injection in what it returns. Catch it being obeyed with a <code>leak</code> check on its marker. <code>GET /api/presets</code> lists them.</li></ul>
+<h3 id="stand-in-for-other-agents">Stand in for other agents</h3>
+<ul><li><strong>Stub.</strong> <code>PUT /api/a2a/&lt;id&gt;</code> makes an A2A agent at <code>/run/&lt;run&gt;/agent/&lt;name&gt;/a2a/&lt;id&gt;</code> whose replies are written down: a message, a task that finishes after some polls, a question, or a stream.</li><li><strong>Proxy.</strong> <code>PUT /api/a2aproxies/&lt;id&gt;</code> with <code>{url, mode}</code> puts LLMSim between your agent and a real one. Every message is on the timeline. <code>record</code> keeps the real peer's answers and <code>replay</code> serves them when it is gone.</li><li><strong>Faults.</strong> <code>down</code>, <code>delay</code>, <code>wrong_answer</code>, <code>refuse</code>, <code>never_complete</code>, <code>contradict</code>, <code>empty</code> and <code>drop</code>.</li><li><strong>Several agents at once.</strong> <code>agents</code> in a scenario drives each with its own turns, at the same time.</li><li><strong>Who goes first.</strong> <code>ordering.steps</code> names requests by agent, tool or text. <code>POST /api/interleavings</code> runs one scenario in several orders and says whether the order changed the outcome.</li><li><strong>OpenTelemetry.</strong> <code>POST /otlp/v1/traces</code>, JSON encoding only, puts spans on the same timeline. Tool and model spans become tool calls and model calls with their token usage, so the budget, path and authority checks work on an agent whose model LLMSim cannot stand in front of.</li></ul>
+<h3 id="datasets-experiments-and-the-gate">Datasets, experiments and the gate</h3>
+<ul><li>A <strong>dataset</strong> is versioned. Saving makes a new version that never changes. Refer to one as <code>name</code>, <code>name@3</code> or <code>name:tag</code>. Build its cases by hand, from a captured run (<code>POST /api/datasets/&lt;id&gt;/items/from-run</code>), or by import from CSV, JSON or an Agentforce Testing Center definition.</li><li>A case can run several times and pass when enough of them do. A case that passes some and fails others is <strong>flaky</strong>, never a pass. A <code>seed</code> makes a run with random faults repeat exactly.</li><li>An <strong>experiment</strong> runs a dataset version against an agent. <code>POST /api/experiments/&lt;id&gt;/baseline</code> marks one. <code>POST /api/experiments/&lt;id&gt;/gate</code> compares a later one with it case by case: regressed, degraded to flaky, fixed, new or removed, with an optional pass-rate floor.</li><li>There are two <strong>tiers</strong> from one definition: <code>simulated</code>, which is a script or a recording, free and exact, and <code>real</code>.</li></ul>
+<h3 id="judge-with-a-model">Judge with a model</h3>
+<ul><li><strong>Judges.</strong> A judge is pinned: its model and a digest of its rubric are on every verdict, and it must give a reason. A named judge gates only after <code>POST /api/judges/&lt;id&gt;/calibrate</code> against people's labels, and only above its <code>minAgreement</code>. Edit the rubric and it must be calibrated again.</li><li><strong>Review queue.</strong> A person gives a run scores, a verdict and, if they like, a correction. The verdicts calibrate judges. The correction becomes what the case is checked against, in a new version of its dataset.</li><li><strong>Variations.</strong> <code>POST /api/variations/generate</code> has a model propose paraphrases, near-misses and attacks. Only the ones a person accepts become cases, and a near-miss or an attack must be given the checks it is held to.</li><li><strong>Pairwise.</strong> <code>POST /api/pairwise</code> has a judge say which of two experiments answered better, case by case.</li><li><strong>A simulated user.</strong> <code>user: {persona, goal}</code> in a scenario. Its turns are asked of a model through LLMSim in the same run, so a recording repeats them exactly.</li><li><strong>Your own check.</strong> A <code>code</code> check runs a function from a file in <code>LLMSIM_EVALUATORS</code>. It runs in its own process with a time limit and no access to the credential files. That is defence in depth, not a sandbox. Evaluators cannot be uploaded over the API.</li></ul>
+<h3 id="run-it-in-ci">Run it in CI</h3>
+<div class="code" data-lang="bash"><button class="copy" type="button">Copy</button><pre><code>bin/llmsim run scenario.json --junit out.xml          # one scenario
+bin/llmsim experiment run --dataset refunds --gate    # a dataset, gated against its baseline</code></pre></div>
+<p><code>action.yml</code> is a GitHub Action that writes the job summary, posts one pull request comment naming the regressed cases, and fails the build. <code>testkit.pytest_plugin</code> gives pytest an <code>llmsim</code> fixture and collects <code>*.scenario.json</code> files.</p>
+<h3 id="what-was-not-verified">What was not verified</h3>
+<ul><li>No live Salesforce or SAP agent was tested. The Agentforce driver follows the published Agent API and is tested against a stand-in written from it.</li><li>A2A is the 0.3 JSON-RPC binding. MCP is the streamable-HTTP transport: a stdio server is not reachable.</li><li>OTLP is read as JSON only. Set <code>OTEL_EXPORTER_OTLP_PROTOCOL=http/json</code>.</li><li>The pytest plugin is tested through its session class, not under pytest.</li></ul>
+<h2 id="api-reference">API reference</h2>
+<p>Every route answers JSON. A request body is JSON too, and no <code>Content-Type</code> header is required. There is no authentication on the management API: anyone who can reach the port can use it.</p>
+<div class="table"><table><thead><tr><th>Status</th><th>Means</th></tr></thead><tbody><tr><td><code>200</code></td><td>Done. The body has <code>"ok": true</code>.</td></tr><tr><td><code>202</code></td><td>Started in the background. Poll the route the body names.</td></tr><tr><td><code>400</code></td><td>The request was wrong. The body lists every problem under <code>problems</code>.</td></tr><tr><td><code>403</code></td><td>The request came from a page on another website.</td></tr><tr><td><code>404</code></td><td>There is no such rule, fault, recording, run or route.</td></tr><tr><td><code>409</code></td><td>The current state forbids it, for example a recording is already running.</td></tr></tbody></table></div>
+<h3 id="the-vendors-endpoints">The vendors' endpoints</h3>
+<p>These are what a client calls. Prefix any of them with <code>/run/&lt;run&gt;</code> or <code>/run/&lt;run&gt;/agent/&lt;name&gt;</code> to put the request in a run.</p>
+<div class="table"><table><thead><tr><th>Method and path</th><th>Is</th></tr></thead><tbody><tr><td><code>POST /anthropic/v1/messages</code></td><td>Anthropic's Messages API, streamed or whole. Key in <code>x-api-key</code>.</td></tr><tr><td><code>POST /anthropic/v1/messages/count_tokens</code></td><td>Anthropic's token count</td></tr><tr><td><code>POST /openai/v1/chat/completions</code></td><td>OpenAI's Chat Completions. Key in <code>Authorization: Bearer</code>.</td></tr><tr><td><code>POST /openai/v1/responses</code></td><td>OpenAI's Responses API</td></tr><tr><td><code>POST /deepseek/v1/chat/completions</code></td><td>DeepSeek's Chat Completions</td></tr><tr><td><code>GET /&lt;vendor&gt;/v1/models</code></td><td>The models that vendor's endpoint advertises. Needs the key, like the rest.</td></tr><tr><td><code>GET /healthz</code></td><td>Whether it is up, the default route, and the rules loaded</td></tr></tbody></table></div>
+<h3 id="runs">Runs</h3>
+<div class="table"><table><thead><tr><th>Method and path</th><th>Does</th></tr></thead><tbody><tr><td><code>GET /api/runs</code></td><td>The runs seen, and the runs kept on disk</td></tr><tr><td><code>POST /api/runs</code></td><td>Name a run. Body <code>{run, agents?}</code>. Returns the base URL for each vendor and each agent.</td></tr><tr><td><code>GET /api/runs/&lt;run&gt;</code></td><td>One run: its agents, request count and session</td></tr><tr><td><code>DELETE /api/runs/&lt;run&gt;</code></td><td>Forget its requests, stop its session, remove what is kept</td></tr><tr><td><code>GET /api/runs/&lt;run&gt;/timeline</code></td><td>Every event of the run in order. Query <code>kinds</code>, <code>agent</code>, <code>since</code>, <code>limit</code>.</td></tr><tr><td><code>GET</code> <code>POST /api/runs/&lt;run&gt;/events</code></td><td>Read the events, or add one: <code>{kind, agent?, data?, parent?}</code></td></tr><tr><td><code>GET</code> <code>PUT</code> <code>DELETE /api/runs/&lt;run&gt;/state</code></td><td>Read, seed or clear what the run's mock tools hold</td></tr><tr><td><code>DELETE /api/runs/&lt;run&gt;/stored</code></td><td>Remove what is kept on disk for the run</td></tr></tbody></table></div>
+<h3 id="rules">Rules</h3>
+<div class="table"><table><thead><tr><th>Method and path</th><th>Does</th></tr></thead><tbody><tr><td><code>GET /api/rules</code></td><td>Every rule, yours and the shipped ones, and the turn used when none matches</td></tr><tr><td><code>POST /api/rules</code></td><td>Add a rule. Body <code>{rule, position?}</code>.</td></tr><tr><td><code>GET</code> <code>PUT</code> <code>DELETE /api/rules/&lt;name&gt;</code></td><td>Read, replace or remove one of yours</td></tr><tr><td><code>POST /api/rules/validate</code></td><td>Check a rule without saving it</td></tr><tr><td><code>POST /api/rules/test</code></td><td>The dry run. Body <code>{ask}</code> or <code>{messages}</code>, with optional <code>tools</code>, <code>provider</code>, <code>model</code>, <code>identity</code> and <code>headers</code>.</td></tr><tr><td><code>POST /api/rules/order</code></td><td>Reorder your rules. Body <code>{names}</code>: every one of them, in the order to try.</td></tr><tr><td><code>POST /api/rules/reload</code></td><td>Read the rule files again</td></tr><tr><td><code>PUT</code> <code>DELETE /api/rules/default</code></td><td>Set or clear the turn used when no rule matches</td></tr></tbody></table></div>
+<h3 id="faults">Faults</h3>
+<div class="table"><table><thead><tr><th>Method and path</th><th>Does</th></tr></thead><tbody><tr><td><code>GET /api/faults</code></td><td>The fault rules, their counters, and what each fault type takes</td></tr><tr><td><code>POST /api/faults</code></td><td>Add one. Body <code>{name, match?, fault, probability?, every?, after?, limit?, seed?}</code>.</td></tr><tr><td><code>GET</code> <code>PUT</code> <code>DELETE /api/faults/&lt;id&gt;</code></td><td>Read, replace or remove one</td></tr><tr><td><code>POST /api/faults/pause</code></td><td>Stop every fault firing, without removing them</td></tr><tr><td><code>POST /api/faults/resume</code></td><td>Let them fire again</td></tr><tr><td><code>POST /api/faults/reset</code></td><td>Zero the counters, so <code>after</code>, <code>every</code> and <code>limit</code> start over</td></tr></tbody></table></div>
+<h3 id="requests">Requests</h3>
+<div class="table"><table><thead><tr><th>Method and path</th><th>Does</th></tr></thead><tbody><tr><td><code>GET /api/captures</code></td><td>The requests kept. Query <code>run</code>, <code>agent</code>, <code>app</code>, <code>model</code>, <code>status</code>, <code>q</code>, <code>limit</code>.</td></tr><tr><td><code>GET /api/captures/&lt;n&gt;</code></td><td>One request in full: what was sent and what came back</td></tr><tr><td><code>GET /api/captures/export</code></td><td>The same list as a download, with the same query</td></tr><tr><td><code>DELETE /api/captures</code></td><td>Forget them. With a query, only those it selects.</td></tr></tbody></table></div>
+<h3 id="assertions">Assertions</h3>
+<div class="table"><table><thead><tr><th>Method and path</th><th>Does</th></tr></thead><tbody><tr><td><code>GET /api/assertions/catalog</code></td><td>Every field, operator, check kind and condition there is</td></tr><tr><td><code>POST /api/assertions/validate</code></td><td>Check assertions without running them</td></tr><tr><td><code>POST /api/assertions/evaluate</code></td><td>Run them. Body <code>{assertions, run?, agent?, scope?}</code> or <code>{set, run?}</code>.</td></tr><tr><td><code>GET</code> <code>POST /api/assertion-sets</code></td><td>List the saved sets, or save one</td></tr><tr><td><code>GET</code> <code>PUT</code> <code>DELETE /api/assertion-sets/&lt;name&gt;</code></td><td>Read, replace or remove a set</td></tr><tr><td><code>POST /api/assertion-sets/&lt;name&gt;/evaluate</code></td><td>Run a saved set. Body <code>{run?}</code>.</td></tr></tbody></table></div>
+<h3 id="recordings">Recordings</h3>
+<div class="table"><table><thead><tr><th>Method and path</th><th>Does</th></tr></thead><tbody><tr><td><code>GET /api/sessions</code></td><td>What is recording or replaying now, and the recordings kept. Query <code>run</code>.</td></tr><tr><td><code>POST /api/sessions/record</code></td><td>Start recording. Body <code>{name, run?, masks?}</code>.</td></tr><tr><td><code>POST /api/sessions/replay</code></td><td>Start replaying. Body <code>{name, run?, onMiss?, strict?}</code>.</td></tr><tr><td><code>POST /api/sessions/auto</code></td><td>Replay if the recording exists, record if it does not</td></tr><tr><td><code>POST /api/sessions/stop</code></td><td>Stop, and say what was hit, missed and not recorded. Body <code>{run?}</code>.</td></tr><tr><td><code>GET /api/sessions/&lt;name&gt;</code></td><td>Download a recording</td></tr><tr><td><code>PUT /api/sessions/&lt;name&gt;</code></td><td>Upload one. Query <code>overwrite=1</code> to replace.</td></tr><tr><td><code>DELETE /api/sessions/&lt;name&gt;</code></td><td>Remove one</td></tr></tbody></table></div>
+<h3 id="settings">Settings</h3>
+<div class="table"><table><thead><tr><th>Method and path</th><th>Does</th></tr></thead><tbody><tr><td><code>GET /api/settings</code></td><td>Capture, identity rules, who may send requests, and replay defaults</td></tr><tr><td><code>PUT /api/settings</code></td><td>Change any of <code>capture</code>, <code>identity</code>, <code>auth</code>, <code>session</code></td></tr><tr><td><code>POST /api/settings/credentials</code></td><td>Register a key to recognise. Body <code>{label, key}</code>. Only a fingerprint is kept.</td></tr><tr><td><code>DELETE /api/settings/credentials/&lt;label&gt;</code></td><td>Forget one</td></tr></tbody></table></div>
+<h3 id="test-kit-scenarios-and-results">Test kit: scenarios and results</h3>
+<div class="table"><table><thead><tr><th>Method and path</th><th>Does</th></tr></thead><tbody><tr><td><code>GET /api/scenarios</code></td><td>The saved scenarios</td></tr><tr><td><code>POST /api/scenarios</code></td><td>Save one, named by its <code>id</code></td></tr><tr><td><code>GET</code> <code>PUT</code> <code>DELETE /api/scenarios/&lt;id&gt;</code></td><td>Read, replace or remove one</td></tr><tr><td><code>POST /api/scenarios/validate</code></td><td>Check one without saving it. Body <code>{scenario}</code>.</td></tr><tr><td><code>POST /api/scenarios/&lt;id&gt;/run</code></td><td>Run a saved one. Body <code>{run?, tier?, label?, seed?, keepState?, wait?}</code>.</td></tr><tr><td><code>POST /api/scenarios/run</code></td><td>Run one that is not saved. Body <code>{scenario, …the same options}</code>.</td></tr><tr><td><code>GET /api/results</code></td><td>The results, newest first. Query <code>scenario</code>, <code>limit</code>.</td></tr><tr><td><code>GET /api/results/&lt;run&gt;</code></td><td>One result: verdict, checks with evidence, and the conversation</td></tr><tr><td><code>GET /api/results/&lt;run&gt;/junit</code></td><td>The same as JUnit XML</td></tr><tr><td><code>DELETE /api/results/&lt;run&gt;</code></td><td>Remove one</td></tr><tr><td><code>GET /api/drivers</code></td><td>The drivers, the fields each requires, and whether <code>process</code> is allowed</td></tr><tr><td><code>POST /api/drivers/validate</code></td><td>Check an agent's driver settings</td></tr><tr><td><code>GET /api/checks</code></td><td>The check types and the statuses a check can have</td></tr><tr><td><code>POST /api/checks/validate</code></td><td>Check one check. Body <code>{check}</code>.</td></tr><tr><td><code>POST /api/checks/evaluate</code></td><td>Run checks over a run that already happened. Body <code>{run, checks}</code>.</td></tr><tr><td><code>POST /api/interleavings</code> <code>POST /api/interleavings/&lt;id&gt;</code></td><td>Run a scenario in several orders. Body <code>{orders, compare?}</code>.</td></tr></tbody></table></div>
+<p>With <code>"wait": false</code> a run starts in the background and answers <code>202</code>. Poll <code>GET /api/results/&lt;run&gt;</code>.</p>
+<h3 id="test-kit-datasets-and-experiments">Test kit: datasets and experiments</h3>
+<div class="table"><table><thead><tr><th>Method and path</th><th>Does</th></tr></thead><tbody><tr><td><code>GET /api/datasets</code></td><td>The datasets, with their current version</td></tr><tr><td><code>GET /api/datasets/&lt;id&gt;</code></td><td>One version of it. Query <code>version</code> or <code>tag</code>.</td></tr><tr><td><code>PUT /api/datasets/&lt;id&gt;</code></td><td>Save it. Body <code>{items, description?}</code>. Makes a new version when something changed.</td></tr><tr><td><code>DELETE /api/datasets/&lt;id&gt;</code></td><td>Remove it</td></tr><tr><td><code>GET /api/datasets/&lt;id&gt;/versions</code></td><td>Its versions and tags</td></tr><tr><td><code>POST /api/datasets/&lt;id&gt;/tag</code></td><td>Tag a version. Body <code>{tag, version?}</code>.</td></tr><tr><td><code>POST /api/datasets/&lt;id&gt;/items/from-run</code></td><td>Make a case from a run. Body <code>{run, id, scenario?, strict?, include?}</code>.</td></tr><tr><td><code>POST /api/datasets/&lt;id&gt;/import</code></td><td>Import cases. Body <code>{format, content, agent, merge?}</code>.</td></tr><tr><td><code>GET /api/experiments</code></td><td>The experiments. Query <code>dataset</code>.</td></tr><tr><td><code>POST /api/experiments/run</code></td><td>Run a dataset. Body <code>{dataset, label?, tier?, repeat?, seed?, split?, tags?, items?, agent?, concurrency?, wait?}</code>.</td></tr><tr><td><code>GET</code> <code>DELETE /api/experiments/&lt;id&gt;</code></td><td>Read or remove one</td></tr><tr><td><code>POST /api/experiments/&lt;id&gt;/baseline</code></td><td>Make it its dataset's baseline</td></tr><tr><td><code>POST /api/experiments/&lt;id&gt;/gate</code></td><td>Compare it with the baseline, case by case</td></tr><tr><td><code>GET /api/experiments/&lt;a&gt;/compare/&lt;b&gt;</code></td><td>Compare any two</td></tr></tbody></table></div>
+<h3 id="test-kit-tools-and-peers">Test kit: tools and peers</h3>
+<div class="table"><table><thead><tr><th>Method and path</th><th>Does</th></tr></thead><tbody><tr><td><code>GET /api/mcp</code></td><td>The mock MCP servers</td></tr><tr><td><code>GET</code> <code>PUT</code> <code>DELETE /api/mcp/&lt;id&gt;</code></td><td>Read, save or remove one</td></tr><tr><td><code>POST /api/mcp/validate</code></td><td>Check a definition</td></tr><tr><td><code>GET /api/mcp/&lt;id&gt;/url</code></td><td>The address to give an agent. Query <code>run</code>, <code>agent</code>.</td></tr><tr><td><code>POST /api/mcp/&lt;id&gt;/call</code></td><td>Call one of its tools by hand. Body <code>{tool, arguments?, run?, agent?}</code>.</td></tr><tr><td><code>DELETE /api/mcp/&lt;id&gt;/cassette</code></td><td>Forget what its proxy recorded</td></tr><tr><td><code>GET /api/mocks</code></td><td>The mock REST backends</td></tr><tr><td><code>GET</code> <code>PUT</code> <code>DELETE /api/mocks/&lt;id&gt;</code></td><td>Read, save or remove one</td></tr><tr><td><code>POST /api/mocks/validate</code></td><td>Check a definition</td></tr><tr><td><code>POST /api/mocks/&lt;id&gt;/openapi</code></td><td>Make one from an OpenAPI 3 document</td></tr><tr><td><code>GET /api/mocks/&lt;id&gt;/url</code></td><td>The address to give an agent</td></tr><tr><td><code>GET /api/a2a</code></td><td>The stub agents</td></tr><tr><td><code>GET</code> <code>PUT</code> <code>DELETE /api/a2a/&lt;id&gt;</code></td><td>Read, save or remove one</td></tr><tr><td><code>POST /api/a2a/validate</code></td><td>Check a definition</td></tr><tr><td><code>GET /api/a2a/&lt;id&gt;/url</code></td><td>The address to give an agent</td></tr><tr><td><code>GET /api/a2aproxies</code></td><td>The agent proxies</td></tr><tr><td><code>GET</code> <code>PUT</code> <code>DELETE /api/a2aproxies/&lt;id&gt;</code></td><td>Read, save or remove one</td></tr><tr><td><code>GET /api/a2aproxies/&lt;id&gt;/url</code></td><td>The address to give an agent</td></tr><tr><td><code>DELETE /api/a2aproxies/&lt;id&gt;/cassette</code></td><td>Forget what it recorded</td></tr><tr><td><code>GET /api/kitfaults</code></td><td>The tool and peer faults, their counters, and what each type takes</td></tr><tr><td><code>PUT</code> <code>DELETE /api/kitfaults/&lt;id&gt;</code></td><td>Save or remove one</td></tr><tr><td><code>POST /api/kitfaults/validate</code></td><td>Check one. Body <code>{rule}</code>.</td></tr><tr><td><code>POST /api/kitfaults/reseed</code></td><td>Start the dice again from a seed. Body <code>{seed}</code>.</td></tr><tr><td><code>GET /api/presets</code></td><td>The prompt injections a tool or stub can carry</td></tr><tr><td><code>POST /otlp/v1/traces</code></td><td>OpenTelemetry spans, as JSON, onto a run's timeline</td></tr></tbody></table></div>
+<p>The mocks themselves are served under a run: <code>/run/&lt;run&gt;/agent/&lt;name&gt;/mcp/&lt;id&gt;</code>, <code>/run/&lt;run&gt;/agent/&lt;name&gt;/mock/&lt;id&gt;</code>, <code>/run/&lt;run&gt;/agent/&lt;name&gt;/a2a/&lt;id&gt;</code> and <code>/run/&lt;run&gt;/agent/&lt;name&gt;/a2a-proxy/&lt;id&gt;</code>.</p>
+<h3 id="test-kit-judging-and-setup">Test kit: judging and setup</h3>
+<div class="table"><table><thead><tr><th>Method and path</th><th>Does</th></tr></thead><tbody><tr><td><code>GET /api/judges</code></td><td>The judges, and whether each can gate</td></tr><tr><td><code>GET</code> <code>PUT</code> <code>DELETE /api/judges/&lt;id&gt;</code></td><td>Read, save or remove one. Body <code>{rubric, model?, minAgreement?}</code>.</td></tr><tr><td><code>POST /api/judges/&lt;id&gt;/calibrate</code></td><td>Calibrate it. Body <code>{examples}</code> or <code>{fromReviews: true}</code>.</td></tr><tr><td><code>POST /api/pairwise</code></td><td>Have a judge compare two experiments. Body <code>{a, b, rubric, model?}</code>.</td></tr><tr><td><code>GET /api/pairwise/&lt;id&gt;</code></td><td>Read a comparison</td></tr><tr><td><code>GET /api/reviews</code></td><td>The review queue. Query <code>status</code>.</td></tr><tr><td><code>POST /api/reviews</code></td><td>Put runs in it. Body <code>{runs}</code> or <code>{fromExperiment}</code>.</td></tr><tr><td><code>GET /api/reviews/&lt;id&gt;</code></td><td>One review, with the conversation</td></tr><tr><td><code>POST /api/reviews/&lt;id&gt;/submit</code></td><td>Give a verdict. Body <code>{verdict, scores?, comment?, reviewer?, corrected?}</code>.</td></tr><tr><td><code>GET /api/variations</code></td><td>The sets of proposed variations</td></tr><tr><td><code>POST /api/variations/generate</code></td><td>Have a model propose some. Body <code>{dataset, item, kinds?, count?, model?}</code>.</td></tr><tr><td><code>GET /api/variations/&lt;id&gt;</code></td><td>One set</td></tr><tr><td><code>POST /api/variations/&lt;id&gt;/accept</code></td><td>Add accepted ones to the dataset. Body <code>{accept: [{index, checks?}], rejectRest?}</code>.</td></tr><tr><td><code>GET /api/evaluators</code></td><td>The code evaluators found on disk</td></tr><tr><td><code>GET /api/credentials</code></td><td>The stored credentials by name, kind and fingerprint, and the kinds there are</td></tr><tr><td><code>PUT</code> <code>DELETE /api/credentials/&lt;label&gt;</code></td><td>Store or remove one. The value is never returned.</td></tr><tr><td><code>GET</code> <code>PUT /api/kit</code></td><td>How many runs and events are kept, and whether every request is recorded</td></tr></tbody></table></div>
+<h3 id="the-consoles-own-routes">The console's own routes</h3>
+<p>The console uses a few routes of its own under <code>/api/ui/</code>: the state it polls, saving the routing, running the functional tests, the chat box, and the ChatGPT sign-in. They follow the console and can change with it. A script should use the routes above.</p>
+<h2 id="configuration">Configuration</h2>
+<p>Set these in the environment before starting <code>server.py</code>.</p>
+<div class="table"><table><thead><tr><th>Variable</th><th>Default</th><th>Sets</th></tr></thead><tbody><tr><td><code>LLMSIM_PORT</code></td><td><code>8099</code></td><td>The port</td></tr><tr><td><code>LLMSIM_SCRIPT</code></td><td><code>responses.json</code></td><td>The shipped rules</td></tr><tr><td><code>LLMSIM_RULES</code></td><td><code>llmsim.rules.json</code></td><td>Your rules</td></tr><tr><td><code>LLMSIM_CONFIG</code></td><td><code>llmsim.config.json</code></td><td>Routing, fixed answers and settings, as the console saves them</td></tr><tr><td><code>LLMSIM_SUITE</code></td><td><code>llmsim.tests.json</code></td><td>The functional test cases</td></tr><tr><td><code>LLMSIM_ASSERTIONS</code></td><td><code>llmsim.assertions.json</code></td><td>The saved assertion sets</td></tr><tr><td><code>LLMSIM_CASSETTES</code></td><td><code>cassettes/</code></td><td>Where recordings are kept</td></tr><tr><td><code>LLMSIM_RECORD</code>, <code>LLMSIM_REPLAY</code></td><td>none</td><td>Start already recording, or replaying, the named recording</td></tr><tr><td><code>LLMSIM_ANTHROPIC_KEY</code>, <code>LLMSIM_OPENAI_KEY</code>, <code>LLMSIM_DEEPSEEK_KEY</code></td><td>The published keys</td><td>The key each vendor endpoint accepts</td></tr><tr><td><code>LLMSIM_UPSTREAM</code>, <code>LLMSIM_UPSTREAM_MODEL</code>, <code>LLMSIM_UPSTREAM_KEY</code>, <code>LLMSIM_UPSTREAM_FORMAT</code></td><td>none</td><td>The upstream a relay goes to</td></tr><tr><td><code>LLMSIM_UPSTREAM_FALLBACK</code></td><td>off</td><td>Answer here when the upstream cannot be reached</td></tr><tr><td><code>LLMSIM_ANTHROPIC_UPSTREAM_KEY</code>, <code>LLMSIM_ANTHROPIC_UPSTREAM_MODEL</code></td><td>none</td><td>The key and model the Anthropic API route uses</td></tr><tr><td><code>LLMSIM_ANTHROPIC_UPSTREAM</code>, <code>LLMSIM_ANTHROPIC_UPSTREAM_AUTH</code></td><td>Anthropic's API, <code>api_key</code></td><td>Its base URL, and <code>bearer</code> for a gateway's token</td></tr><tr><td><code>LLMSIM_CHATGPT_AUTH</code></td><td><code>llmsim.chatgpt-auth.json</code></td><td>Where the ChatGPT sign-in is kept</td></tr><tr><td><code>LLMSIM_CHATGPT_MODEL</code></td><td>The plan's own choice</td><td>The plan model to use</td></tr><tr><td><code>LLMSIM_RUNS_DB</code></td><td><code>llmsim.runs.db</code></td><td>Where the test kit keeps runs</td></tr><tr><td><code>LLMSIM_CREDENTIALS</code></td><td><code>llmsim.credentials.json</code></td><td>Where the test kit keeps credentials</td></tr><tr><td><code>LLMSIM_EVALUATORS</code></td><td><code>evaluators/</code></td><td>Where code evaluators are read from</td></tr><tr><td><code>LLMSIM_ALLOW_PROCESS</code></td><td>off</td><td>Allow the <code>process</code> driver</td></tr><tr><td><code>LLMSIM_LOG_SIZE</code></td><td><code>300</code></td><td>How many requests the live tail keeps</td></tr></tbody></table></div>
+<h3 id="what-to-commit">What to commit</h3>
+<p>Commit <code>llmsim.rules.json</code>, <code>llmsim.tests.json</code>, <code>llmsim.assertions.json</code> and the recordings you rely on. Never commit <code>llmsim.config.json</code>, <code>llmsim.chatgpt-auth.json</code>, <code>llmsim.credentials.json</code> or <code>llmsim.runs.db</code>: they hold an upstream or Anthropic key, a sign-in, credentials and what runs said.</p>
+<h3 id="in-a-container">In a container</h3>
+<p><code>Dockerfile</code> builds an image and <code>deploy/install.sh</code> installs it in a Kubernetes namespace as <code>http://llmsim.&lt;namespace&gt;.svc:8099</code>. The manifest mounts the rule script and nothing else, so routing, a ChatGPT sign-in and recordings made in the pod are lost when it restarts. Mount a volume and point the variables above at it to keep them.</p>
+<h2 id="limits">Limits</h2>
+<ul><li>There is no authentication. Anyone who can reach the port can use everything here, and can spend a signed-in ChatGPT plan or a saved Anthropic key. Keep it on your own machine or a network you trust.</li><li>Captured requests are held in memory only.</li><li>An assertion that passes over a request too large to keep whole says so in <code>warnings</code>.</li><li>A streamed answer from a real model is passed through event by event, so only the stream faults can reach it.</li></ul>
+<h3 id="tests">Tests</h3>
+<div class="code" data-lang="bash"><button class="copy" type="button">Copy</button><pre><code>for t in tests/test_*.py; do python3 "$t" || break; done</code></pre></div>
+<p>Each file starts its own LLMSim on a free port with a throwaway directory. The instance you are running is never touched.</p>
+</div></main>
 </div>
-
 <script>
-  // A copy button on every command. Falls back to selecting the text where the clipboard is refused.
-  for (const block of document.querySelectorAll(".code")) {
-    const pre = block.querySelector("pre");
-    const button = document.createElement("button");
-    button.type = "button";
-    button.textContent = "Copy";
-    button.addEventListener("click", () => {
-      const done = (label) => { button.textContent = label; setTimeout(() => { button.textContent = "Copy"; }, 1600); };
-      const select = () => { const r = document.createRange(); r.selectNodeContents(pre); const s = getSelection(); s.removeAllRanges(); s.addRange(r); done("Selected"); };
-      try { navigator.clipboard.writeText(pre.innerText).then(() => done("Copied"), select); } catch (e) { select(); }
-    });
-    block.appendChild(button);
+  for (const b of document.querySelectorAll(".code .copy")) b.onclick = () => {
+    navigator.clipboard && navigator.clipboard.writeText(b.nextElementSibling.innerText);
+    b.textContent = "Copied"; setTimeout(() => (b.textContent = "Copy"), 1200);
+  };
+  const links = [...document.querySelectorAll(".rail a")], filter = document.getElementById("find"), none = document.getElementById("none");
+  // Typing narrows the contents to the sections that mention it, in their heading or their text.
+  const text = {};
+  for (const a of links) {
+    const start = document.getElementById(a.hash.slice(1)); let t = start.textContent, n = start.nextElementSibling;
+    while (n && !/^H[23]$/.test(n.tagName)) { t += " " + n.textContent; n = n.nextElementSibling; }
+    text[a.hash] = t.toLowerCase();
   }
+  filter.oninput = () => {
+    const q = filter.value.trim().toLowerCase(); let shown = 0;
+    for (const a of links) { const hit = !q || text[a.hash].includes(q); a.hidden = !hit; shown += hit; }
+    none.hidden = shown > 0;
+  };
+  const spy = new IntersectionObserver((entries) => {
+    for (const e of entries) if (e.isIntersecting) for (const a of links) {
+      const on = a.hash === "#" + e.target.id; a.classList.toggle("on", on);
+      if (on && !a.hidden) a.scrollIntoView({ block: "nearest" });
+    }
+  }, { rootMargin: "0px 0px -75% 0px" });
+  for (const a of links) spy.observe(document.getElementById(a.hash.slice(1)));
+  document.getElementById("menu").onclick = () => document.body.classList.toggle("open");
+  for (const a of links) a.addEventListener("click", () => document.body.classList.remove("open"));
 </script>

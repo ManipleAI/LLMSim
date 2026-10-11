@@ -12,6 +12,7 @@ testing an agent, so they are tested with agents that are written to misbehave.
 import http.client
 import json
 import os
+import re
 import sys
 import tempfile
 import time
@@ -1104,21 +1105,44 @@ def case_the_guide_is_served_as_a_whole_document(sim):
         assert path in text, "the guide no longer mentions " + path
 
 
-def case_the_two_copies_of_the_guide_name_the_same_routes(sim):
-    """docs/guide.html is what LLMSim serves; docs/guide.md is the same guide for reading on GitHub, which shows
-    an .html file as source. Two copies drift, and the first thing to go stale is a route."""
-    import html
-    import re
-    docs = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "docs")
-    page = html.unescape(open(os.path.join(docs, "guide.html")).read())
-    page = re.sub(r"<span[^>]*>|</span>", "", page)                 # the page highlights parts of some commands
-    markdown = open(os.path.join(docs, "guide.md")).read()
-    routes = lambda text: set(re.findall(r"/api/[a-z-]+(?:/[a-z-]+|/<[a-z]+>)*", text))
-    in_page, in_markdown = routes(page), routes(markdown)
-    assert in_page and in_page == in_markdown, {"only in guide.html": sorted(in_page - in_markdown),
-                                                "only in guide.md": sorted(in_markdown - in_page)}
-    for heading in re.findall(r"<h2>(.*?)</h2>", page):
-        assert "## " + heading in markdown, "guide.md has no section called %r" % heading
+def case_the_documentation_page_is_what_its_markdown_builds(sim):
+    """docs/guide.md is where the documentation is written, and docs/guide.html, which LLMSim serves, is built
+    from it by bin/build-docs. They were two copies kept by hand, and the first thing to go stale was a route.
+    A page edited by hand, or a guide changed without building it, fails here."""
+    import subprocess
+    root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+    check = subprocess.run([sys.executable, os.path.join(root, "bin", "build-docs"), "--check"], capture_output=True, text=True)
+    assert check.returncode == 0, check.stderr.strip() or check.stdout.strip()
+    page = open(os.path.join(root, "docs", "guide.html")).read()
+    # every section and subsection is in the contents, and every link inside the page lands somewhere
+    ids = set(re.findall(r'<h[1-4] id="([^"]+)"', page))
+    rail = re.findall(r'<a class="h[23]" href="#([^"]+)"', page)
+    assert rail and set(rail) <= ids and len(rail) == len(re.findall(r"<h[23] id=", page)), "the contents and the headings disagree"
+    for target in re.findall(r'<a href="#([^"]+)"', page):
+        assert target in ids, "a link in the documentation goes to #%s, which is not there" % target
+
+
+def case_the_documentation_covers_every_part_of_the_api(sim):
+    """An API nobody wrote down is one nobody can use. Every area the server and the test kit answer under /api/
+    has to appear in the reference, and every route the reference tells a person to GET has to answer."""
+    root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+    guide = open(os.path.join(root, "docs", "guide.md")).read()
+    reference = guide[guide.index("## API reference"):guide.index("## Configuration")]
+    areas = set()
+    for name in ["server.py"] + [os.path.join("testkit", f) for f in sorted(os.listdir(os.path.join(root, "testkit"))) if f.endswith(".py")]:
+        source = open(os.path.join(root, name)).read()
+        areas |= set(re.findall(r'@rest_area\("([\w-]+)"\)', source)) | set(re.findall(r'rest_area\("([\w-]+)"\)\(', source))
+        areas |= set(re.findall(r'REST_AREAS\["([\w-]+)"\]', source)) | set(re.findall(r'^REST_AREAS = \{([^}]*)\}', source, re.M) and
+                                                                               re.findall(r'"([\w-]+)":', re.findall(r'^REST_AREAS = \{([^}]*)\}', source, re.M)[0]))
+    areas.add("sessions")
+    assert len(areas) >= 25, sorted(areas)
+    missing = sorted(a for a in areas if "/api/%s" % a not in reference)
+    assert not missing, "the API reference says nothing about /api/%s" % ", /api/".join(missing)
+    # what it tells a person to read is really there
+    for path in sorted(set(re.findall(r"`GET (/api/[a-z-]+)`", reference))):
+        assert api(sim, "GET", path)[0] == 200, "the reference lists GET %s and it does not answer" % path
+    assert sim.call("GET", "/healthz")[0] == 200
+
 
 
 # ── The runner ───────────────────────────────────────────────────────────

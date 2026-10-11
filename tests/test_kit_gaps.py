@@ -8,6 +8,7 @@ and the command line's reading commands.
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -169,6 +170,97 @@ def case_the_console_page_is_valid_javascript_and_names_every_area(sim):
         check = subprocess.run([node, "--check", fh.name], capture_output=True, text=True)
         os.unlink(fh.name)
         assert check.returncode == 0, check.stderr[:400]
+
+
+def case_every_console_screen_can_be_reached_and_none_is_a_dead_end(sim):
+    """The console is one page of many screens, and the ways it has gone wrong are structural:
+    a screen nothing links to, a link to a screen that is not there, a job with no screen, an
+    area on the agent-tests page that belongs to no group and so is never drawn."""
+    import re
+    page = open(os.path.join(ROOT, "ui.html")).read()
+    nav = re.findall(r'<button data-view="([a-z]+)" onclick="show\(\'([a-z]+)\'\)"', page)
+    assert nav and all(a == b for a, b in nav), "a navigation entry opens a screen other than its own: %s" % nav
+    linked = [a for a, _b in nav]
+    assert len(linked) == len(set(linked)), "a screen is in the navigation twice: %s" % linked
+    views = re.findall(r'<section class="view" id="v-([a-z]+)"', page)
+    assert sorted(views) == sorted(linked), "screens and navigation disagree: only as screens %s, only in navigation %s" % (
+        sorted(set(views) - set(linked)), sorted(set(linked) - set(views)))
+    assert linked[0] == "overview", "the console does not open on the overview"
+    assert len(re.findall(r'<section class="view" id="v-[a-z]+">', page)) == 1, "more than one screen is showing before the script runs"
+
+    # Every job the overview offers goes to a screen that exists, and every screen is offered.
+    tasks = re.findall(r'\n  \["([a-z]+)", "[^"]+", "[^"]+"\],', page.split("const TASKS = [")[1].split("];")[0])
+    assert sorted(tasks) == sorted(v for v in views if v != "overview"), "the overview's jobs and the screens disagree: %s" % tasks
+
+    # A screen that was renamed or folded away is still an address.
+    aliases = dict(re.findall(r'(\w+): "(\w+)"', page.split("const VIEW_ALIAS = {")[1].split("}")[0]))
+    assert aliases.get("logs") == "evidence" and all(target in views for target in aliases.values()), aliases
+    for tab in ("live", "requests", "assertions", "settings"):
+        assert 'id="ev-tab-%s"' % tab in page and 'id="ev-%s"' % tab in page, "the requests screen has no %s tab" % tab
+
+    # Every area of the agent-tests page is in a group that is drawn.
+    groups = re.findall(r'\n  \["(\w+)", "[^"]+", "[^"]+"\],', page.split("const LAB_GROUPS = [")[1].split("];")[0])
+    areas = re.findall(r'\n  (\w+): \{ title: "[^"]+", group: "(\w+)",', page)
+    assert len(areas) == 13, "an agent-tests area has no group: %d of 13 have one" % len(areas)
+    assert all(g in groups for _a, g in areas) and all(any(g == h for _a, h in areas) for g in groups), (groups, areas)
+
+    # The addresses on the overview are the ones the server answers on.
+    for provider in ("anthropic", "openai", "deepseek"):
+        assert re.search(r"\n  %s: \{ name:" % provider, page), "the overview does not say how to reach %s" % provider
+    assert sim.call("GET", "/ui")[0] == 200
+
+
+def case_every_agent_test_area_has_a_form_or_a_view_and_they_keep_up_with_the_api(sim):
+    """The agent-tests page edits each area with a form made of that area's own fields. A form is
+    only as good as its list of what exists, so the lists are held to the API's: a driver, a check
+    type or a credential kind the server offers and the console does not know is a field nobody
+    can fill in."""
+    import re
+    page = open(os.path.join(ROOT, "ui.html")).read()
+    lab = page.split("const LAB = {")[1].split("\n};")[0]
+    areas = re.split(r"\n  (?=\w+: \{ title:)", "\n" + lab)[1:]
+    assert len(areas) == 13, len(areas)
+    for area in areas:
+        name = area.split(":")[0]
+        readonly = "readonly: true" in area
+        assert ("view: " in area) if readonly else ("form: " in area), "%s is %s and has no %s" % (name, "read" if readonly else "edited", "view" if readonly else "form")
+        assert readonly or "put: " in area, "%s has a form and nowhere to save it" % name
+
+    def block(const):
+        return page.split("const %s = {" % const)[1].split("\n};")[0]
+
+    drivers = {d["name"] for d in sim.api("GET", "/api/drivers")[1]["drivers"]}
+    fields = set(re.findall(r"\n  (\w+): \(p\) =>", block("DRIVER_FIELDS")))
+    assert drivers <= fields, "no fields for the driver(s) %s" % sorted(drivers - fields)
+    declared = set(re.findall(r"(\w+): \[", page.split("const DRIVER_KEYS = {")[1].split("};")[0]))
+    assert drivers <= declared, "DRIVER_KEYS does not list %s, so changing driver would leave its fields behind" % sorted(drivers - declared)
+    checks = set(sim.api("GET", "/api/checks")[1]["types"])
+    described = set(re.findall(r"(\w+): \"", block("CHECK_HELP")))
+    assert checks <= described, "the console cannot say what the check(s) %s do" % sorted(checks - described)
+
+    # The one piece of the form engine that can lose data: writing a value into the document by path.
+    node = shutil.which("node")
+    if node:
+        engine = page[page.index("const getAt = "):page.index("const pj = ")]
+        script = engine + """
+const eq = (a, b, what) => { if (JSON.stringify(a) !== JSON.stringify(b)) { console.error(what + ': ' + JSON.stringify(a) + ' is not ' + JSON.stringify(b)); process.exit(1); } };
+let d = {};
+setAt(d, ['agent', 'url'], 'http://x'); eq(d, {agent: {url: 'http://x'}}, 'a value makes the objects it needs');
+setAt(d, ['turns', 0, 'say'], 'hi'); eq(d.turns, [{say: 'hi'}], 'a number in the path makes a list');
+setAt(d, ['turns', 0, 'expect', 'contains'], 'x'); setAt(d, ['turns', 0, 'expect', 'contains'], undefined);
+eq(d.turns, [{say: 'hi'}], 'clearing the only expectation removes expect, and leaves the turn in its list');
+setAt(d, ['stop', 'maxTurns'], 3); setAt(d, ['stop', 'maxTurns'], undefined); eq('stop' in d, false, 'an emptied object goes');
+setAt(d, ['agent', 'url'], undefined); eq('agent' in d, false, 'up to the document');
+setAt(d, ['model', 'rules'], []); eq(d.model, {rules: []}, 'an empty list that was typed is kept');
+setAt(d, ['a', 'b'], 0); setAt(d, ['a', 'c'], false); eq(d.a, {b: 0, c: false}, 'zero and false are values');
+eq(getAt(d, ['nope', 'deeper']), undefined, 'a missing path reads as nothing');
+"""
+        import tempfile
+        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as fh:
+            fh.write(script)
+        ran = subprocess.run([node, fh.name], capture_output=True, text=True)
+        os.unlink(fh.name)
+        assert ran.returncode == 0, ran.stderr[:600]
 
 
 def main():

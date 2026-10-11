@@ -1,0 +1,302 @@
+#!/usr/bin/env python3
+"""Build docs/guide.html, the documentation LLMSim serves at /guide, from docs/guide.md.
+
+    bin/build-docs            # write docs/guide.html
+    bin/build-docs --check    # exit 1 if docs/guide.html is not what docs/guide.md builds
+
+docs/guide.md is the one place the documentation is written: it reads as it is on
+GitHub, and this turns it into the page with a contents rail that the server hands
+out. Two hand-kept copies drifted, and the first thing to go stale was a route.
+
+Standard library only, like the rest of LLMSim, so there is no Markdown package to
+lean on. This reads the Markdown the guide is written in and no more: headings,
+paragraphs, fenced code, tables, lists (one level of nesting), quotes, rules, and
+`code`, **bold**, *italic* and [links](…) inside a line. Something outside that is
+an error here rather than a page that quietly renders wrong.
+"""
+
+import html
+import os
+import re
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SOURCE = os.path.join(ROOT, "docs", "guide.md")
+TARGET = os.path.join(ROOT, "docs", "guide.html")
+TITLE = "LLMSim Guide"
+
+
+class Unsupported(Exception):
+    pass
+
+
+def slug(text):
+    """The anchor GitHub gives a heading, so a link works in both places."""
+    text = re.sub(r"`([^`]*)`", r"\1", text).lower()
+    text = re.sub(r"[^\w\- ]", "", text)
+    return text.strip().replace(" ", "-")
+
+
+def inline(text):
+    """One line of prose. Code spans are set aside first, so nothing inside one is read as markup."""
+    spans = []
+
+    def keep(match):
+        spans.append("<code>%s</code>" % html.escape(match.group(1), quote=False))
+        return "\x00%d\x00" % (len(spans) - 1)
+
+    text = re.sub(r"`([^`]+)`", keep, text)
+    text = html.escape(text, quote=False)
+
+    def link(match):
+        label, target = match.group(1), match.group(2)
+        # A link to another Markdown file in docs/ would 404 from the served page: send it to GitHub's copy.
+        outside = target.startswith("http")
+        if not outside and not target.startswith("#"):
+            target = "https://github.com/ManipleAI/LLMSim/blob/main/docs/" + target
+            outside = True
+        return '<a href="%s"%s>%s</a>' % (html.escape(target, quote=True), ' target="_blank" rel="noopener"' if outside else "", label)
+
+    text = re.sub(r"\[([^\]]+)\]\(([^)\s]+)\)", link, text)
+    text = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", text)
+    text = re.sub(r"(?<![\w*])\*([^*\n]+)\*(?![\w*])", r"<em>\1</em>", text)
+    return re.sub(r"\x00(\d+)\x00", lambda m: spans[int(m.group(1))], text)
+
+
+def cells(row):
+    row = row.strip()
+    row = row[1:] if row.startswith("|") else row
+    row = row[:-1] if row.endswith("|") else row
+    return [c.strip() for c in re.split(r"(?<!\\)\|", row)]
+
+
+def render(markdown):
+    """(html, [(level, id, text)]) — the body, and the headings for the contents rail."""
+    lines = markdown.split("\n")
+    out, toc, i, seen = [], [], 0, {}
+    while i < len(lines):
+        line = lines[i]
+        if not line.strip():
+            i += 1
+            continue
+        if line.startswith("```"):
+            lang = line[3:].strip()
+            body = []
+            i += 1
+            while i < len(lines) and not lines[i].startswith("```"):
+                body.append(lines[i])
+                i += 1
+            if i == len(lines):
+                raise Unsupported("a code block that is never closed")
+            i += 1
+            code = html.escape("\n".join(body), quote=False)
+            out.append('<div class="code"%s><button class="copy" type="button">Copy</button><pre><code>%s</code></pre></div>'
+                       % (' data-lang="%s"' % html.escape(lang) if lang else "", code))
+            continue
+        heading = re.match(r"(#{1,4}) (.+)$", line)
+        if heading:
+            level, text = len(heading.group(1)), heading.group(2).strip()
+            anchor = slug(text)
+            seen[anchor] = seen.get(anchor, 0) + 1
+            if seen[anchor] > 1:
+                anchor = "%s-%d" % (anchor, seen[anchor] - 1)
+            out.append('<h%d id="%s">%s</h%d>' % (level, anchor, inline(text), level))
+            if level in (2, 3):
+                toc.append((level, anchor, re.sub(r"`([^`]*)`", r"\1", text)))
+            i += 1
+            continue
+        if line.startswith("|") and i + 1 < len(lines) and re.match(r"\|?\s*:?-{3,}", lines[i + 1].strip()):
+            head = cells(line)
+            i += 2
+            rows = []
+            while i < len(lines) and lines[i].startswith("|"):
+                rows.append(cells(lines[i]))
+                i += 1
+            blank = not any(head)
+            table = ['<div class="table"><table>']
+            if not blank:
+                table.append("<thead><tr>%s</tr></thead>" % "".join("<th>%s</th>" % inline(c) for c in head))
+            table.append("<tbody>%s</tbody></table></div>" % "".join(
+                "<tr>%s</tr>" % "".join("<td>%s</td>" % inline(c.replace("\\|", "|")) for c in r) for r in rows))
+            out.append("".join(table))
+            continue
+        if line.startswith(">"):
+            quote = []
+            while i < len(lines) and lines[i].startswith(">"):
+                quote.append(lines[i][1:].strip())
+                i += 1
+            out.append('<blockquote>%s</blockquote>' % "".join("<p>%s</p>" % inline(" ".join(p.split("\n")))
+                                                                 for p in "\n".join(quote).split("\n\n") if p.strip()))
+            continue
+        if re.match(r"-{3,}\s*$", line):
+            out.append("<hr>")
+            i += 1
+            continue
+        item = re.match(r"(\s*)([-*]|\d+\.) (.*)$", line)
+        if item and not item.group(1):
+            ordered = item.group(2)[0].isdigit()
+            items = []
+            while i < len(lines):
+                m = re.match(r"([-*]|\d+\.) (.*)$", lines[i])
+                if not m:
+                    break
+                text, sub = [m.group(2)], []
+                i += 1
+                while i < len(lines) and lines[i].startswith("  ") and lines[i].strip():
+                    nested = re.match(r"\s+([-*]|\d+\.) (.*)$", lines[i])
+                    if nested:
+                        sub.append(nested.group(2))
+                    elif sub:
+                        sub[-1] += " " + lines[i].strip()
+                    else:
+                        text.append(lines[i].strip())
+                    i += 1
+                items.append("<li>%s%s</li>" % (inline(" ".join(text)), "<ul>%s</ul>" % "".join("<li>%s</li>" % inline(s) for s in sub) if sub else ""))
+            out.append("<%s>%s</%s>" % ("ol" if ordered else "ul", "".join(items), "ol" if ordered else "ul"))
+            continue
+        if line.startswith(("    ", "\t")) or line.lstrip().startswith("<"):
+            raise Unsupported("indented code or raw HTML, near: %s" % line.strip()[:60])
+        para = []
+        while i < len(lines) and lines[i].strip() and not re.match(r"(```|#{1,4} |\||>|-{3,}\s*$|[-*] |\d+\. )", lines[i]):
+            para.append(lines[i].strip())
+            i += 1
+        out.append("<p>%s</p>" % inline(" ".join(para)))
+    return "\n".join(out), toc
+
+
+STYLE = """
+  :root {
+    --page:#efece6; --surface:#ffffff; --subtle:#f5f2ec; --ink:#14181f; --muted:#5a6068; --faint:#868b93;
+    --border:#e2dcd1; --primary:#b23a22; --primary-tint:#f7ece8; --amber:#8f5a08; --amber-tint:#fbf0dd;
+    --code-bg:#14181f; --code-fg:#e6e1d6; --chrome:#14181f; --chrome-fg:#d6d0c6; --chrome-dim:#7d8590;
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) { :root {
+    --page:#12151b; --surface:#1a1f27; --subtle:#212731; --ink:#ece8df; --muted:#a9afb8; --faint:#7c838d;
+    --border:#2c333e; --primary:#e7826d; --primary-tint:#3a221d; --amber:#e6b96a; --amber-tint:#352b17; --code-bg:#0c0f14;
+  } }
+  * { box-sizing:border-box; }
+  html { scroll-padding-top:18px; }
+  body { margin:0; background:var(--page); color:var(--ink); font:15px/1.65 var(--sans); -webkit-font-smoothing:antialiased; }
+  .layout { display:flex; align-items:flex-start; }
+  /* The contents: every section and what is under it, always in reach. */
+  .rail { position:sticky; top:0; flex:0 0 272px; width:272px; height:100vh; overflow-y:auto; background:var(--chrome); color:var(--chrome-fg); padding:18px 0 28px; }
+  .rail .brand { padding:0 20px 14px; font-weight:700; font-size:15px; color:#fff; }
+  .rail .brand span { display:block; font-weight:400; font-size:11.5px; color:var(--chrome-dim); margin-top:2px; }
+  .rail input { display:block; width:calc(100% - 40px); margin:0 20px 12px; background:#1c212a; border:1px solid #2a313c; border-radius:7px; color:#fff; padding:7px 10px; font:13px var(--sans); }
+  .rail input:focus { outline:none; border-color:var(--primary); }
+  .rail a { display:block; padding:5px 20px; color:var(--chrome-fg); text-decoration:none; font-size:13px; line-height:1.4; }
+  .rail a.h3 { padding-left:34px; font-size:12.5px; color:var(--chrome-dim); }
+  .rail a:hover { color:#fff; background:#1c212a; }
+  .rail a.on { color:#fff; box-shadow:inset 2px 0 0 var(--primary); background:#222833; }
+  .rail a.h2 { margin-top:9px; font-weight:600; }
+  .rail .none { padding:6px 20px; color:var(--chrome-dim); font-size:12.5px; }
+  main { flex:1; min-width:0; padding:34px 44px 90px; }
+  .doc { max-width:860px; }
+  h1 { font-size:30px; letter-spacing:-.025em; line-height:1.2; margin:0 0 12px; }
+  h2 { font-size:22px; letter-spacing:-.02em; margin:52px 0 10px; padding-top:22px; border-top:1px solid var(--border); }
+  h3 { font-size:16.5px; letter-spacing:-.01em; margin:30px 0 6px; }
+  h4 { font-size:14px; margin:22px 0 4px; }
+  p { margin:10px 0; }
+  a { color:var(--primary); }
+  code { font:12.5px var(--mono); background:var(--subtle); border:1px solid var(--border); border-radius:5px; padding:1px 5px; overflow-wrap:anywhere; }
+  .code { position:relative; margin:14px 0; }
+  .code pre { margin:0; background:var(--code-bg); color:var(--code-fg); border-radius:10px; padding:14px 16px; overflow-x:auto; font:12.5px/1.6 var(--mono); }
+  .code pre code { background:none; border:0; padding:0; color:inherit; font:inherit; overflow-wrap:normal; }
+  .code .copy { position:absolute; top:8px; right:8px; background:#232a34; color:#c9c3b8; border:1px solid #333b47; border-radius:6px; font:11px var(--sans); padding:4px 9px; cursor:pointer; opacity:0; }
+  .code:hover .copy, .code .copy:focus { opacity:1; }
+  .table { overflow-x:auto; margin:14px 0; }
+  table { border-collapse:collapse; width:100%; font-size:13.5px; background:var(--surface); border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+  th { text-align:left; font:600 10.5px var(--mono); letter-spacing:.1em; text-transform:uppercase; color:var(--muted); background:var(--subtle); padding:9px 12px; }
+  td { padding:9px 12px; border-top:1px solid var(--border); vertical-align:top; }
+  td:first-child { white-space:nowrap; }
+  td:first-child code { white-space:nowrap; }
+  blockquote { margin:16px 0; padding:11px 15px; background:var(--amber-tint); color:var(--amber); border-radius:9px; font-size:14px; }
+  blockquote p { margin:4px 0; }
+  blockquote code { background:rgba(255,255,255,.55); border-color:transparent; }
+  ul, ol { padding-left:22px; margin:10px 0; }
+  li { margin:5px 0; }
+  hr { border:0; border-top:1px solid var(--border); margin:40px 0; }
+  .lead { color:var(--muted); font-size:16.5px; margin-top:0; }
+  .menu { display:none; }
+  @media (max-width:900px) {
+    .layout { display:block; }
+    .rail { position:fixed; z-index:20; transform:translateX(-100%); transition:transform .15s; }
+    body.open .rail { transform:none; }
+    main { padding:60px 20px 70px; }
+    .menu { display:block; position:fixed; z-index:30; top:12px; left:12px; background:var(--chrome); color:#fff; border:0; border-radius:8px; padding:8px 12px; font:13px var(--sans); }
+    td:first-child, td:first-child code { white-space:normal; }
+  }
+  @media print { .rail, .menu, .copy { display:none !important; } main { padding:0; } }
+"""
+
+SCRIPT = """
+  for (const b of document.querySelectorAll(".code .copy")) b.onclick = () => {
+    navigator.clipboard && navigator.clipboard.writeText(b.nextElementSibling.innerText);
+    b.textContent = "Copied"; setTimeout(() => (b.textContent = "Copy"), 1200);
+  };
+  const links = [...document.querySelectorAll(".rail a")], filter = document.getElementById("find"), none = document.getElementById("none");
+  // Typing narrows the contents to the sections that mention it, in their heading or their text.
+  const text = {};
+  for (const a of links) {
+    const start = document.getElementById(a.hash.slice(1)); let t = start.textContent, n = start.nextElementSibling;
+    while (n && !/^H[23]$/.test(n.tagName)) { t += " " + n.textContent; n = n.nextElementSibling; }
+    text[a.hash] = t.toLowerCase();
+  }
+  filter.oninput = () => {
+    const q = filter.value.trim().toLowerCase(); let shown = 0;
+    for (const a of links) { const hit = !q || text[a.hash].includes(q); a.hidden = !hit; shown += hit; }
+    none.hidden = shown > 0;
+  };
+  const spy = new IntersectionObserver((entries) => {
+    for (const e of entries) if (e.isIntersecting) for (const a of links) {
+      const on = a.hash === "#" + e.target.id; a.classList.toggle("on", on);
+      if (on && !a.hidden) a.scrollIntoView({ block: "nearest" });
+    }
+  }, { rootMargin: "0px 0px -75% 0px" });
+  for (const a of links) spy.observe(document.getElementById(a.hash.slice(1)));
+  document.getElementById("menu").onclick = () => document.body.classList.toggle("open");
+  for (const a of links) a.addEventListener("click", () => document.body.classList.remove("open"));
+"""
+
+
+def build(markdown):
+    body, toc = render(markdown)
+    # The first paragraph after the title is what the page is, said large.
+    body = re.sub(r"(</h1>\n)<p>", r'\1<p class="lead">', body, count=1)
+    rail = "".join('<a class="h%d" href="#%s">%s</a>' % (level, anchor, html.escape(text, quote=False)) for level, anchor, text in toc)
+    return ("<title>%s</title>\n<style>%s</style>\n" % (TITLE, STYLE)
+            + '<button class="menu" id="menu" type="button">Contents</button>\n<div class="layout">\n'
+            + '<nav class="rail"><div class="brand">LLMSim<span>Documentation</span></div>'
+            + '<input id="find" type="search" placeholder="Find in the docs…" aria-label="Find in the docs">'
+            + rail + '<div class="none" id="none" hidden>Nothing mentions that.</div></nav>\n'
+            + '<main><div class="doc">\n' + body + "\n</div></main>\n</div>\n<script>%s</script>\n" % SCRIPT)
+
+
+def main(argv):
+    with open(SOURCE, encoding="utf-8") as fh:
+        markdown = fh.read()
+    try:
+        page = build(markdown)
+    except Unsupported as exc:
+        print("docs/guide.md uses something this builder does not read: %s" % exc, file=sys.stderr)
+        return 2
+    if "--check" in argv:
+        try:
+            with open(TARGET, encoding="utf-8") as fh:
+                current = fh.read()
+        except FileNotFoundError:
+            current = ""
+        if current != page:
+            print("docs/guide.html is not what docs/guide.md builds. Run bin/build-docs.", file=sys.stderr)
+            return 1
+        return 0
+    with open(TARGET, "w", encoding="utf-8") as fh:
+        fh.write(page)
+    print("wrote docs/guide.html (%d sections)" % len(re.findall(r"<h2 ", page)))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -75,7 +75,78 @@
   .head h1 { margin:0; font-size:20px; letter-spacing:-.02em; font-weight:700; }
   .head p { margin:0; color:var(--muted); font-size:12.5px; }
   .head .spacer { flex:1; }
-  .body { padding:22px 28px 40px; max-width:1100px; }
+  /* An action in a page's heading is one line: a button that wraps to two reads as two buttons. */
+  .head .btn, .head .seg button { white-space:nowrap; flex:0 0 auto; }
+  .head > div:first-child { min-width:0; }
+  .body { padding:22px 28px 40px; max-width:1240px; }
+
+  /* ── overview ───────────────────────────────────────────────────── */
+  .ov-stats { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:12px; }
+  .ov-stat { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:13px 15px; }
+  .ov-stat .k { font:600 10px/1 var(--mono); letter-spacing:.14em; text-transform:uppercase; color:var(--muted); }
+  .ov-stat .v { font-size:15px; font-weight:650; margin-top:7px; letter-spacing:-.01em; }
+  .ov-stat .d { color:var(--muted); font-size:12px; margin-top:2px; }
+  .ov-stat.warn { border-color:#e6cf9f; background:var(--amber-tint); }
+  .ov-tasks { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; }
+  .ov-task { display:flex; gap:12px; align-items:flex-start; text-align:left; width:100%; cursor:pointer;
+    background:#fff; border:1px solid var(--border); border-radius:9px; padding:12px 14px; font:inherit; color:inherit; }
+  .ov-task:hover { border-color:#c9c2b6; background:var(--subtle); }
+  .ov-task b { display:block; font-size:13.5px; }
+  .ov-task span { color:var(--muted); font-size:12.5px; }
+  .ov-task .go { margin-left:auto; color:var(--faint); font:600 10px/1 var(--mono); letter-spacing:.1em; text-transform:uppercase; white-space:nowrap; padding-top:3px; }
+  .ov-connect td { vertical-align:middle; }
+  .copy { border:1px solid var(--border); background:#fff; border-radius:6px; font:500 11px/1 inherit; padding:5px 8px; cursor:pointer; color:var(--muted); }
+  .copy:hover { color:var(--ink); border-color:#c9c2b6; }
+  .card a { color:var(--primary); }
+  @media (max-width:1000px) { .ov-stats { grid-template-columns:repeat(2, minmax(0, 1fr)); } .ov-tasks { grid-template-columns:1fr; } }
+
+  /* ── agent tests: the areas, grouped by what they are for ───────── */
+  .lab-groups { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:14px 18px; }
+  .lab-group h3 { font:600 10px/1 var(--mono); letter-spacing:.14em; text-transform:uppercase; color:var(--muted); margin:0 0 3px; }
+  .lab-group p { color:var(--faint); font-size:11.5px; margin:0 0 8px; }
+  .lab-group button { display:block; width:100%; text-align:left; background:none; border:0; border-radius:6px;
+    padding:6px 8px; margin:0 -8px; font:500 13px/1.3 inherit; color:var(--ink); cursor:pointer; }
+  .lab-group button:hover { background:var(--subtle); }
+  .lab-group button[aria-current=true] { background:var(--primary-tint); color:var(--primary); font-weight:600; }
+  @media (max-width:1000px) { .lab-groups { grid-template-columns:repeat(2, minmax(0, 1fr)); } }
+  .lab-rows tr { cursor:pointer; }
+  .lab-rows tr:hover td { background:var(--subtle); }
+  .lab-rows tr.on td { background:var(--primary-tint); }
+
+  /* ── agent tests: forms ─────────────────────────────────────────── */
+  .fsec { border-top:1px solid var(--border-soft); padding:16px 0 4px; }
+  .fsec:first-child { border-top:0; padding-top:6px; }
+  .fsec > h3 { font-size:14px; font-weight:650; letter-spacing:-.01em; margin:0; }
+  .fsec > p { color:var(--muted); font-size:12.5px; margin:2px 0 0; }
+  .frow { display:grid; grid-template-columns:repeat(auto-fit, minmax(190px, 1fr)); gap:0 14px; align-items:start; }
+  .f { min-width:0; }
+  .f > label.tog { display:flex; align-items:center; gap:8px; color:var(--ink); font-size:13px; margin-top:34px; }
+  .fh { color:var(--faint); font-size:11.5px; margin-top:4px; line-height:1.45; }
+  .fh code, .fsec > p code { font-family:var(--mono); font-size:11px; }
+  .ferr { color:var(--primary); font-size:11.5px; margin-top:4px; }
+  textarea.bad { border-color:var(--primary); background:var(--primary-tint); }
+  .flist { margin-top:12px; }
+  .fitem { border:1px solid var(--border); border-radius:9px; padding:10px 14px 14px; margin-bottom:10px; background:#fcfbf8; }
+  .fitem .fitem { background:#fff; }
+  .fih { display:flex; align-items:center; gap:6px; }
+  .mini { border:1px solid var(--border); background:#fff; border-radius:6px; font:500 11px/1 inherit; padding:5px 8px; cursor:pointer; color:var(--muted); }
+  .mini:hover { color:var(--ink); border-color:#c9c2b6; }
+  .fgen { margin-top:14px; border-top:1px solid var(--border-soft); padding-top:12px; }
+  .fgen summary { cursor:pointer; color:var(--muted); font-size:12.5px; }
+
+  /* ── agent tests: a run, an experiment, a review ────────────────── */
+  .rhead { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; font-size:15px; }
+  .rmeta { color:var(--muted); font-size:12.5px; font-weight:400; }
+  .rsum { color:var(--muted); font-size:12.5px; margin:6px 0 12px; }
+  .rh { font:600 10px/1 var(--mono); letter-spacing:.14em; text-transform:uppercase; color:var(--muted); margin:20px 0 8px; }
+  .rturn { border:1px solid var(--border-soft); border-radius:9px; margin-bottom:8px; font-size:13px; }
+  .rturn > div { padding:9px 12px; white-space:pre-wrap; overflow-wrap:anywhere; }
+  .rturn > div + div { border-top:1px solid var(--border-soft); background:var(--subtle); border-radius:0 0 9px 9px; }
+  .rturn .who { display:block; font:600 9.5px/1 var(--mono); letter-spacing:.14em; text-transform:uppercase; color:var(--faint); margin-bottom:5px; }
+  .rtrans { white-space:pre-wrap; background:var(--subtle); border:1px solid var(--border-soft); border-radius:9px; padding:10px 12px; font:13px/1.55 inherit; margin:0; }
+  #lab-form details, #lab-out details { margin-top:5px; }
+  #lab-form details summary, #lab-out details summary { cursor:pointer; color:var(--faint); font-size:11.5px; }
+  #lab-form details pre, #lab-out details pre { white-space:pre-wrap; overflow-wrap:anywhere; font:11.5px/1.5 var(--mono); background:var(--subtle); border-radius:6px; padding:8px 10px; margin:5px 0 0; }
   .view[hidden] { display:none; }
   /* A layout rule such as .row sets display and would otherwise beat the hidden attribute. */
   .body [hidden] { display:none !important; }
@@ -118,6 +189,7 @@
 
   .note { font-size:11.5px; border-radius:7px; padding:9px 11px; margin-top:12px; }
   .note.warn { background:var(--amber-tint); color:var(--amber); }
+  .note.plain { background:var(--subtle); color:var(--muted); }
   .note.ok { background:var(--green-tint); color:var(--green); }
 
   .tag {
@@ -212,29 +284,29 @@
     <div><b>LLMSim</b><span>the vendors' APIs, simulated</span></div>
   </div>
 
-  <div class="group">Simulate</div>
-  <button data-view="models" onclick="show('models')"><span>Models</span><span class="n" id="n-models">0</span></button>
+  <button data-view="overview" onclick="show('overview')" style="margin-top:4px"><span>Overview</span></button>
+
+  <!-- Grouped by what somebody came to do, in the order they usually do it:
+       decide what answers, watch what was asked, try it, then test with it. -->
+  <div class="group">Answers</div>
   <button data-view="routing" onclick="show('routing')"><span>Routing</span><span class="n" id="n-routing">—</span></button>
-  <button data-view="behaviors" onclick="show('behaviors')"><span>Behaviors</span></button>
+  <button data-view="models" onclick="show('models')"><span>Models</span><span class="n" id="n-models">0</span></button>
+  <button data-view="behaviors" onclick="show('behaviors')"><span>Answer rules</span></button>
   <button data-view="faults" onclick="show('faults')"><span>Faults</span><span class="n" id="n-faults"></span></button>
 
-  <div class="group">Observe</div>
-  <button data-view="logs" onclick="show('logs')"><span>Logs</span><span class="n" id="n-logs">0</span></button>
-  <button data-view="evidence" onclick="show('evidence')"><span>Evidence</span></button>
+  <div class="group">Traffic</div>
+  <button data-view="evidence" onclick="show('evidence')"><span>Requests</span><span class="n" id="n-logs">0</span></button>
 
-  <div class="group">Verify</div>
+  <div class="group">Try it</div>
   <button data-view="chat" onclick="show('chat')"><span>Chat</span></button>
-  <button data-view="sessions" onclick="show('sessions')"><span>Sessions</span><span class="n" id="n-sessions"></span></button>
-  <button data-view="tests" onclick="show('tests')"><span>Test Execution</span><span class="n" id="n-tests">0</span></button>
+  <button data-view="sessions" onclick="show('sessions')"><span>Record &amp; replay</span><span class="n" id="n-sessions"></span></button>
 
-  <div class="group">Test agents</div>
+  <div class="group">Test</div>
+  <button data-view="tests" onclick="show('tests')"><span>Functional tests</span><span class="n" id="n-tests">0</span></button>
   <button data-view="lab" onclick="show('lab')"><span>Agent tests</span></button>
 
-  <div class="group">Connect</div>
-  <button data-view="integrations" onclick="show('integrations')"><span>Integrations</span></button>
-
-  <div class="group">Learn</div>
-  <button onclick="window.open(api('/guide'), '_blank', 'noopener')"><span>How to use it</span><span class="n">↗</span></button>
+  <div class="group">Help</div>
+  <button onclick="window.open(api('/guide'), '_blank', 'noopener')"><span>Documentation</span><span class="n">↗</span></button>
 
   <div class="foot">
     <div class="status"><span id="dot" class="dot"></span><span id="conn">connected</span></div>
@@ -243,8 +315,37 @@
 </nav>
 
 <main>
+  <!-- ── Overview ───────────────────────────────────────────────────── -->
+  <!-- What it is doing now, how to point a client at it, and where each job
+       is done. The first screen, because every other one assumes you know
+       these three things. -->
+  <section class="view" id="v-overview">
+    <div class="head">
+      <div><h1>Overview</h1><p>What LLMSim is doing right now, how to point a client at it, and where to go next.</p></div>
+    </div>
+    <div class="body">
+      <div class="ov-stats" id="ov-stats"></div>
+
+      <div class="card" style="margin-top:16px">
+        <h2>Connect a client</h2>
+        <p class="help">Set your client's base URL to one of these and use the key beside it. LLMSim answers in that vendor's own wire format, whichever model name is asked for.</p>
+        <table class="ov-connect">
+          <thead><tr><th style="width:110px">Vendor</th><th>Base URL</th><th style="width:210px">Request</th><th>Key</th></tr></thead>
+          <tbody id="ov-connect"></tbody>
+        </table>
+        <p class="help" style="margin:12px 0 0">These are the keys LLMSim publishes: fake by construction, they open nothing but a simulator. A server started with <code>LLMSIM_*_KEY</code> set uses its own instead.</p>
+      </div>
+
+      <div class="card">
+        <h2>What do you want to do?</h2>
+        <p class="help">Each job has one screen.</p>
+        <div class="ov-tasks" id="ov-tasks"></div>
+      </div>
+    </div>
+  </section>
+
   <!-- ── Models ─────────────────────────────────────────────────────── -->
-  <section class="view" id="v-models">
+  <section class="view" id="v-models" hidden>
     <div class="head">
       <div><h1>Models</h1><p>What each model answers, and where its traffic goes.</p></div>
     </div>
@@ -260,7 +361,7 @@
   <!-- ── Routing ────────────────────────────────────────────────────── -->
   <section class="view" id="v-routing" hidden>
     <div class="head">
-      <div><h1>Routing</h1><p>Whether answers are made up here, or by one real model upstream.</p></div>
+      <div><h1>Routing</h1><p>Whether answers are made up here or come from a real model: an upstream, a ChatGPT plan, or Anthropic's API.</p></div>
     </div>
     <div class="body">
       <div class="card">
@@ -270,6 +371,7 @@
           <button id="def-scripted" onclick="setDefault('scripted')" aria-pressed="false">No upstream — answer here</button>
           <button id="def-relay" onclick="setDefault('relay')" aria-pressed="false">Upstream — relay</button>
           <button id="def-chatgpt" onclick="setDefault('chatgpt')" aria-pressed="false">ChatGPT plan</button>
+          <button id="def-anthropic" onclick="setDefault('anthropic')" aria-pressed="false">Anthropic API</button>
         </div>
         <div id="nourl" class="note warn" hidden>
           Nothing is configured to relay to, so relay routes answer here instead. Set an upstream below.
@@ -344,6 +446,45 @@
         </div>
       </div>
 
+      <div class="card" id="anthropiccard">
+        <h2>Anthropic API</h2>
+        <p class="help">Answer with a real Claude model, by API key. Every model routed here is answered by it, in whichever format the client asked in, tools and streaming included.</p>
+        <div id="an-status" style="font-size:13px; margin-bottom:4px"></div>
+        <div class="row">
+          <div><label for="an-key">Key <span id="an-keyset" style="color:var(--green)"></span></label>
+            <input id="an-key" class="mono" type="password" autocomplete="new-password" placeholder="sk-ant-…  ·  leave blank to keep the stored one"></div>
+          <div style="flex:0 0 290px"><label for="an-auth">It is</label>
+            <select id="an-auth">
+              <option value="api_key">An Anthropic API key (sent as x-api-key)</option>
+              <option value="bearer">A gateway's token (sent as a Bearer token)</option>
+            </select></div>
+        </div>
+        <div class="row">
+          <div><label for="an-model">Model <span class="hint">· leave blank to use the Claude model each client asks for</span></label>
+            <input id="an-model" class="mono" type="text" list="an-models" placeholder="the model the client asks for">
+            <datalist id="an-models"></datalist></div>
+          <div style="flex:0 0 150px"><label for="an-max">Max tokens <span class="hint">· when not asked</span></label>
+            <input id="an-max" class="mono" type="number" min="1" max="128000" placeholder="4096"></div>
+        </div>
+        <label for="an-url">Base URL <span class="hint">· Anthropic's own, or a gateway that speaks the Messages API</span></label>
+        <input id="an-url" class="mono" type="text" placeholder="https://api.anthropic.com">
+        <label style="display:flex; align-items:center; gap:8px; margin-top:14px; color:var(--ink)">
+          <input id="an-fallback" type="checkbox" style="width:auto"> Answer here if Anthropic cannot be reached
+        </label>
+        <div style="margin-top:14px; display:flex; gap:9px; align-items:center; flex-wrap:wrap">
+          <button class="btn" onclick="saveAnthropic()">Save</button>
+          <button class="btn ghost" onclick="anthropicModels()">List the models this key can use</button>
+          <button class="btn ghost" id="an-forget" onclick="forgetAnthropicKey()" hidden>Forget the key</button>
+          <span id="an-msg" style="font-size:12px"></span>
+        </div>
+        <div class="note warn">
+          Requests on this route are billed to the key. Anyone who can reach this port can spend it, so keep it on your own machine or a network you trust.
+        </div>
+        <div class="note plain">
+          It takes a key, not a Claude sign-in. Anthropic does not permit a tool to route requests through a Free, Pro or Max plan, so a subscription cannot be used here. Use an API key from the Claude Console or a cloud provider.
+        </div>
+      </div>
+
       <div class="card" id="upstreamcard">
         <h2>Upstream</h2>
         <p class="help">One real model answers for every model routed to it — whatever name the client asked for, and in the format it asked in.</p>
@@ -367,33 +508,13 @@
       </div>
   </div>
 
-  <!-- ── Logs ───────────────────────────────────────────────────────── -->
-  <section class="view" id="v-logs" hidden>
-    <div class="head">
-      <div><h1>Logs</h1><p>Every request as it arrives.</p></div>
-      <span class="spacer"></span>
-      <button class="btn ghost" onclick="REQS=[];renderLogs()">Clear</button>
-    </div>
-    <div class="body" style="max-width:none">
-      <div class="card" style="padding:14px 8px 8px">
-        <table>
-          <thead><tr>
-            <th style="width:62px">Time</th><th style="width:78px">Route</th><th style="width:190px">Model</th>
-            <th style="width:30%">Asked</th><th>Answered</th><th style="width:54px">ms</th>
-          </tr></thead>
-          <tbody id="logs"></tbody>
-        </table>
-        <div id="logsempty" class="empty"><b>Nothing yet</b>Point an agent, a gateway or a curl at this port.</div>
-      </div>
-    </div>
-  </section>
 
 
   <!-- ── Test Execution ─────────────────────────────────────────────── -->
   <!-- ── Behaviors ──────────────────────────────────────────────────── -->
   <section class="view" id="v-behaviors" hidden>
     <div class="head">
-      <div><h1>Behaviors</h1><p>What the simulated model answers, and when — including what it does with what a tool printed. Your rules are tried before the shipped ones.</p></div>
+      <div><h1>Answer rules</h1><p>What the simulated model answers, and when — including what it does with what a tool printed. Used wherever a model is answered here rather than by an upstream. Your rules are tried before the shipped ones.</p></div>
       <span class="spacer"></span>
       <button class="btn ghost" onclick="bhReload()" title="Re-read responses.json and llmsim.rules.json">Reload files</button>
       <button class="btn" onclick="bhNew()">New rule</button>
@@ -468,17 +589,38 @@
   <!-- ── Evidence ───────────────────────────────────────────────────── -->
   <section class="view" id="v-evidence" hidden>
     <div class="head">
-      <div><h1>Evidence</h1><p>What each agent actually sent to the model, what answered it, and checks over both.</p></div>
+      <div><h1>Requests</h1><p>Everything that was asked and what answered it: a live tail, the full captured evidence, and checks over it.</p></div>
       <span class="spacer"></span>
-      <div class="seg" role="group" aria-label="Evidence view">
-        <button id="ev-tab-requests" onclick="evTab('requests')" aria-pressed="true">Requests</button>
-        <button id="ev-tab-assertions" onclick="evTab('assertions')" aria-pressed="false">Assertions</button>
-        <button id="ev-tab-settings" onclick="evTab('settings')" aria-pressed="false">Settings</button>
+      <div class="seg" role="group" aria-label="Requests view">
+        <button id="ev-tab-live" onclick="evTab('live')" aria-pressed="true" title="Every request as it arrives">Live</button>
+        <button id="ev-tab-requests" onclick="evTab('requests')" aria-pressed="false" title="What was sent and what came back, in full, by run and agent">Captured</button>
+        <button id="ev-tab-assertions" onclick="evTab('assertions')" aria-pressed="false" title="Checks over what was captured">Assertions</button>
+        <button id="ev-tab-settings" onclick="evTab('settings')" aria-pressed="false" title="What is captured, and who may send requests">Capture settings</button>
       </div>
     </div>
     <div class="body">
 
-      <div id="ev-requests">
+      <!-- The tail: the last 300 requests, kept in the page, always on. The
+           Captured tab is the same traffic kept by the server in full. -->
+      <div id="ev-live">
+        <div class="card" style="padding:14px 8px 8px">
+          <div style="display:flex; align-items:center; gap:10px; padding:0 10px 10px">
+            <span class="help" style="margin:0; color:var(--muted); font-size:12.5px">Every request as it arrives, newest first. Open <b>Captured</b> to read one in full.</span>
+            <span style="flex:1"></span>
+            <button class="btn ghost" onclick="REQS=[];renderLogs()">Clear</button>
+          </div>
+          <table>
+            <thead><tr>
+              <th style="width:62px">Time</th><th style="width:78px">Route</th><th style="width:190px">Model</th>
+              <th style="width:30%">Asked</th><th>Answered</th><th style="width:54px">ms</th>
+            </tr></thead>
+            <tbody id="logs"></tbody>
+          </table>
+          <div id="logsempty" class="empty"><b>Nothing yet</b>Point an agent, a gateway or a curl at this port. The Overview has the addresses.</div>
+        </div>
+      </div>
+
+      <div id="ev-requests" hidden>
         <div class="card">
           <div class="row" style="align-items:flex-end">
             <div><label for="ev-f-run" style="margin-top:0">Run</label><input id="ev-f-run" class="mono" type="text" oninput="evRefresh(true)"></div>
@@ -572,7 +714,7 @@
   <!-- ── Sessions ───────────────────────────────────────────────────── -->
   <section class="view" id="v-sessions" hidden>
     <div class="head">
-      <div><h1>Sessions</h1><p>Record a real run once — a Maniple session, say — and replay it exactly, offline and free.</p></div>
+      <div><h1>Record &amp; replay</h1><p>Record a real run once — a Maniple session, say — and replay it exactly, offline and free.</p></div>
     </div>
     <div class="body">
       <div class="card">
@@ -629,7 +771,7 @@
   <!-- ── Chat ───────────────────────────────────────────────────────── -->
   <section class="view" id="v-chat" hidden>
     <div class="head">
-      <div><h1>Chat</h1><p>Talk to a model through LLMSim, on whatever route it is set to. It goes the same way a client's request does, and shows up in Logs.</p></div>
+      <div><h1>Chat</h1><p>Talk to a model through LLMSim, on whatever route it is set to. It goes the same way a client's request does, and shows up under Requests.</p></div>
       <span class="spacer"></span>
       <button class="btn ghost" onclick="chatClear()">New conversation</button>
     </div>
@@ -668,7 +810,7 @@
 
   <section class="view" id="v-tests" hidden>
     <div class="head">
-      <div><h1>Test Execution</h1><p>Drive the simulator to check the caller. A case is a sequence of steps, run in order.
+      <div><h1>Functional tests</h1><p>Send a model a prompt and say what must come back: the answer, the tool it calls, the status, how fast. It goes down whatever route that model is on. A case is a sequence of steps, run in order.
         Cases and plans are saved to <span class="mono">llmsim.tests.json</span> — commit it, or hand it over with Export.</p></div>
       <span class="spacer"></span>
       <button class="btn ghost" onclick="exportSuite()">Export</button>
@@ -700,40 +842,36 @@
       <div><h1>Agent tests</h1><p>Drive an agent, simulate its tools and its peers, judge what it did, keep the cases and compare versions. Everything here is the same API a CI job uses; the guide lists the routes.</p></div>
     </div>
     <div class="body">
-      <div class="card"><div id="lab-tabs" class="row" style="flex-wrap:wrap;gap:6px"></div></div>
+      <div class="card"><div id="lab-tabs" class="lab-groups"></div></div>
       <div class="card">
         <h2 id="lab-title"></h2>
         <p class="help" id="lab-help"></p>
         <div id="lab-list"></div>
-        <div class="row" style="margin-top:12px"><button class="btn" id="lab-new" onclick="labNew()">New</button><button class="btn ghost" onclick="labLoad()">Refresh</button><span id="lab-listnote"></span></div>
+        <div style="margin-top:12px; display:flex; gap:9px; align-items:center"><button class="btn" id="lab-new" onclick="labNew()">New</button><button class="btn ghost" onclick="labLoad()">Refresh</button><span id="lab-listnote"></span></div>
+        <div id="lab-extra"></div>
       </div>
       <div class="card" id="lab-editor" hidden>
-        <h2 id="lab-editing"></h2>
-        <textarea id="lab-json" spellcheck="false" style="min-height:280px;font-family:var(--mono);font-size:12.5px"></textarea>
-        <div class="row" style="margin-top:12px;flex-wrap:wrap;gap:8px"><button class="btn" id="lab-save" onclick="labSave()">Save</button><span id="lab-actions" class="row" style="gap:8px"></span><span class="spacer"></span><button class="btn ghost" id="lab-del" onclick="labDelete()">Delete</button></div>
+        <div style="display:flex; align-items:center; gap:12px; margin-bottom:6px">
+          <h2 id="lab-editing" style="margin:0"></h2>
+          <span style="flex:1"></span>
+          <div class="seg" id="lab-mode" role="group" aria-label="Edit as">
+            <button id="lab-mode-form" onclick="labMode('form')" aria-pressed="true">Form</button>
+            <button id="lab-mode-json" onclick="labMode('json')" aria-pressed="false" title="Exactly what is sent to the API">JSON</button>
+          </div>
+        </div>
+        <div id="lab-form"></div>
+        <textarea id="lab-json" spellcheck="false" hidden style="min-height:340px;font-family:var(--mono);font-size:12.5px"></textarea>
+        <div style="margin-top:16px; display:flex; flex-wrap:wrap; gap:9px; align-items:center"><button class="btn" id="lab-save" onclick="labSave()">Save</button><span id="lab-actions" style="display:flex; gap:9px; flex-wrap:wrap"></span><span style="flex:1"></span><button class="btn ghost" onclick="labClose(); labLoad()">Close</button><button class="btn ghost" id="lab-del" onclick="labDelete()">Delete</button></div>
         <div id="lab-note" style="margin-top:8px"></div>
       </div>
-      <div class="card" id="lab-out-card" hidden><h2>Result</h2><div id="lab-out"></div></div>
+      <div class="card" id="lab-out-card" hidden><h2>What it answered</h2><div id="lab-out"></div></div>
     </div>
   </section>
 
-  <section class="view" id="v-integrations" hidden>
-    <div class="head">
-      <div><h1>Integrations</h1><p>What this simulator is wired into.</p></div>
-    </div>
-    <div class="body">
-      <div class="card">
-        <div class="empty" style="padding:44px 10px">
-          <b>Nothing here yet</b>
-          This is where connected gateways, routers and agents will be listed.
-        </div>
-      </div>
-    </div>
-  </section>
 </main>
 
 <script>
-let CFG = null, MODELS = {}, ALL = [], REQS = [], SINCE = 0, VIEW = "models", PICKED = null;
+let CFG = null, MODELS = {}, ALL = [], REQS = [], SINCE = 0, VIEW = "overview", PICKED = null, RULES = [];
 let CG = { signedIn: false }, CG_URL = null, CG_LISTED = false;
 let CHAT = { turns: [], busy: false, abort: null };
 let SESS = { mode: "off", cassettes: [], settings: {} };
@@ -745,8 +883,14 @@ let CASE = null, PLAN = null, RUN = null, RUNNING = false;
 const api = (p) => new URL(p, location.origin).toString();
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
 
+// Screens that were renamed or folded into another keep working as addresses.
+const VIEW_ALIAS = { logs: "evidence", integrations: "overview" };
 function show(v) {
+  if (v === "logs") EV.tab = "live";
+  v = VIEW_ALIAS[v] || v;
+  if (!document.getElementById("v-" + v)) v = "overview";
   VIEW = v;
+  if (location.hash !== "#" + v) history.replaceState(null, "", "#" + v);
   for (const s of document.querySelectorAll(".view")) s.hidden = s.id !== "v-" + v;
   for (const b of document.querySelectorAll("nav button[data-view]")) b.setAttribute("aria-current", b.dataset.view === v);
   if (CFG) { renderDetail(); placeCards(); renderChatGPT(); renderChat(); renderSessions(); }
@@ -766,11 +910,11 @@ async function load() {
   }
   document.getElementById("dot").className = "dot";
   document.getElementById("conn").textContent = "connected";
-  CFG = s.config; MODELS = s.models; ALL = s.allModels; CG = s.chatgpt || CG; SESS = s.session || SESS;
+  CFG = s.config; MODELS = s.models; ALL = s.allModels; CG = s.chatgpt || CG; SESS = s.session || SESS; RULES = s.rules || RULES;
   for (const row of s.requests) { REQS.unshift(row); SINCE = Math.max(SINCE, row.n); }
   if (REQS.length > 300) REQS.length = 300;
   if (!PICKED) PICKED = ALL[0];
-  renderChrome(); renderList(); renderDetail(); renderRouting(); renderChatGPT(); renderChat(); renderSessions(); renderLogs(); renderTests();
+  renderChrome(); renderOverview(); renderList(); renderDetail(); renderRouting(); renderChatGPT(); renderChat(); renderSessions(); renderLogs(); renderTests();
 }
 
 // The state poll repaints every panel every 1.5 seconds, which is right for
@@ -795,6 +939,73 @@ function renderChrome() {
     + (SESS.mode === "record" ? " · recording " + SESS.name : SESS.mode === "replay" ? " · replaying " + SESS.name : "");
 }
 
+// The published keys, as the README gives them. Not read from the server: a
+// deployment may have set its own, and a console with no sign-in is not the
+// place to show a key somebody chose.
+const PUBLISHED = {
+  anthropic: { name: "Anthropic", path: "POST /v1/messages", header: "x-api-key", key: "sk-ant-llmsim-000000000000000000000000" },
+  openai: { name: "OpenAI", path: "POST /v1/chat/completions", header: "Authorization: Bearer", key: "sk-llmsim-000000000000000000000000" },
+  deepseek: { name: "DeepSeek", path: "POST /v1/chat/completions", header: "Authorization: Bearer", key: "sk-llmsim-deepseek-0000000000000000" },
+};
+const ROUTE_MEANS = {
+  scripted: ["Scripted", "Answers are made up here, from your rules. Nothing is called and nothing is spent."],
+  relay: ["Upstream", "Requests are relayed to one real model."],
+  chatgpt: ["ChatGPT plan", "Requests are answered by a ChatGPT subscription."],
+  anthropic: ["Anthropic API", "Requests are answered by a real Claude model, billed to an API key."],
+};
+const TASKS = [
+  ["routing", "Decide what answers", "Scripted here, an upstream, a ChatGPT plan or Anthropic's API"],
+  ["behaviors", "Write what the model says", "Rules: this ask gets this answer, or this tool call"],
+  ["models", "Treat one model differently", "Its own route, a fixed answer, a status or a delay"],
+  ["faults", "Make something go wrong", "A dead stream, a bad tool call, a 429, on purpose"],
+  ["evidence", "See what was asked", "A live tail, and every request in full"],
+  ["chat", "Try it by hand", "Talk to a model the way a client would"],
+  ["sessions", "Record a real run and replay it", "Exactly, offline and free"],
+  ["tests", "Check a model answers as intended", "Send a prompt, say what must come back, keep it as a case"],
+  ["lab", "Test an agent end to end", "Drive it, simulate its tools and peers, judge the result"],
+];
+function copyBtn(text) { return `<button class="copy" onclick="copyText('${esc(text)}'); this.textContent='Copied'; setTimeout(() => this.textContent='Copy', 1200)">Copy</button>`; }
+function renderOverview() {
+  if (!CFG || !document.getElementById("ov-stats")) return;
+  const d = CFG.routing.default, [mode, means] = ROUTE_MEANS[d] || [d, ""];
+  const routed = Object.keys(CFG.routing.models).length;
+  // From the state every screen shares, so it is right before Faults has been opened.
+  const faults = (CFG.chaos && CFG.chaos.paused) ? 0 : (CFG.faults || []).filter((f) => f.enabled !== false).length;
+  const stats = [];
+  stats.push({ k: "Answers come from", v: mode, d: means + (routed ? ` ${routed} model${routed === 1 ? " is" : "s are"} set differently.` : ""), go: "routing" });
+  if (d === "chatgpt" || Object.values(CFG.routing.models).includes("chatgpt")) {
+    stats.push(CG.signedIn
+      ? { k: "ChatGPT plan", v: "Signed in", d: "Requests on this route spend the plan.", go: "routing" }
+      : { k: "ChatGPT plan", v: "Not signed in", d: "Requests on this route fail until someone signs in.", go: "routing", warn: true });
+  } else if (d === "anthropic" || Object.values(CFG.routing.models).includes("anthropic")) {
+    stats.push(CFG.anthropic.keySet
+      ? { k: "Anthropic API", v: "Key stored", d: "Requests on this route are billed to it.", go: "routing" }
+      : { k: "Anthropic API", v: "No key", d: "Requests on this route fail until one is saved.", go: "routing", warn: true });
+  } else if (d === "relay") {
+    stats.push(CFG.upstream.url
+      ? { k: "Upstream", v: CFG.upstream.model || "set", d: CFG.upstream.url, go: "routing" }
+      : { k: "Upstream", v: "No address", d: "Relayed requests fail until one is set.", go: "routing", warn: true });
+  } else {
+    stats.push({ k: "Rules", v: RULES.length + " loaded", d: "Tried in order; the first that matches answers.", go: "behaviors" });
+  }
+  stats.push(SESS.mode === "record" ? { k: "Recording", v: SESS.name, d: "Every answer is being kept.", go: "sessions", warn: true }
+    : SESS.mode === "replay" ? { k: "Replaying", v: SESS.name, d: "Answers come from this recording, not from the route above.", go: "sessions", warn: true }
+    : { k: "Record & replay", v: "Off", d: (SESS.cassettes || []).length + " recording(s) kept.", go: "sessions" });
+  stats.push({ k: "Requests seen", v: String(REQS.length >= 300 ? "300+" : REQS.length), d: faults ? `${faults} fault rule${faults === 1 ? "" : "s"} active.` : "No fault is active.", go: faults ? "faults" : "evidence", warn: faults > 0 });
+  document.getElementById("ov-stats").innerHTML = stats.map((x) => `<div class="ov-stat ${x.warn ? "warn" : ""}" style="cursor:pointer" onclick="show('${x.go}')">
+    <div class="k">${esc(x.k)}</div><div class="v">${esc(x.v)}</div><div class="d">${esc(x.d)}</div></div>`).join("");
+  document.getElementById("ov-connect").innerHTML = Object.keys(MODELS).map((p) => {
+    const v = PUBLISHED[p] || { name: p, path: "", header: "", key: "" };
+    const base = location.origin + "/" + p;
+    return `<tr><td><b>${esc(v.name)}</b></td>
+      <td class="mono">${esc(base)} ${copyBtn(base)}</td>
+      <td class="mono" style="color:var(--muted)">${esc(v.path)}</td>
+      <td class="mono">${esc(v.key)} ${v.key ? copyBtn(v.key) : ""}<div style="color:var(--faint); font-size:11px">${esc(v.header)}</div></td></tr>`;
+  }).join("");
+  document.getElementById("ov-tasks").innerHTML = TASKS.map(([v, title, what]) => `<button class="ov-task" onclick="show('${v}')">
+    <div><b>${esc(title)}</b><span>${esc(what)}</span></div><span class="go">${esc(document.querySelector(`nav button[data-view="${v}"] span`).textContent)} →</span></button>`).join("");
+}
+
 // Where the two route cards belong right now, and which of them.
 //
 // A card is shown only for the route being looked at: under Default on the
@@ -804,7 +1015,7 @@ function renderChrome() {
 // a half-typed field is never in two places.
 function parkCards() {
   const park = document.getElementById("cfg-park");
-  for (const id of ["chatgptcard", "upstreamcard"]) {
+  for (const id of ["chatgptcard", "anthropiccard", "upstreamcard"]) {
     const card = document.getElementById(id);
     if (card && card.parentNode !== park) park.appendChild(card);
   }
@@ -812,9 +1023,13 @@ function parkCards() {
 function placeCards() {
   if (!CFG) return;
   const onModel = VIEW === "models" && PICKED;
-  const route = onModel ? routeOf(PICKED) : CFG.routing.default;
+  // On a model's page the settings shown are for a route chosen for that
+  // model. One left on the default says so and points at Routing: the whole
+  // plan or upstream form under every one of seventy models read as seventy
+  // places to change one setting.
+  const route = onModel ? (CFG.routing.models[PICKED] || "") : CFG.routing.default;
   const home = document.getElementById(onModel ? "cfg-slot" : "cfg-home");
-  for (const [id, wants] of [["chatgptcard", "chatgpt"], ["upstreamcard", "relay"]]) {
+  for (const [id, wants] of [["chatgptcard", "chatgpt"], ["anthropiccard", "anthropic"], ["upstreamcard", "relay"]]) {
     const card = document.getElementById(id);
     const shown = !!home && route === wants && (onModel || VIEW === "routing");
     if (shown && card.parentNode !== home) home.appendChild(card);
@@ -823,8 +1038,8 @@ function placeCards() {
 }
 
 function routeOf(m) { return CFG.routing.models[m] || CFG.routing.default; }
-const routeName = (r) => ({ relay: "upstream", chatgpt: "ChatGPT plan" }[r] || "no upstream");
-const routeTag = (r) => `<span class="tag ${({ relay: "relay", chatgpt: "plan", replay: "replay" })[r] || ""}">${({ relay: "up", chatgpt: "plan", replay: "replay" })[r] || "local"}</span>`;
+const routeName = (r) => ({ relay: "upstream", chatgpt: "ChatGPT plan", anthropic: "Anthropic API" }[r] || "no upstream");
+const routeTag = (r) => `<span class="tag ${({ relay: "relay", chatgpt: "plan", anthropic: "plan", replay: "replay" })[r] || ""}">${({ relay: "up", chatgpt: "plan", anthropic: "claude", replay: "replay" })[r] || "local"}</span>`;
 
 function renderList() {
   const q = (document.getElementById("filter").value || "").toLowerCase();
@@ -860,7 +1075,9 @@ function renderDetail() {
         <button onclick="setRoute('${esc(m)}','scripted')" aria-pressed="${r === "scripted"}">No upstream</button>
         <button onclick="setRoute('${esc(m)}','relay')" aria-pressed="${r === "relay"}">Upstream</button>
         <button onclick="setRoute('${esc(m)}','chatgpt')" aria-pressed="${r === "chatgpt"}">ChatGPT plan</button>
+        <button onclick="setRoute('${esc(m)}','anthropic')" aria-pressed="${r === "anthropic"}">Anthropic API</button>
       </div>
+      ${r === "" ? `<p class="help" style="margin:12px 0 0">It follows the default route, <b>${esc(routeName(CFG.routing.default))}</b>. <a href="#routing" onclick="show('routing'); return false">That route's settings are on Routing.</a></p>` : ""}
     </div>
     <div id="cfg-slot"></div>
 
@@ -894,6 +1111,8 @@ function renderRouting() {
   document.getElementById("def-scripted").setAttribute("aria-pressed", d === "scripted");
   document.getElementById("def-relay").setAttribute("aria-pressed", d === "relay");
   document.getElementById("def-chatgpt").setAttribute("aria-pressed", d === "chatgpt");
+  document.getElementById("def-anthropic").setAttribute("aria-pressed", d === "anthropic");
+  renderAnthropic();
   document.getElementById("nourl").hidden = !!up.url || d !== "relay";
   const r = document.getElementById("routed");
   r.hidden = !routed;
@@ -972,6 +1191,49 @@ const saveFidelity = () => post({
     unknownModel: document.getElementById("f-unknownModel").checked,
   },
 }, "saved");
+// ── Anthropic API ─────────────────────────────────────────────────────────
+// The key goes one way. The page is told whether one is stored and nothing
+// more, so a field left blank means "keep it".
+function renderAnthropic() {
+  if (!CFG || !CFG.anthropic) return;
+  const a = CFG.anthropic, live = document.activeElement ? document.activeElement.id : "";
+  document.getElementById("an-keyset").textContent = a.keySet ? "· stored" : "";
+  document.getElementById("an-forget").hidden = !a.keySet;
+  document.getElementById("an-status").innerHTML = a.keySet
+    ? `<span class="tag set">key stored</span> Answers with <code>${esc(a.model || "the Claude model each client asks for")}</code>.`
+    : `<span class="tag">no key</span> Requests on this route fail until one is saved.`;
+  if (live !== "an-auth") document.getElementById("an-auth").value = a.auth || "api_key";
+  if (live !== "an-model") document.getElementById("an-model").value = a.model || "";
+  if (live !== "an-max") document.getElementById("an-max").value = a.maxTokens || "";
+  if (live !== "an-url") document.getElementById("an-url").value = a.url || "";
+  if (live !== "an-fallback") document.getElementById("an-fallback").checked = !!a.fallback;
+}
+const anSay = (text, bad) => note("an-msg", text, bad);
+async function saveAnthropic() {
+  const max = document.getElementById("an-max").value.trim();
+  const r = await fetch(api("/api/ui/config"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ anthropic: {
+    key: document.getElementById("an-key").value, auth: document.getElementById("an-auth").value,
+    model: document.getElementById("an-model").value.trim(), url: document.getElementById("an-url").value.trim(),
+    fallback: document.getElementById("an-fallback").checked, ...(max ? { maxTokens: Number(max) } : {}),
+  } }) });
+  const out = await r.json().catch(() => ({}));
+  if (!r.ok) return anSay(out.error || "That could not be saved.", true);
+  document.getElementById("an-key").value = "";
+  anSay("Saved."); await load();
+}
+async function forgetAnthropicKey() {
+  if (!confirm("Forget the Anthropic key? Requests on this route will fail until another is saved.")) return;
+  await REST("POST", "/api/ui/config", { anthropic: { forgetKey: true } });
+  anSay("The key is forgotten."); await load();
+}
+async function anthropicModels() {
+  anSay("Asking Anthropic…");
+  const r = await REST("GET", "/api/ui/anthropic/models");
+  if (!r.ok) return anSay(r.body.error || "The models could not be listed.", true);
+  document.getElementById("an-models").innerHTML = r.body.models.map((m) => `<option value="${esc(m)}">`).join("");
+  anSay(r.body.models.length + " models. Start typing in Model to choose one.");
+}
+
 const saveUpstream = () => post({
   upstream: {
     url: document.getElementById("url").value.trim(),
@@ -1338,11 +1600,11 @@ PAGES.faults = { enter: ftLoad, poll: ftLoad };
 
 
 // ── Evidence ──────────────────────────────────────────────────────────────
-let EV = { tab: "requests", picked: null, last: "" };
+let EV = { tab: "live", picked: null, last: "" };
 
 function evTab(t) {
   EV.tab = t;
-  for (const name of ["requests", "assertions", "settings"]) {
+  for (const name of ["live", "requests", "assertions", "settings"]) {
     document.getElementById("ev-" + name).hidden = name !== t;
     document.getElementById("ev-tab-" + name).setAttribute("aria-pressed", name === t);
   }
@@ -1563,71 +1825,119 @@ async function stSave() {
 PAGES.evidence = { enter: evEnter, poll: evPoll };
 
 // ── Agent tests ─────────────────────────────────────────────────────────────
-// One generic page over the kit's REST areas: a list, a JSON editor, and the actions an area has.
-// It does nothing the API does not, so whatever a person does here a CI job can do too.
+// ── Agent tests ───────────────────────────────────────────────────────────
+// Each area is a list, and what opens from it is a form made of what that
+// kind of thing is made of: an agent's driver and that driver's own fields,
+// the turns, the checks. It used to be a document to type. The document is
+// still there — the JSON switch shows exactly what will be sent — and anything
+// a form has no field for is kept as it was, so nothing is lost by using one.
+// A run, an experiment and a review are read, not typed, so they are drawn.
+//
+// It does nothing the API does not: whatever a person does here a CI job can do.
 const LAB = {
-  scenarios: { title: "Scenarios", help: "One test of an agent, as a file: how to reach it, what the user says, what the model says, and what must hold afterwards.", list: "/api/scenarios", key: "scenarios", id: "id",
+  scenarios: { title: "Scenarios", group: "cases", help: "One test of an agent: how to reach it, what the user says, what the model says, and what must hold afterwards.", list: "/api/scenarios", key: "scenarios", id: "id",
     cols: (r) => `${r.driver || ""} · ${r.checks} check(s)`, one: (id) => "/api/scenarios/" + id, oneKey: "scenario", put: (id) => "/api/scenarios/" + id, del: (id) => "/api/scenarios/" + id,
-    actions: [["Run", (id) => ["POST", "/api/scenarios/" + id + "/run", {}]], ["Validate", (id, doc) => ["POST", "/api/scenarios/validate", { scenario: doc }]]],
-    blank: { id: "my-scenario", agent: { name: "agent", driver: "http", url: "http://localhost:9000/chat", body: { input: "{{message}}" }, reply: "reply" }, model: { rules: [] }, turns: [{ say: "hello", expect: { contains: "hi" } }], checks: [] } },
-  results: { title: "Results", help: "What each run did and which checks held. Open one to read it; its timeline is below.", list: "/api/results", key: "results", id: "run",
-    cols: (r) => `${r.verdict} · ${r.scenario} · ${r.tier}`, one: (id) => "/api/results/" + id, oneKey: "result", readonly: true,
-    actions: [["Timeline", (id) => ["GET", "/api/runs/" + id + "/timeline"]], ["JUnit", (id) => ["GET", "/api/results/" + id + "/junit"]]] },
-  datasets: { title: "Datasets", help: "Scenarios kept together as immutable versions. Saving changes makes a new version; tag one \"baseline\".", list: "/api/datasets", key: "datasets", id: "id",
-    cols: (r) => `v${r.version} · ${r.items} case(s)`, one: (id) => "/api/datasets/" + id, oneKey: null, put: (id) => "/api/datasets/" + id, del: (id) => "/api/datasets/" + id,
-    actions: [["Run experiment", (id) => ["POST", "/api/experiments/run", { dataset: id }]], ["Versions", (id) => ["GET", "/api/datasets/" + id + "/versions"]], ["Tag current baseline", (id) => ["POST", "/api/datasets/" + id + "/tag", { tag: "baseline" }]]],
-    blank: { description: "", items: [{ id: "case-1", scenario: { id: "case-1", agent: { driver: "http", url: "http://localhost:9000/chat", body: { input: "{{message}}" }, reply: "reply" }, turns: [{ say: "hello", expect: { contains: "hi" } }], checks: [] } }] } },
-  experiments: { title: "Experiments", help: "A dataset version run against an agent version, case by case. Mark one as the baseline, then gate the next against it.", list: "/api/experiments", key: "experiments", id: "id",
-    cols: (r) => `${r.verdict || r.status} · ${r.dataset} v${r.version} · ${r.tier}${r.label ? " · " + r.label : ""}`, one: (id) => "/api/experiments/" + id, oneKey: "experiment", readonly: true,
-    actions: [["Make baseline", (id) => ["POST", "/api/experiments/" + id + "/baseline", {}]], ["Gate against baseline", (id) => ["POST", "/api/experiments/" + id + "/gate", {}]]] },
-  mcp: { title: "Mock tool servers (MCP)", help: "An MCP server whose tools are written down. Point the agent at /run/<run>/agent/<name>/mcp/<id>.", list: "/api/mcp", key: "servers", id: "id",
+    actions: [["Run", (id) => ["POST", "/api/scenarios/" + id + "/run", {}], "primary"], ["Check it is valid", (id, doc) => ["POST", "/api/scenarios/validate", { scenario: doc }]]],
+    blank: { id: "my-scenario", agent: { name: "agent", driver: "http", url: "http://localhost:9000/chat", body: { input: "{{message}}" }, reply: "reply" }, model: { rules: [] }, turns: [{ say: "hello", expect: { contains: "hi" } }], checks: [] },
+    form: () => scenarioForm() },
+  results: { title: "Results", group: "cases", help: "What each run did and which checks held.", list: "/api/results", key: "results", id: "run",
+    cols: (r) => `${r.scenario} · ${r.tier}${r.label ? " · " + r.label : ""}`, status: (r) => r.verdict, one: (id) => "/api/results/" + id, oneKey: "result", readonly: true, del: (id) => "/api/results/" + id,
+    view: (doc) => resultView(doc) },
+  datasets: { title: "Datasets", group: "cases", help: "Scenarios kept together as versions that never change. Saving makes a new version; tag one \"baseline\" to compare against.", list: "/api/datasets", key: "datasets", id: "id",
+    cols: (r) => `v${r.version} · ${r.items} case(s)${r.description ? " · " + r.description : ""}`, one: (id) => "/api/datasets/" + id, oneKey: null, put: (id) => "/api/datasets/" + id, del: (id) => "/api/datasets/" + id,
+    actions: [["Run as an experiment", (id) => ["POST", "/api/experiments/run", { dataset: id }], "primary"], ["Versions", (id) => ["GET", "/api/datasets/" + id + "/versions"]], ["Tag this version baseline", (id) => ["POST", "/api/datasets/" + id + "/tag", { tag: "baseline" }]]],
+    blank: { id: "my-dataset", description: "", items: [{ id: "case-1", scenarioId: "" }] },
+    form: () => datasetForm() },
+  experiments: { title: "Experiments", group: "cases", help: "A dataset version run against an agent, case by case. Mark one as the baseline, then gate the next against it.", list: "/api/experiments", key: "experiments", id: "id",
+    cols: (r) => `${r.dataset} v${r.version} · ${r.tier}${r.label ? " · " + r.label : ""}${r.passRate != null ? " · " + Math.round(r.passRate * 100) + "% pass" : ""}`, status: (r) => r.verdict || r.status, one: (id) => "/api/experiments/" + id, oneKey: "experiment", readonly: true,
+    actions: [["Make this the baseline", (id) => ["POST", "/api/experiments/" + id + "/baseline", {}]], ["Gate against the baseline", (id) => ["POST", "/api/experiments/" + id + "/gate", {}]], ["Send failures to review", (id) => ["POST", "/api/reviews", { fromExperiment: id }]]],
+    view: (doc) => experimentView(doc) },
+  mcp: { title: "Mock tool servers (MCP)", group: "world", help: "An MCP server whose tools are written down. Point the agent at /run/<run>/agent/<name>/mcp/<id>.", list: "/api/mcp", key: "servers", id: "id",
     cols: (r) => (r.tools || []).join(", ") || r.proxy, one: (id) => "/api/mcp/" + id, oneKey: "server", put: (id) => "/api/mcp/" + id, del: (id) => "/api/mcp/" + id,
-    actions: [["URL", (id) => ["GET", "/api/mcp/" + id + "/url?run=RUN&agent=AGENT"]]],
-    blank: { id: "orders", tools: [{ name: "lookup_order", description: "Look an order up", inputSchema: { type: "object", properties: { id: { type: "integer" } } }, results: [{ when: {}, result: { status: "shipped" } }] }] } },
-  mocks: { title: "Mock backends (REST)", help: "A REST API an agent's tool calls, by hand or imported from OpenAPI, with its contract enforced. Served at /run/<run>/agent/<name>/mock/<id>.", list: "/api/mocks", key: "backends", id: "id",
+    actions: [["Show its address", (id) => ["GET", "/api/mcp/" + id + "/url?run=RUN&agent=AGENT"]]],
+    blank: { id: "orders", tools: [{ name: "lookup_order", description: "Look an order up", inputSchema: { type: "object", properties: { id: { type: "integer" } } }, results: [{ when: {}, result: { status: "shipped" } }] }] },
+    form: () => mcpForm() },
+  mocks: { title: "Mock backends (REST)", group: "world", help: "A REST API an agent's tool calls. Served at /run/<run>/agent/<name>/mock/<id>.", list: "/api/mocks", key: "backends", id: "id",
     cols: (r) => (r.routes || []).length + " route(s)", one: (id) => "/api/mocks/" + id, oneKey: "backend", put: (id) => "/api/mocks/" + id, del: (id) => "/api/mocks/" + id,
-    actions: [["URL", (id) => ["GET", "/api/mocks/" + id + "/url?run=RUN&agent=AGENT"]]],
-    blank: { id: "crm", routes: [{ method: "GET", path: "/orders/{id}", default: { result: { id: 1, status: "open" } } }] } },
-  a2a: { title: "Stub agents (A2A)", help: "Another agent, written down. Your agent delegates to it; every message is on the run's timeline.", list: "/api/a2a", key: "stubs", id: "id",
+    actions: [["Show its address", (id) => ["GET", "/api/mocks/" + id + "/url?run=RUN&agent=AGENT"]]],
+    blank: { id: "crm", routes: [{ method: "GET", path: "/orders/{id}", default: { result: { id: 1, status: "open" } } }] },
+    form: () => mockForm() },
+  a2a: { title: "Stub agents (A2A)", group: "world", help: "Another agent, written down. Your agent delegates to it; every message is on the run's timeline.", list: "/api/a2a", key: "stubs", id: "id",
     cols: (r) => (r.rules || 0) + " rule(s)", one: (id) => "/api/a2a/" + id, oneKey: "stub", put: (id) => "/api/a2a/" + id, del: (id) => "/api/a2a/" + id,
-    actions: [["URL", (id) => ["GET", "/api/a2a/" + id + "/url?run=RUN&agent=AGENT"]]],
-    blank: { id: "billing", description: "Billing", results: [{ when: { field: "text", op: "contains", value: "refund" }, result: "Refund approved." }, { when: {}, result: "I only handle refunds." }] } },
-  a2aproxies: { title: "Agent proxies (A2A)", help: "LLMSim between your agent and a real one: forward, record once, replay without it.", list: "/api/a2aproxies", key: "proxys", id: "id",
+    actions: [["Show its address", (id) => ["GET", "/api/a2a/" + id + "/url?run=RUN&agent=AGENT"]]],
+    blank: { id: "billing", description: "Billing", results: [{ when: { field: "text", op: "contains", value: "refund" }, result: "Refund approved." }, { when: {}, result: "I only handle refunds." }] },
+    form: () => stubForm() },
+  a2aproxies: { title: "Agent proxies (A2A)", group: "world", help: "LLMSim between your agent and a real one: forward, record once, replay without it.", list: "/api/a2aproxies", key: "proxys", id: "id",
     cols: (r) => `${r.mode} · ${r.url}`, one: (id) => "/api/a2aproxies/" + id, oneKey: "proxy", put: (id) => "/api/a2aproxies/" + id, del: (id) => "/api/a2aproxies/" + id,
-    actions: [["Forget recording", (id) => ["DELETE", "/api/a2aproxies/" + id + "/cassette"]]], blank: { id: "real-agent", url: "https://agent.example", mode: "record" } },
-  kitfaults: { title: "Tool and peer faults", help: "A tool that errors, stalls, rate-limits or answers with half of it; a peer that is down, lies or never finishes. Same gates and seed as every fault.", list: "/api/kitfaults", key: "faults", id: "id",
-    cols: (r) => `${r.target} · ${(r.fault || {}).type} · fired ${r.fired}/${r.seen}`, one: (id) => "/api/kitfaults", oneKey: "faults", pick: true, put: (id) => "/api/kitfaults/" + id, del: (id) => "/api/kitfaults/" + id,
-    blank: { target: "tool", match: { field: "tool", op: "eq", value: "lookup_order" }, fault: { type: "error", message: "the backend is down" }, probability: 1 } },
-  judges: { title: "Judges", help: "A model that decides what a rule cannot, and must say why. A named judge gates only after it has been calibrated against people's labels.", list: "/api/judges", key: "judges", id: "id",
-    cols: (r) => (r.canGate ? "can gate" : "cannot gate: " + r.why), one: (id) => "/api/judges/" + id, oneKey: "judge", put: (id) => "/api/judges/" + id, del: (id) => "/api/judges/" + id,
-    actions: [["Calibrate from reviews", (id) => ["POST", "/api/judges/" + id + "/calibrate", { fromReviews: true }]]],
-    blank: { id: "helpful", rubric: "Did the assistant help the user with what they asked?", minAgreement: 0.8 } },
-  reviews: { title: "Review queue", help: "Runs waiting for a person. A verdict calibrates judges; a correction becomes what the case is checked against.", list: "/api/reviews", key: "reviews", id: "id",
-    cols: (r) => `${r.status} · ${r.run}`, one: (id) => "/api/reviews/" + id, oneKey: "review", readonly: true,
-    actions: [["Pass", (id) => ["POST", "/api/reviews/" + id + "/submit", { verdict: "pass" }]], ["Fail", (id) => ["POST", "/api/reviews/" + id + "/submit", { verdict: "fail" }]]] },
-  variations: { title: "Variations", help: "Inputs a model proposed near an existing case. Nothing enters a dataset until a person accepts it.", list: "/api/variations", key: "variations", id: "id",
-    cols: (r) => `${r.dataset}/${r.item} · ${r.accepted}/${r.proposals} accepted`, one: (id) => "/api/variations/" + id, oneKey: "variations", readonly: true,
-    actions: [["Accept first", (id) => ["POST", "/api/variations/" + id + "/accept", { accept: [{ index: 0 }] }]]] },
-  credentials: { title: "Credentials", help: "What a driver uses to reach an agent. Values are never shown again, and are scrubbed from everything the kit keeps.", list: "/api/credentials", key: "credentials", id: "label",
-    cols: (r) => `${r.type} · ${r.fingerprint}`, put: (id) => "/api/credentials/" + id, del: (id) => "/api/credentials/" + id, blank: { type: "bearer", token: "…" }, template: true },
+    actions: [["Forget its recording", (id) => ["DELETE", "/api/a2aproxies/" + id + "/cassette"]]], blank: { id: "real-agent", url: "https://agent.example", mode: "record" },
+    form: () => proxyForm() },
+  kitfaults: { title: "Tool and peer faults", group: "world", help: "A tool that errors, stalls, rate-limits or answers with half of it; a peer that is down, lies or never finishes.", list: "/api/kitfaults", key: "faults", id: "id",
+    cols: (r) => `${r.name ? r.name + " · " : ""}${r.target} · ${(r.fault || {}).type} · fired ${r.fired}/${r.seen}`, status: (r) => (r.enabled === false ? "off" : "on"), one: (id) => "/api/kitfaults", oneKey: "faults", pick: true, put: (id) => "/api/kitfaults/" + id, del: (id) => "/api/kitfaults/" + id,
+    write: (doc) => { const { seen, fired, ...rest } = doc; return rest; },
+    blank: { id: "my-fault", target: "tool", match: { field: "tool", op: "eq", value: "lookup_order" }, fault: { type: "error", message: "the backend is down" }, probability: 1 },
+    form: () => faultForm() },
+  judges: { title: "Judges", group: "judging", help: "A model that decides what a rule cannot, and must say why. A judge gates only after it has been calibrated against people's labels.", list: "/api/judges", key: "judges", id: "id",
+    cols: (r) => (r.canGate ? "can gate" : "cannot gate yet: " + r.why), one: (id) => "/api/judges/" + id, oneKey: "judge", put: (id) => "/api/judges/" + id, del: (id) => "/api/judges/" + id,
+    actions: [["Calibrate from the reviews", (id) => ["POST", "/api/judges/" + id + "/calibrate", { fromReviews: true }]]],
+    blank: { id: "helpful", rubric: "Did the assistant help the user with what they asked?", minAgreement: 0.8 },
+    form: () => judgeForm() },
+  reviews: { title: "Review queue", group: "judging", help: "Runs waiting for a person. A verdict calibrates judges; a correction becomes what the case is checked against.", list: "/api/reviews", key: "reviews", id: "id",
+    cols: (r) => `${r.scenario || r.kind} · run ${r.run}`, status: (r) => r.status, one: (id) => "/api/reviews/" + id, oneKey: "review", readonly: true,
+    view: (doc) => reviewView(doc) },
+  variations: { title: "Variations", group: "judging", help: "Inputs a model proposed near an existing case. Nothing enters a dataset until a person accepts it.", list: "/api/variations", key: "variations", id: "id",
+    cols: (r) => `${r.dataset} / ${r.item} · ${r.accepted} of ${r.proposals} accepted`, one: (id) => "/api/variations/" + id, oneKey: "variations", readonly: true,
+    view: (doc) => variationsView(doc), extra: () => variationsGenerate() },
+  credentials: { title: "Credentials", group: "setup", help: "What a driver uses to reach an agent. A value is never shown again, and is scrubbed from everything the kit keeps.", list: "/api/credentials", key: "credentials", id: "label",
+    cols: (r) => `${r.type} · ${r.fingerprint}`, pick: true, put: (id) => "/api/credentials/" + id, del: (id) => "/api/credentials/" + id, blank: { label: "agent-token", type: "bearer" }, write: (doc) => { const { label, fingerprint, ...rest } = doc; return rest; }, fresh: true,
+    form: () => credentialForm() },
 };
 let LABK = "scenarios", LABROWS = [], LABID = null, LABNEW = false;
+let LABDOC = null, LABMODE = "form", LABPREF = "form", LABRAW = {};
+// What the forms offer in their lists, asked of the API rather than written here.
+const REF = { drivers: [], processAllowed: false, checks: [], credTypes: {}, creds: [], presets: {}, faultTypes: {}, toolFaults: [], peerFaults: [], judges: [], builtinJudges: [], scenarios: [], datasets: [] };
 
+// Thirteen areas in one row is a wall. They are four kinds of thing, in the
+// order a test is put together: the cases, what the agent talks to while it
+// runs, how its work is judged, and what reaching it needs.
+const LAB_GROUPS = [
+  ["cases", "Cases and runs", "What is tested, and how it went"],
+  ["world", "What the agent talks to", "Simulated tools, backends and other agents"],
+  ["judging", "Judging", "Deciding what a rule cannot"],
+  ["setup", "Setup", "Reaching the agent"],
+];
 function labTabs() {
-  document.getElementById("lab-tabs").innerHTML = Object.entries(LAB).map(([k, a]) => `<button class="btn ${k === LABK ? "" : "ghost"}" style="flex:0 0 auto;white-space:nowrap" onclick="labSelect('${k}')">${esc(a.title)}</button>`).join("");
+  document.getElementById("lab-tabs").innerHTML = LAB_GROUPS.map(([g, title, what]) => `<div class="lab-group"><h3>${esc(title)}</h3><p>${esc(what)}</p>`
+    + Object.entries(LAB).filter(([, a]) => a.group === g).map(([k, a]) => `<button aria-current="${k === LABK}" onclick="labSelect('${k}')">${esc(a.title)}</button>`).join("")
+    + `</div>`).join("");
 }
-function labSelect(k) { LABK = k; LABID = null; LABNEW = false; document.getElementById("lab-editor").hidden = true; document.getElementById("lab-out-card").hidden = true; labTabs(); labLoad(); }
+function labClose() { LABID = null; LABNEW = false; LABDOC = null; LABRAW = {}; document.getElementById("lab-editor").hidden = true; document.getElementById("lab-out-card").hidden = true; }
+function labSelect(k) { LABK = k; labClose(); labTabs(); labLoad(); }
+
+async function labRef() {
+  const get = async (p) => { const r = await REST("GET", p); return r.ok ? r.body : {}; };
+  const [d, c, cr, pr, kf, j, s, ds] = await Promise.all(["/api/drivers", "/api/checks", "/api/credentials", "/api/presets", "/api/kitfaults", "/api/judges", "/api/scenarios", "/api/datasets"].map(get));
+  REF.drivers = d.drivers || []; REF.processAllowed = !!d.processAllowed; REF.checks = c.types || [];
+  REF.credTypes = cr.types || {}; REF.creds = (cr.credentials || []).map((x) => x.label);
+  REF.presets = pr.injections || {}; REF.faultTypes = kf.types || {}; REF.toolFaults = kf.tool || []; REF.peerFaults = kf.peer || [];
+  REF.judges = (j.judges || []).map((x) => x.id); REF.builtinJudges = j.builtin || [];
+  REF.scenarios = (s.scenarios || []).map((x) => x.id); REF.datasets = (ds.datasets || []).map((x) => x.id);
+}
+
+const STATUS_TAG = { pass: "set", done: "set", on: "set", fail: "err", error: "err", flaky: "replay", "no-data": "", open: "replay", off: "", running: "replay" };
+const statusTag = (s) => (s ? `<span class="tag ${STATUS_TAG[s] ?? ""}">${esc(s)}</span>` : "");
 async function labLoad() {
   const a = LAB[LABK];
   document.getElementById("lab-title").textContent = a.title;
   document.getElementById("lab-help").textContent = a.help;
   document.getElementById("lab-new").hidden = !!a.readonly;
+  document.getElementById("lab-extra").innerHTML = a.extra ? a.extra() : "";
   const r = await REST("GET", a.list);
   const el = document.getElementById("lab-list");
   if (!r.ok) { el.innerHTML = `<p class="help">${esc(said(r.body))}</p>`; return; }
   LABROWS = r.body[a.key] || [];
-  el.innerHTML = LABROWS.length ? `<table class="sess-table">${LABROWS.map((row, i) => `<tr style="cursor:pointer" onclick="labOpen(${i})"><td><b>${esc(row[a.id])}</b></td><td>${esc(a.cols(row))}</td></tr>`).join("")}</table>`
-    : `<p class="help">Nothing here yet.</p>`;
+  el.innerHTML = LABROWS.length
+    ? `<table class="sess-table lab-rows">${LABROWS.map((row, i) => `<tr class="${row[a.id] === LABID ? "on" : ""}" onclick="labOpen(${i})"><td style="width:1%; white-space:nowrap"><b>${esc(row[a.id])}</b></td><td style="width:1%">${a.status ? statusTag(a.status(row)) : ""}</td><td>${esc(a.cols(row))}</td></tr>`).join("")}</table>`
+    : `<p class="help" style="margin:0">Nothing here yet.${a.readonly ? "" : " Press New to add the first."}</p>`;
 }
 async function labOpen(i) {
   const a = LAB[LABK], row = LABROWS[i];
@@ -1636,41 +1946,76 @@ async function labOpen(i) {
   if (a.one && !a.pick) {
     const r = await REST("GET", a.one(LABID));
     doc = r.ok ? (a.oneKey ? r.body[a.oneKey] : r.body) : row;
+    if (r.ok && !a.oneKey) { doc = { ...doc }; delete doc.ok; }
   }
   labEdit(doc);
+  labLoad();
 }
+function labNew() { const a = LAB[LABK]; LABID = null; LABNEW = true; labEdit(JSON.parse(JSON.stringify(a.blank || {}))); }
+
+// ── the editor: a form, the same thing as JSON, or a drawn result ──────────
 function labEdit(doc) {
   const a = LAB[LABK];
+  // An existing credential's value is never sent back, so opening one starts a replacement.
+  LABDOC = JSON.parse(JSON.stringify(a.fresh && !LABNEW ? { label: doc.label, type: doc.type } : doc)); LABRAW = {};
+  // Form or JSON is what the person last chose, not what the last area happened to show.
+  LABMODE = a.readonly || !a.form ? (a.form || a.view ? "form" : "json") : LABPREF;
   document.getElementById("lab-editor").hidden = false;
-  document.getElementById("lab-editing").textContent = (LABNEW ? "New " : "") + a.title.toLowerCase() + (LABID ? " · " + LABID : "");
-  document.getElementById("lab-json").value = pretty(doc);
-  document.getElementById("lab-json").readOnly = !!a.readonly;
+  document.getElementById("lab-out-card").hidden = true;
+  document.getElementById("lab-editing").textContent = (LABNEW ? "New: " : "") + a.title + (LABID ? " · " + LABID : "");
+  document.getElementById("lab-mode").hidden = !!a.readonly || !a.form;
   document.getElementById("lab-save").hidden = !a.put; document.getElementById("lab-del").hidden = !a.del || LABNEW;
-  document.getElementById("lab-actions").innerHTML = LABNEW ? "" : (a.actions || []).map(([label], j) => `<button class="btn ghost" onclick="labAct(${j})">${esc(label)}</button>`).join("");
+  document.getElementById("lab-actions").innerHTML = LABNEW ? "" : (a.actions || []).map(([label, , kind], j) => `<button class="btn ${kind === "primary" ? "" : "ghost"}" onclick="labAct(${j})">${esc(label)}</button>`).join("");
   note("lab-note", "");
+  labDraw();
+  document.getElementById("lab-editor").scrollIntoView({ block: "nearest", behavior: "smooth" });
 }
-function labNew() { const a = LAB[LABK]; LABID = null; LABNEW = true; labEdit(a.blank || {}); }
+function labDraw() {
+  const a = LAB[LABK], form = document.getElementById("lab-form"), json = document.getElementById("lab-json");
+  for (const m of ["form", "json"]) document.getElementById("lab-mode-" + m).setAttribute("aria-pressed", LABMODE === m);
+  if (a.readonly) { form.hidden = false; json.hidden = true; form.innerHTML = a.view ? a.view(LABDOC) : `<pre>${esc(pretty(LABDOC))}</pre>`; return; }
+  form.hidden = LABMODE !== "form"; json.hidden = LABMODE !== "json";
+  if (LABMODE === "form") labForm(); else json.value = pretty(LABDOC);
+}
+function labForm() { document.getElementById("lab-form").innerHTML = LAB[LABK].form(); }
+// Switching is lossless both ways: the form writes into the document the JSON shows.
+function labMode(m) {
+  if (m === LABMODE) return;
+  if (m === "form") { try { LABDOC = readJSON("lab-json", "That") || {}; } catch (e) { return note("lab-note", e.message, true); } LABRAW = {}; }
+  else if (Object.keys(LABRAW).length) return note("lab-note", "Finish the JSON in the highlighted box first.", true);
+  LABMODE = LABPREF = m; note("lab-note", ""); labDraw();
+}
+function labDoc() {
+  if (LABMODE === "json") return readJSON("lab-json", "That") || {};
+  if (Object.keys(LABRAW).length) throw new Error("Finish the JSON in the highlighted box first.");
+  return LABDOC;
+}
 async function labSave() {
   const a = LAB[LABK];
   let doc;
-  try { doc = readJSON("lab-json", "That"); } catch (e) { return note("lab-note", e.message, true); }
+  try { doc = labDoc(); } catch (e) { return note("lab-note", e.message, true); }
   const id = LABID || doc.id || doc.label;
-  if (!id) return note("lab-note", "Give it an id (or a label).", true);
-  const r = await REST("PUT", a.put(id), doc);
+  if (!id) return note("lab-note", "Give it a name first.", true);
+  const r = await REST("PUT", a.put(id), a.write ? a.write(doc) : doc);
   if (!r.ok) return note("lab-note", said(r.body), true);
-  LABID = id; LABNEW = false; note("lab-note", "Saved " + id + "."); labLoad();
+  LABID = id; LABNEW = false; LABDOC = JSON.parse(JSON.stringify(doc));
+  document.getElementById("lab-editing").textContent = a.title + " · " + id;
+  document.getElementById("lab-del").hidden = !a.del;
+  document.getElementById("lab-actions").innerHTML = (a.actions || []).map(([label, , kind], j) => `<button class="btn ${kind === "primary" ? "" : "ghost"}" onclick="labAct(${j})">${esc(label)}</button>`).join("");
+  if (LABMODE === "form") labForm();
+  note("lab-note", "Saved " + id + "."); await labRef(); labLoad();
 }
 async function labDelete() {
   const a = LAB[LABK];
   if (!LABID || !confirm("Delete " + LABID + "?")) return;
   const r = await REST("DELETE", a.del(LABID));
   if (!r.ok) return note("lab-note", said(r.body), true);
-  document.getElementById("lab-editor").hidden = true; LABID = null; labLoad();
+  labClose(); await labRef(); labLoad();
 }
 async function labAct(j) {
   const a = LAB[LABK];
   let doc = {};
-  try { doc = readJSON("lab-json", "That") || {}; } catch (e) { /* an action that does not use the document does not mind */ }
+  try { doc = a.readonly ? LABDOC : labDoc(); } catch (e) { /* an action that does not use the document does not mind */ }
   const [method, path, body] = a.actions[j][1](LABID, doc);
   note("lab-note", "Working…");
   const r = await REST(method, path, body);
@@ -1678,22 +2023,416 @@ async function labAct(j) {
   labShow(r.body);
   if (["POST", "DELETE"].includes(method)) labLoad();
 }
+// What an action answered, drawn as what it is.
 function labShow(out) {
   const card = document.getElementById("lab-out-card"), el = document.getElementById("lab-out");
   card.hidden = false;
-  const result = out.result || (out.checks ? out : null);
-  if (result && result.checks) {
-    el.innerHTML = `<p><b>${esc((result.verdict || "").toUpperCase())}</b> · run ${esc(result.run)} · ${esc(result.tier)} tier${result.error ? " · " + esc(result.error) : ""}</p>`
-      + `<table class="sess-table">${result.checks.map((c) => `<tr><td>${tagFor(c.status === "pass" ? "set" : "err", c.status)}</td><td><b>${esc(c.name)}</b></td><td>${esc(c.detail)}</td></tr>`).join("")}</table>`;
-  } else if (out.events) {
-    el.innerHTML = `<table class="sess-table">${out.events.map((e) => `<tr><td>${esc(e.t)}s</td><td>${esc(e.kind)}</td><td>${esc(e.agent)}</td><td>${esc(e.label)}</td></tr>`).join("")}</table>`;
-  } else if (out.report || (out.gate && out.report)) {
-    el.innerHTML = `<pre>${esc(out.report)}</pre>`;
-  } else {
-    el.innerHTML = `<pre style="white-space:pre-wrap">${esc(out.junit || pretty(out))}</pre>`;
+  const result = out.result || (out.checks && out.run ? out : null);
+  if (result && result.checks) el.innerHTML = resultView(result);
+  else if (out.experiment && out.experiment.items) el.innerHTML = experimentView(out.experiment);
+  else if (out.events) el.innerHTML = timelineView(out);
+  else if (typeof out.valid === "boolean") el.innerHTML = out.valid ? `<p>${statusTag("pass")} It is valid.</p>` : `<p>${statusTag("fail")} ${out.problems.length} problem(s):</p><ul>${out.problems.map((p) => `<li>${esc(p)}</li>`).join("")}</ul>`;
+  else if (out.url || out.urls) el.innerHTML = `<p class="help" style="margin:0 0 8px">Replace RUN and AGENT with the run and the agent's name.</p><pre class="mono" style="white-space:pre-wrap; margin:0">${esc(out.url || pretty(out.urls))}</pre>`;
+  else if (out.versions) {
+    // Tags come as {tag: version}; a version is shown with the tags that point at it.
+    const tagged = (n) => Object.entries(out.tags || {}).filter(([, v]) => v === n).map(([t]) => t).join(", ");
+    el.innerHTML = `<table class="sess-table"><tr><th>Version</th><th>Cases</th><th>Tags</th><th>Created</th></tr>${out.versions.map((v) => `<tr><td>v${esc(v.version)}</td><td>${esc(v.items)}</td><td>${esc(tagged(v.version))}</td><td>${esc(when(v.createdAt))}</td></tr>`).join("")}</table>`;
+  }
+  else if (out.report) el.innerHTML = `<p>${out.gate ? statusTag(out.gate.passed === false || out.passed === false ? "fail" : "pass") : ""}</p><pre style="white-space:pre-wrap; margin:0">${esc(out.report)}</pre>`;
+  else if (out.created) el.innerHTML = `<p>${out.created.length} review(s) added to the review queue.</p>`;
+  else if (out.calibration) el.innerHTML = `<p>${statusTag(out.canGate ? "pass" : "fail")} It agreed with people on ${Math.round((out.calibration.agreement || 0) * 100)}% of ${esc(out.calibration.n)} example(s). ${out.canGate ? "It can gate." : esc(out.why || "")}</p>`;
+  else el.innerHTML = `<pre style="white-space:pre-wrap; margin:0">${esc(out.junit || out.message || pretty(out))}</pre>`;
+  card.scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+
+// ── form fields ────────────────────────────────────────────────────────────
+// One document, LABDOC, is what every field reads and writes, by path. A field
+// left blank removes its key, so a saved document holds what was said and
+// nothing that merely had a box.
+const getAt = (o, p) => p.reduce((v, k) => (v == null ? undefined : v[k]), o);
+function setAt(o, p, v) {
+  let c = o; const trail = [];
+  for (let i = 0; i < p.length - 1; i++) {
+    if (c[p[i]] == null || typeof c[p[i]] !== "object") c[p[i]] = typeof p[i + 1] === "number" ? [] : {};
+    trail.push([c, p[i]]); c = c[p[i]];
+  }
+  const last = p[p.length - 1];
+  if (v !== undefined) { c[last] = v; return; }
+  if (Array.isArray(c)) return;
+  delete c[last];
+  // An object emptied by this is removed too, up to the nearest list or the document.
+  for (let i = trail.length - 1; i >= 0; i--) {
+    const [parent, key] = trail[i], child = parent[key];
+    if (Array.isArray(parent) || Array.isArray(child) || Object.keys(child).length) break;
+    delete parent[key];
   }
 }
-PAGES.lab = { enter: () => { labTabs(); labLoad(); } };
+const pj = (p) => esc(JSON.stringify(p));
+const rawKey = (p) => p.join("\u0001");
+function dropRaw(p) { const pre = rawKey(p); for (const k of Object.keys(LABRAW)) if (k === pre || k.startsWith(pre + "\u0001")) delete LABRAW[k]; }
+function fWrap(label, inner, o = {}) {
+  return `<div class="f"${o.span ? ` style="grid-column:span ${o.span}"` : ""}><label>${esc(label)}${o.opt ? ' <span class="hint">· optional</span>' : ""}</label>${inner}${o.help ? `<div class="fh">${o.help}</div>` : ""}</div>`;
+}
+function fText(p, label, o = {}) {
+  const v = getAt(LABDOC, p);
+  // A value the box cannot hold as text is edited as what it is.
+  if (v !== undefined && v !== null && typeof v === "object") return fJson(p, label, o);
+  return fWrap(label, `<input class="${o.mono ? "mono" : ""}" type="${o.secret ? "password" : "text"}" data-p="${pj(p)}" data-k="text" value="${esc(v ?? "")}" placeholder="${esc(o.ph || "")}" ${o.lock ? "disabled" : ""} oninput="labIn(this)" autocomplete="off">`, o);
+}
+function fNum(p, label, o = {}) {
+  const v = getAt(LABDOC, p);
+  return fWrap(label, `<input class="mono" type="number" step="any" data-p="${pj(p)}" data-k="num" value="${esc(v ?? "")}" placeholder="${esc(o.ph || "")}" oninput="labIn(this)">`, o);
+}
+function fArea(p, label, o = {}) {
+  const v = getAt(LABDOC, p);
+  return fWrap(label, `<textarea rows="${o.rows || 3}" style="min-height:0" data-p="${pj(p)}" data-k="text" placeholder="${esc(o.ph || "")}" oninput="labIn(this)">${esc(v ?? "")}</textarea>`, o);
+}
+// options: [value, label] pairs or bare values; "" means "leave it out", which is the default.
+function fSel(p, label, options, o = {}) {
+  // `same` is the value that means what leaving it out means, so a document
+  // that spells its default out shows the default rather than a stray option.
+  const v = getAt(LABDOC, p), said = v === undefined || v === null ? "" : String(v), cur = o.same !== undefined && said === o.same ? "" : said;
+  const opts = options.map((x) => (Array.isArray(x) ? x : [x, x]));
+  if (cur !== "" && !opts.some(([val]) => String(val) === cur)) opts.push([cur, cur]);
+  return fWrap(label, `<select data-p="${pj(p)}" data-k="${o.numeric ? "selnum" : "sel"}" ${o.redraw ? 'data-r="1"' : ""} ${o.after ? `data-after="${o.after}"` : ""} onchange="labIn(this)">${opts.map(([val, text]) => `<option value="${esc(val)}" ${String(val) === cur ? "selected" : ""}>${esc(text)}</option>`).join("")}</select>`, o);
+}
+function fTog(p, label, o = {}) {
+  const v = getAt(LABDOC, p), on = v === undefined ? !!o.dflt : !!v;
+  return `<div class="f"><label class="tog"><input type="checkbox" data-p="${pj(p)}" data-k="tog" ${on ? "checked" : ""} onchange="labIn(this)"> ${esc(label)}</label>${o.help ? `<div class="fh">${o.help}</div>` : ""}</div>`;
+}
+function fTags(p, label, o = {}) {
+  const v = getAt(LABDOC, p);
+  return fWrap(label, `<input type="text" data-p="${pj(p)}" data-k="tags" value="${esc(Array.isArray(v) ? v.join(", ") : v ?? "")}" placeholder="${esc(o.ph || "comma separated")}" oninput="labIn(this)" autocomplete="off">`, o);
+}
+// A part with no fixed shape — a request body, a schema, an answer — is typed as JSON, in its own box.
+function fJson(p, label, o = {}) {
+  const raw = LABRAW[rawKey(p)], v = getAt(LABDOC, p);
+  let shown = v;
+  if (o.rest && v && typeof v === "object") { shown = {}; for (const [k, x] of Object.entries(v)) if (!o.rest.includes(k)) shown[k] = x; if (!Object.keys(shown).length) shown = undefined; }
+  const text = raw !== undefined ? raw : shown === undefined ? "" : pretty(shown);
+  return fWrap(label, `<textarea class="mono ${raw !== undefined ? "bad" : ""}" spellcheck="false" rows="${Math.min(14, Math.max(o.rows || 3, text.split("\n").length))}" style="min-height:0" data-p="${pj(p)}" data-k="json" ${o.rest ? `data-rest="${pj(o.rest)}"` : ""} placeholder="${esc(o.ph || "")}" oninput="labIn(this)">${esc(text)}</textarea><div class="ferr" ${raw !== undefined ? "" : "hidden"}>That is not valid JSON yet.</div>`, o);
+}
+function labIn(el) {
+  const p = JSON.parse(el.dataset.p), k = el.dataset.k;
+  let v;
+  if (k === "tog") v = el.checked;
+  else if (k === "num") v = el.value === "" ? undefined : Number(el.value);
+  else if (k === "selnum") v = el.value === "" ? undefined : /^\d+$/.test(el.value) ? Number(el.value) : el.value;
+  else if (k === "tags") { const t = el.value.split(",").map((x) => x.trim()).filter(Boolean); v = t.length ? t : undefined; }
+  else if (k === "json") {
+    const key = rawKey(p), err = el.parentNode.querySelector(".ferr"), rest = el.dataset.rest ? JSON.parse(el.dataset.rest) : null;
+    const bad = () => { LABRAW[key] = el.value; el.classList.add("bad"); if (err) err.hidden = false; };
+    if (el.value.trim() === "") v = undefined;
+    else { try { v = JSON.parse(el.value); } catch { return bad(); } }
+    if (rest) {
+      // The box holds everything a form has no field for; the fields keep what is theirs.
+      if (v !== undefined && (typeof v !== "object" || Array.isArray(v))) return bad();
+      const kept = {}; for (const key2 of rest) { const cur = getAt(LABDOC, p.concat(key2)); if (cur !== undefined) kept[key2] = cur; }
+      v = { ...kept, ...(v || {}) };
+    }
+    delete LABRAW[key]; el.classList.remove("bad"); if (err) err.hidden = true;
+  }
+  else v = el.value === "" ? undefined : el.value;
+  setAt(LABDOC, p, v);
+  if (el.dataset.after) AFTER[el.dataset.after](p.slice(0, -1));
+  if (el.dataset.r) labForm();
+}
+// Choosing a different kind of thing changes which fields it has. What the
+// old kind had and the new one has not is dropped, or the document would be
+// saved with settings for something it no longer is, and be refused for them.
+const AFTER = {
+  driver: (p) => {
+    const a = getAt(LABDOC, p) || {}, keep = DRIVER_KEYS[a.driver] || [];
+    for (const k of Object.values(DRIVER_KEYS).flat()) if (!keep.includes(k)) delete a[k];
+    dropRaw(p);
+  },
+  check: (p) => { const c = getAt(LABDOC, p) || {}; for (const k of Object.keys(c)) if (k !== "type" && k !== "name") delete c[k]; dropRaw(p); },
+  fault: () => {
+    const kinds = LABDOC.target === "peer" ? REF.peerFaults : REF.toolFaults, f = LABDOC.fault || (LABDOC.fault = {});
+    if (kinds.length && !kinds.includes(f.type)) f.type = kinds[0];
+    const keep = ["type", ...Object.keys(REF.faultTypes[f.type] || {})];
+    for (const k of Object.keys(f)) if (!keep.includes(k)) delete f[k];
+  },
+  credential: () => { const keep = ["label", "type", ...(REF.credTypes[LABDOC.type] || [])]; for (const k of Object.keys(LABDOC)) if (!keep.includes(k)) delete LABDOC[k]; },
+};
+const fRow = (...fields) => `<div class="frow">${fields.join("")}</div>`;
+const fSec = (title, help, body) => `<div class="fsec"><h3>${esc(title)}</h3>${help ? `<p>${help}</p>` : ""}${body}</div>`;
+// A list of things that each have their own fields: turns, checks, tools, routes.
+function fList(p, item, o = {}) {
+  const items = getAt(LABDOC, p) || [];
+  return `<div class="flist">` + items.map((_, i) => `<div class="fitem"><div class="fih"><span class="tag">${esc(o.noun || "item")} ${i + 1}</span><span style="flex:1"></span>
+      ${i > 0 ? `<button class="mini" title="Move up" data-p="${pj(p)}" data-i="${i}" data-by="-1" onclick="labMove(this)">↑</button>` : ""}
+      ${i < items.length - 1 ? `<button class="mini" title="Move down" data-p="${pj(p)}" data-i="${i}" data-by="1" onclick="labMove(this)">↓</button>` : ""}
+      <button class="mini" data-p="${pj(p)}" data-i="${i}" onclick="labDel(this)">Remove</button></div>${item(p.concat(i), i)}</div>`).join("")
+    + `<button class="btn ghost" data-p="${pj(p)}" data-blank="${pj(o.blank ?? {})}" onclick="labAdd(this)">Add ${esc(o.noun || "item")}</button></div>`;
+}
+function labAdd(el) { const p = JSON.parse(el.dataset.p), arr = getAt(LABDOC, p) || []; arr.push(JSON.parse(el.dataset.blank)); setAt(LABDOC, p, arr); labForm(); }
+function labDel(el) { const p = JSON.parse(el.dataset.p), arr = getAt(LABDOC, p) || []; arr.splice(+el.dataset.i, 1); dropRaw(p); labForm(); }
+function labMove(el) { const p = JSON.parse(el.dataset.p), arr = getAt(LABDOC, p) || [], i = +el.dataset.i, j = i + +el.dataset.by; [arr[i], arr[j]] = [arr[j], arr[i]]; dropRaw(p); labForm(); }
+const idField = (label = "Name") => fText(["id"], label, { lock: !LABNEW, mono: 1, help: LABNEW ? "Letters, digits, dot, dash, underscore or colon. It cannot be changed afterwards." : "" });
+const credSel = (p) => fSel(p, "Credential", [["", "None"], ...REF.creds], { help: REF.creds.length ? "" : "None are stored yet. Add one under Setup → Credentials." });
+const injectSel = (p) => fSel(p.concat("inject", "preset"), "Inject into its answer", [["", "Nothing"], ...Object.keys(REF.presets)], { opt: 1, help: "A prompt injection planted in what it returns. Catch it being obeyed with a leak check." });
+// The kit's condition, {field, op, value}; an empty one matches everything.
+const condField = (p, label, o = {}) => fJson(p, label, { rows: 2, ph: '{"field": "text", "op": "contains", "value": "refund"}', help: "Leave empty to match everything.", ...o });
+const leftovers = (doc, known) => Object.keys(doc || {}).filter((k) => !known.includes(k));
+const alsoHas = (keys) => (keys.length ? `<div class="note plain" style="margin-top:14px">This also has <b>${esc(keys.join(", "))}</b>, which this form has no fields for. ${keys.length === 1 ? "It is" : "They are"} kept as ${keys.length === 1 ? "it is" : "they are"}; edit ${keys.length === 1 ? "it" : "them"} under JSON.</div>` : "");
+
+// ── a scenario ──────────────────────────────────────────────────────────────
+const ANSWER_KEYS = ["contains", "not_contains", "regex", "not_regex", "equals", "not_equals"];
+const answerFields = (p) => fRow(fText(p.concat("contains"), "Must contain", { opt: 1 }), fText(p.concat("not_contains"), "Must not contain", { opt: 1 }))
+  + fRow(fText(p.concat("regex"), "Must match", { opt: 1, mono: 1, ph: "a regular expression" }), fText(p.concat("equals"), "Must be exactly", { opt: 1 }));
+// What each driver needs to reach an agent. The names are the API's own.
+const DRIVER_FIELDS = {
+  http: (p) => fRow(fText(p.concat("url"), "URL", { mono: 1, ph: "https://agent.example/chat", span: 2 }), fSel(p.concat("method"), "Method", [["", "POST"], "GET", "PUT", "PATCH"], { same: "POST" }))
+    + fRow(fJson(p.concat("body"), "What is sent", { ph: '{"input": "{{message}}"}', help: "<code>{{message}}</code> is what the user says. <code>{{conversation}}</code>, <code>{{run}}</code> and <code>{{agent}}</code> are filled in too." }),
+        fJson(p.concat("headers"), "Headers", { opt: 1, ph: '{"X-Tenant": "acme"}' }))
+    + fRow(fText(p.concat("reply"), "Where the reply is", { mono: 1, ph: "reply", help: "A path into the answer, such as <code>output.text</code>." }),
+        fSel(p.concat("replyFrom"), "The answer comes as", [["", "JSON"], ["sse", "A stream (SSE)"], ["text", "Plain text"]], { same: "json" }),
+        fText(p.concat("conversation"), "Where its conversation id is", { opt: 1, mono: 1, ph: "session" })),
+  openai: (p) => fRow(fText(p.concat("url"), "Base URL", { mono: 1, ph: "https://agent.example/v1", span: 2, help: "<code>/chat/completions</code> is added." }), fText(p.concat("model"), "Model", { opt: 1, mono: 1, ph: "gpt-5" }))
+    + fArea(p.concat("system"), "System prompt", { opt: 1 })
+    + fRow(fTog(p.concat("stream"), "Ask for a stream"), fJson(p.concat("extra"), "Extra request fields", { opt: 1, ph: '{"temperature": 0}' })),
+  a2a: (p) => fRow(fText(p.concat("url"), "Agent URL", { mono: 1, ph: "https://agent.example", span: 2, help: "Its agent card is read from here." }), fText(p.concat("rpcUrl"), "JSON-RPC URL", { opt: 1, mono: 1, help: "Only when it is not the one the card gives." }))
+    + fRow(fSel(p.concat("wait"), "Wait for the task by", [["", "Polling"], ["push", "A push callback"], ["stream", "A stream"]], { redraw: 1, same: "poll" }),
+        getAt(LABDOC, p.concat("wait")) === "push" ? fText(p.concat("callbackBase"), "Callback base URL", { opt: 1, mono: 1, help: "Where the agent can reach LLMSim." }) : fNum(p.concat("pollMs"), "Poll every (ms)", { opt: 1, ph: "300" }),
+        fTog(p.concat("blocking"), "Ask it to block until done", { dflt: true })),
+  agentforce: (p) => fRow(fText(p.concat("domain"), "My Domain URL", { mono: 1, ph: "https://acme.my.salesforce.com", span: 2 }), fText(p.concat("agentId"), "Agent ID", { mono: 1, ph: "0Xx…" }))
+    + fRow(fText(p.concat("apiBase"), "API base", { opt: 1, mono: 1, ph: "https://api.salesforce.com" }), fTog(p.concat("stream"), "Stream the answer"), fTog(p.concat("bypassUser"), "Bypass user", { dflt: true }))
+    + fJson(p.concat("variables"), "Session variables", { opt: 1, ph: "[]" })
+    + `<div class="note plain" style="margin-top:12px">The credential is an OAuth client-credentials one whose token URL is <code>&lt;domain&gt;/services/oauth2/token</code>. Salesforce does not offer this API for every agent type.</div>`,
+  process: (p) => fRow(fJson(p.concat("command"), "Command", { ph: '["python3", "agent.py"]', help: "A list. The message arrives on stdin and replaces <code>{message}</code>; the reply is read from stdout." }), fText(p.concat("cwd"), "Working directory", { opt: 1, mono: 1 }))
+    + fJson(p.concat("env"), "Environment", { opt: 1, ph: '{"MODE": "test"}' })
+    + (REF.processAllowed ? "" : `<div class="note warn" style="margin-top:12px">This server does not allow the process driver. Start it with <code>LLMSIM_ALLOW_PROCESS=1</code> to use it.</div>`),
+};
+const DRIVER_KEYS = { http: ["url", "method", "body", "headers", "reply", "replyFrom", "conversation"], openai: ["url", "model", "system", "stream", "extra"], a2a: ["url", "rpcUrl", "wait", "callbackBase", "pollMs", "blocking"], agentforce: ["domain", "agentId", "apiBase", "stream", "bypassUser", "variables"], process: ["command", "cwd", "env"] };
+function agentFields(p) {
+  const a = getAt(LABDOC, p) || {}, driver = a.driver || "";
+  const doc = (REF.drivers.find((d) => d.name === driver) || {}).doc || "";
+  return fRow(fText(p.concat("name"), "Its name", { mono: 1, ph: "support", help: "How it appears on the timeline." }),
+      fSel(p.concat("driver"), "How it is reached", REF.drivers.length ? REF.drivers.map((d) => [d.name, DRIVER_NAME[d.name] || d.name]) : Object.keys(DRIVER_NAME).map((d) => [d, DRIVER_NAME[d]]), { redraw: 1, after: "driver" }),
+      credSel(p.concat("credential")), fNum(p.concat("timeoutS"), "Give up after (s)", { opt: 1 }))
+    + (DRIVER_FIELDS[driver] ? DRIVER_FIELDS[driver](p) : doc ? `<pre class="fh" style="white-space:pre-wrap">${esc(doc)}</pre>` : "")
+    + alsoHas(leftovers(a, ["name", "driver", "credential", "timeoutS", "turns", "user", ...(DRIVER_KEYS[driver] || [])]));
+}
+const DRIVER_NAME = { http: "HTTP: post a message, read a reply", openai: "OpenAI-compatible chat", a2a: "Agent2Agent (A2A)", agentforce: "Salesforce Agentforce", process: "A local program" };
+// The checks whose settings have their own fields. Every other type is listed
+// with what it takes and edited in one box.
+const CHECK_FIELDS = {
+  answer: (p) => fRow(fSel(p.concat("target"), "Which reply", [["", "The last one"], ["any", "Any of them"], ["every", "Every one"]], { numeric: 1, same: "final" }), fText(p.concat("agent"), "From agent", { opt: 1, mono: 1 })) + answerFields(p),
+  path: (p) => fRow(fSel(p.concat("mode"), "The calls must be", [["", "Exactly these, in order"], ["unordered", "Exactly these, in any order"], ["subset", "At least these"], ["superset", "Only from these"]], { same: "strict" }),
+      fSel(p.concat("source"), "Counting", [["", "What the model asked for"], ["tools", "What a tool received"]], { same: "model" }),
+      fSel(p.concat("args"), "Arguments", [["", "Must match exactly"], ["subset", "Must include these"], ["ignore", "Are not compared"]], { same: "exact" }))
+    + fJson(p.concat("expected"), "The calls expected", { ph: '[{"tool": "lookup_order", "arguments": {"id": 1182}}]', help: "A list of <code>{tool, arguments?}</code>." }),
+  budget: (p) => fRow(fJson(p.concat("steps"), "Steps", { opt: 1, rows: 2, ph: '{"modelCalls": 3, "toolCalls": 5}' }), fJson(p.concat("tokens"), "Tokens", { opt: 1, rows: 2, ph: '{"total": 100000}' }))
+    + fRow(fJson(p.concat("cost"), "Cost", { opt: 1, rows: 2, ph: '{"usd": 0.05}' }), fJson(p.concat("latencyMs"), "Time (ms)", { opt: 1, rows: 2, ph: '{"total": 30000}' })),
+  leak: (p) => fTags(p.concat("secrets"), "What must never appear", { help: "Text that must not show up in anything the agent says or sends: a credential, another customer's data, an injection's marker." }),
+  judge: (p) => fRow(fSel(p.concat("judge"), "Judge", [["", "The rubric below"], ...REF.judges, ...REF.builtinJudges.map((b) => [b, b + " (built in)"])]), fText(p.concat("model"), "Model", { opt: 1, mono: 1 }))
+    + fArea(p.concat("rubric"), "Rubric", { opt: 1, ph: "What a good answer does, in a sentence or two" }) + fText(p.concat("goal"), "The user's goal", { opt: 1 }),
+};
+const CHECK_COVER = { answer: ["target", "agent", ...ANSWER_KEYS], path: ["mode", "source", "args", "expected"], budget: ["steps", "tokens", "cost", "latencyMs"], leak: ["secrets"], judge: ["judge", "model", "rubric", "goal"] };
+const CHECK_HELP = {
+  answer: "What a reply says.", path: "Which tools were called, with what.", budget: "How many steps, tokens, how much money and time.",
+  run: "Conditions over everything the run recorded: cond, assertions, set.", assertions: "A saved assertion set over the model's requests: set or assertions, agent.",
+  routing: "Which agent a message went to: from, to, expect, forbid, required, forbidden.", handoff: "What one agent passed to another: from, to, required, forbidden, tools, collections.",
+  authority: "That an agent did nothing it had no authority for: agent, viaPeer.", termination: "That the agents stopped: maxMessages, maxDepth, maxRepeats, maxMessagesPerPair, tools.",
+  duplication: "That work was not done twice: tools, conflicts, allowRepeat, mustSay, mustNotSay.", degradation: "How it behaved when something failed: failure, actsOn, mustSay, mustNotSay.",
+  memory: "What was remembered between agents: collection, key, field, writtenBy, readBy, actsOn.", state: "What its tools hold afterwards: collection, key, expect, exists, unchanged, only, noDeletes.",
+  leak: "That a secret or an injected instruction went nowhere.", judge: "A model's verdict against a rubric.", conversation: "A model's verdict on the whole conversation: judge, goal, evaluate.",
+  code: "Your own check, as a Python function: file, function, params, timeoutS.",
+};
+function checkFields(p) {
+  const c = getAt(LABDOC, p) || {}, type = c.type || "";
+  const types = REF.checks.length ? REF.checks : Object.keys(CHECK_HELP);
+  const head = fRow(fSel(p.concat("type"), "It checks", types.map((t) => [t, t]), { redraw: 1, after: "check", help: esc(CHECK_HELP[type] || "") }), fText(p.concat("name"), "Shown as", { opt: 1 }));
+  const covered = ["type", "name", ...(CHECK_COVER[type] || [])];
+  const more = leftovers(c, covered).length;
+  return head + (CHECK_FIELDS[type] ? CHECK_FIELDS[type](p) : "")
+    + (CHECK_FIELDS[type] && !more ? "" : fJson(p, CHECK_FIELDS[type] ? "Its other settings" : "Its settings", { rest: covered, ph: "{}", help: CHECK_FIELDS[type] ? "" : "As JSON. " + esc(CHECK_HELP[type] || "") }));
+}
+function scenarioForm() {
+  const d = LABDOC, multi = d.agents !== undefined;
+  const recordings = (SESS.cassettes || []).map((c) => c.name);
+  return fSec("The test", "", fRow(idField(), fText(["description"], "What it proves", { opt: 1, span: 2 }), fTags(["tags"], "Tags", { opt: 1 })))
+    + (multi
+      ? fSec("The agents", "", `<div class="note plain">This scenario drives several agents, each with its own turns. Edit them under JSON.</div>`)
+      : fSec("The agent", "How LLMSim talks to the agent under test.", agentFields(["agent"]))
+        + fSec("What the user says", d.user ? "A simulated user speaks in this one. Edit it under JSON." : "In order. Say what each reply must be, or leave that to the checks below.",
+            d.user ? "" : fList(["turns"], (p) => fArea(p.concat("say"), "The user says", { rows: 2 }) + answerFields(p.concat("expect")) + alsoHas(leftovers(getAt(LABDOC, p.concat("expect")), ANSWER_KEYS.concat(["case", "empty"]))), { noun: "turn", blank: { say: "" } })))
+    + fSec("What the model says", "For this run only. Leave both empty and the model is answered the way Routing says.",
+        fJson(["model", "rules"], "Its script", { opt: 1, ph: '[{"name": "order-flow", "when": {"contains": "order 1182"}, "turns": [{"text": "Looking it up."}]}]', help: "The same rules as <b>Answer rules</b>, tried first." })
+        + fRow(fSel(["model", "cassette"], "Or a recording", [["", "None"], ...recordings], { opt: 1 }), fSel(["model", "mode"], "Used to", [["", "Replay it"], ["record", "Record it"], ["auto", "Record once, then replay"]], { same: "replay" })))
+    + fSec("What must hold", "Checked when the conversation ends. A scenario with nothing to check proves nothing, and is refused.",
+        fList(["checks"], checkFields, { noun: "check", blank: { type: "answer" } }))
+    + fSec("When it stops", "", fRow(fNum(["stop", "maxTurns"], "After this many turns", { opt: 1, ph: "the turns above" }), fNum(["timeoutS"], "Give up after (s)", { opt: 1, ph: "120" }))
+        + condField(["stop", "when"], "Or as soon as a reply", { opt: 1, help: "A condition on the reply, such as it containing a word." }))
+    + alsoHas(leftovers(d, ["id", "description", "tags", "agent", "agents", "turns", "user", "model", "checks", "stop", "timeoutS"]));
+}
+
+// ── a dataset ───────────────────────────────────────────────────────────────
+function datasetForm() {
+  return fSec("The dataset", "", fRow(idField(), fText(["description"], "What it covers", { opt: 1, span: 2 })))
+    + fSec("Its cases", "Each case is a scenario: one already saved, or one written here.",
+        fList(["items"], (p) => {
+          const it = getAt(LABDOC, p) || {}, inline = it.scenario !== undefined;
+          return fRow(fText(p.concat("id"), "Case", { mono: 1 }), fTags(p.concat("tags"), "Tags", { opt: 1 }), fText(p.concat("split"), "Split", { opt: 1, ph: "train, test…" }))
+            + (inline ? fJson(p.concat("scenario"), "Its scenario", { rows: 6 })
+              : fSel(p.concat("scenarioId"), "Its scenario", [["", "Choose a saved scenario"], ...REF.scenarios], { help: REF.scenarios.length ? "" : "No scenario is saved yet. Save one under Scenarios first." }))
+            + alsoHas(leftovers(it, ["id", "tags", "split", "scenario", "scenarioId"]));
+        }, { noun: "case", blank: { id: "", scenarioId: "" } }))
+    + alsoHas(leftovers(LABDOC, ["id", "description", "items", "version", "tags", "createdAt"]));
+}
+
+// ── what the agent talks to ─────────────────────────────────────────────────
+const resultRows = (p, noun) => fList(p, (q) => fRow(condField(q.concat("when"), "When the call", { opt: 1 }), fJson(q.concat("result"), "It answers", { rows: 2 })) + alsoHas(leftovers(getAt(LABDOC, q), ["when", "result"])), { noun, blank: { when: {}, result: {} } });
+const proxyFields = (p) => fRow(fSel(p.concat("mode"), "Or stand in front of a real one", [["", "No, answer from what is written here"], ["record", "Forward and record"], ["replay", "Replay the recording"], ["passthrough", "Forward only"]], { redraw: 1 }),
+  getAt(LABDOC, p.concat("mode")) ? fText(p.concat("url"), "The real one's URL", { mono: 1, span: 2 }) : "");
+function mcpForm() {
+  return fSec("The server", "", fRow(idField(), fText(["description"], "What it is", { opt: 1, span: 2 })) + proxyFields(["proxy"]))
+    + fSec("Its tools", "What the agent sees in the tool list, and what each one answers.",
+        fList(["tools"], (p) => fRow(fText(p.concat("name"), "Tool", { mono: 1 }), fText(p.concat("description"), "What the agent is told it does", { span: 2 }))
+          + fJson(p.concat("inputSchema"), "Its arguments (JSON Schema)", { ph: '{"type": "object", "properties": {"id": {"type": "integer"}}}' })
+          + `<label style="margin-top:14px">What it answers, first match wins</label>` + resultRows(p.concat("results"), "answer")
+          + fRow(fJson(p.concat("default"), "Otherwise it answers", { opt: 1, rows: 2 }), injectSel(p))
+          + alsoHas(leftovers(getAt(LABDOC, p), ["name", "description", "inputSchema", "results", "default", "inject"])), { noun: "tool", blank: { name: "", description: "", inputSchema: { type: "object", properties: {} }, results: [] } }))
+    + alsoHas(leftovers(LABDOC, ["id", "description", "tools", "proxy"]));
+}
+function mockForm() {
+  return fSec("The backend", "", fRow(idField(), fText(["description"], "What it is", { opt: 1, span: 2 })) + fTog(["strict"], "Refuse a request that breaks a route's contract") + proxyFields(["proxy"]))
+    + fSec("Its routes", "",
+        fList(["routes"], (p) => fRow(fSel(p.concat("method"), "Method", ["GET", "POST", "PUT", "PATCH", "DELETE"]), fText(p.concat("path"), "Path", { mono: 1, ph: "/orders/{id}", span: 2 }), fText(p.concat("description"), "What it is", { opt: 1 }))
+          + fRow(fJson(p.concat("default"), "It answers", { rows: 2, ph: '{"result": {"id": 1, "status": "open"}}' }), fJson(p.concat("results"), "Unless the request matches", { opt: 1, rows: 2, ph: '[{"when": {…}, "result": {…}}]' }))
+          + fRow(fJson(p.concat("contract"), "Its contract", { opt: 1, rows: 2, help: "What a request must look like." }), injectSel(p))
+          + alsoHas(leftovers(getAt(LABDOC, p), ["method", "path", "description", "default", "results", "contract", "inject"])), { noun: "route", blank: { method: "GET", path: "/", default: { result: {} } } }))
+    + alsoHas(leftovers(LABDOC, ["id", "description", "strict", "routes", "proxy"]));
+}
+function stubForm() {
+  return fSec("The agent", "", fRow(idField(), fText(["name"], "Its display name", { opt: 1 }), fText(["description"], "What it does", { opt: 1 })) + fJson(["skills"], "Skills on its agent card", { opt: 1, rows: 2 }))
+    + fSec("What it answers", "First match wins.", resultRows(["results"], "answer") + fRow(fJson(["default"], "Otherwise it answers", { opt: 1, rows: 2 }), injectSel([])))
+    + alsoHas(leftovers(LABDOC, ["id", "name", "description", "skills", "results", "default", "inject"]));
+}
+function proxyForm() {
+  return fSec("The proxy", "", fRow(idField(), fText(["url"], "The real agent's URL", { mono: 1, ph: "https://agent.example", span: 2 }))
+      + fRow(fSel(["mode"], "It should", [["record", "Forward and record"], ["replay", "Replay the recording"], ["passthrough", "Forward only"]]), credSel(["credential"]), fText(["description"], "What it is", { opt: 1 })))
+    + alsoHas(leftovers(LABDOC, ["id", "url", "mode", "credential", "description"]));
+}
+function faultForm() {
+  const target = LABDOC.target || "tool", type = (LABDOC.fault || {}).type || "", params = REF.faultTypes[type] || {};
+  const kinds = target === "peer" ? REF.peerFaults : REF.toolFaults;
+  return fSec("The fault", "", fRow(idField(), fText(["name"], "Shown as", { opt: 1 }), fTog(["enabled"], "Switched on", { dflt: true }))
+      + fRow(fSel(["target"], "It breaks", [["tool", "A tool"], ["peer", "Another agent"]], { redraw: 1, after: "fault" }), fSel(["fault", "type"], "By", kinds.map((k) => [k, k.replace(/_/g, " ")]), { redraw: 1, after: "fault" }),
+          ...Object.entries(params).map(([k, what]) => (/int\b|\d|seconds|\bms\b/.test(what) ? fNum : fText)(["fault", k], k.replace(/_/g, " "), { opt: !/required/.test(what), help: esc(what) }))))
+    + fSec("When", "", condField(["match"], "Only for calls where", { opt: 1, ph: '{"field": "tool", "op": "eq", "value": "lookup_order"}' })
+      + fRow(fNum(["probability"], "Chance", { opt: 1, ph: "1" }), fNum(["after"], "Skip the first", { opt: 1 }), fNum(["every"], "Then every", { opt: 1 }), fNum(["limit"], "At most", { opt: 1 }))
+      + fRow(fNum(["seed"], "Seed", { opt: 1, help: "The same seed fires on the same calls again." }), fText(["description"], "Why", { opt: 1, span: 2 })))
+    + alsoHas(leftovers(LABDOC, ["id", "name", "enabled", "target", "fault", "match", "probability", "after", "every", "limit", "seed", "description", "seen", "fired"]));
+}
+
+// ── judging and setup ───────────────────────────────────────────────────────
+function judgeForm() {
+  const cal = LABDOC.calibration;
+  return fSec("The judge", "", fRow(idField(), fText(["model"], "Model", { opt: 1, mono: 1, help: "Left empty, the default model judges." }), fNum(["minAgreement"], "Must agree with people at least", { opt: 1, ph: "0.8" }))
+      + fArea(["rubric"], "Rubric", { rows: 4, help: "What a good answer does. The judge must say why, and its verdict counts only once it has been calibrated." }))
+    + (LABNEW ? "" : fSec("Calibration", "", cal && cal.agreement != null ? `<p style="margin:0">It agreed with people on <b>${Math.round(cal.agreement * 100)}%</b> of ${esc(cal.n)} labelled example(s).</p>` : `<p class="help" style="margin:0">Not calibrated yet, so it cannot gate. Review some runs under <b>Review queue</b>, then press <b>Calibrate from the reviews</b>.</p>`))
+    + alsoHas(leftovers(LABDOC, ["id", "model", "rubric", "minAgreement", "calibration", "version"]));
+}
+function credentialForm() {
+  const type = LABDOC.type || Object.keys(REF.credTypes)[0] || "bearer", fields = REF.credTypes[type] || [];
+  const secret = (f) => /token|secret|password|value/i.test(f);
+  return fSec("The credential", LABNEW ? "" : "Its value is never shown again. Saving replaces it.",
+    fRow(fText(["label"], "Name", { lock: !LABNEW, mono: 1 }), fSel(["type"], "Kind", Object.keys(REF.credTypes).map((t) => [t, t.replace(/_/g, " ")]), { redraw: 1, after: "credential" }))
+    + fRow(...fields.map((f) => fText([f], f.replace(/([A-Z])/g, " $1").toLowerCase(), { secret: secret(f), mono: !secret(f) }))));
+}
+
+// ── what a run, an experiment, a review and a set of variations look like ───
+function resultView(r) {
+  const sum = r.summary || {};
+  return `<div class="rhead">${statusTag(r.verdict || r.status)} <b>${esc(r.scenario || "")}</b><span class="rmeta">run <span class="mono">${esc(r.run)}</span> · ${esc(r.tier || "")} tier${r.finishedAt && r.startedAt ? " · " + ago(Math.round((r.finishedAt - r.startedAt) * 1000)) : ""}${r.finishedAt ? " · " + esc(when(r.finishedAt)) : ""}</span></div>
+    ${r.error ? `<div class="note warn">${esc(r.error)}</div>` : ""}
+    <p class="rsum">${["pass", "fail", "no-data", "error"].filter((k) => sum[k]).map((k) => `${sum[k]} ${k}`).join(" · ") || "No checks ran."}</p>
+    <table class="sess-table"><tr><th style="width:70px">Result</th><th>Check</th><th>What happened</th></tr>
+      ${(r.checks || []).map((c) => `<tr><td>${statusTag(c.status)}</td><td><b>${esc(c.name)}</b><div class="fh" style="margin:0">${esc(c.type || "")}</div></td>
+        <td>${esc(c.detail || "")}${(c.evidence || []).length ? `<details><summary>Evidence</summary><pre>${esc(pretty(c.evidence))}</pre></details>` : ""}</td></tr>`).join("")}</table>
+    ${(r.turns || []).length ? `<h3 class="rh">The conversation</h3>` + r.turns.map((t) => `<div class="rturn"><div><span class="who">User</span>${esc(t.say)}</div><div><span class="who">Agent${t.ms != null ? " · " + ago(t.ms) : ""}</span>${esc(t.reply ?? "")}</div></div>`).join("") : ""}
+    <div style="margin-top:14px; display:flex; gap:9px; flex-wrap:wrap">
+      <button class="btn ghost" onclick="labRun('GET', '/api/runs/${esc(r.run)}/timeline')">Its timeline</button>
+      <button class="btn ghost" onclick="labRun('POST', '/api/reviews', { runs: ['${esc(r.run)}'] })">Send to review</button>
+      <button class="btn ghost" onclick="labRun('GET', '/api/results/${esc(r.run)}/junit')">As JUnit</button>
+    </div>`;
+}
+async function labRun(method, path, body) {
+  note("lab-note", "Working…");
+  const r = await REST(method, path, body);
+  note("lab-note", r.ok ? "" : said(r.body), !r.ok);
+  labShow(r.body);
+}
+function timelineView(t) {
+  const start = t.events.length ? t.events[0].at : 0;
+  const label = (e) => { const d = e.data || {}; return d.label || d.ask || d.text || d.reply || d.tool || d.name || d.detail || ""; };
+  return `<p class="rsum">${t.events.length} event(s)${(t.agents || []).length ? " · " + esc(t.agents.join(", ")) : ""}</p>
+    <table class="sess-table"><tr><th style="width:70px">At</th><th style="width:120px">What</th><th style="width:110px">Agent</th><th>Detail</th></tr>
+    ${t.events.map((e) => `<tr><td class="mono">+${((e.at - start) * 1000).toFixed(0)} ms</td><td>${esc((e.kind || "").replace(/_/g, " "))}</td><td class="mono">${esc(e.agent || "")}</td><td>${esc(e.label || label(e))}<details><summary>All of it</summary><pre>${esc(pretty(e.data || {}))}</pre></details></td></tr>`).join("")}</table>`;
+}
+function experimentView(x) {
+  const sum = x.summary || {};
+  return `<div class="rhead">${statusTag(x.verdict || x.status)} <b>${esc(x.dataset)} v${esc(x.version)}</b><span class="rmeta">${x.label ? esc(x.label) + " · " : ""}${esc(x.tier || "")} tier${x.passRate != null ? " · " + Math.round(x.passRate * 100) + "% passed" : ""}${x.finishedAt ? " · " + esc(when(x.finishedAt)) : ""}</span></div>
+    <p class="rsum">${["pass", "flaky", "fail", "no-data", "error"].filter((k) => sum[k]).map((k) => `${sum[k]} ${k}`).join(" · ")}</p>
+    <table class="sess-table"><tr><th style="width:70px">Result</th><th>Case</th><th>Passed</th><th>Tokens</th><th>Took</th><th>Why it failed</th></tr>
+    ${(x.items || []).map((it) => `<tr><td>${statusTag(it.status)}</td><td><b>${esc(it.id)}</b>${(it.tags || []).length ? `<div class="fh" style="margin:0">${esc(it.tags.join(", "))}</div>` : ""}</td>
+      <td>${esc(it.passes)} of ${esc(it.n)}</td><td class="mono">${esc(it.tokens ?? "")}</td><td class="mono">${it.durationS != null ? ago(Math.round(it.durationS * 1000)) : ""}</td>
+      <td>${esc((it.failures || []).map((f) => (typeof f === "string" ? f : f.name ? f.name + ": " + (f.detail || "") : JSON.stringify(f))).join("; "))}${(it.runs || []).map((run) => ` <a href="#lab" onclick="labRun('GET', '/api/results/${esc(run)}'); return false">${esc(run)}</a>`).join("")}</td></tr>`).join("")}</table>`;
+}
+function reviewView(v) {
+  const done = v.status === "done", s = v.submission || {};
+  return `<div class="rhead">${statusTag(v.status)} <b>${esc(v.scenario || v.kind || "")}</b><span class="rmeta">run <span class="mono">${esc(v.run || "")}</span>${v.dataset ? " · " + esc(v.dataset) + " / " + esc(v.item) : ""}</span></div>
+    <h3 class="rh">What was said</h3><pre class="rtrans">${esc(v.transcript || "")}</pre>
+    ${done ? `<h3 class="rh">The verdict</h3><p>${statusTag(s.verdict)} ${esc(s.comment || "")}${s.reviewer ? ` <span class="rmeta">by ${esc(s.reviewer)}</span>` : ""}</p>${s.corrected ? `<p class="fh">It should have said: ${esc(s.corrected)}</p>` : ""}`
+      : `<h3 class="rh">Your verdict</h3>
+        <div class="frow">${(v.rubric || []).map((c) => `<div class="f"><label>${esc(c)} <span class="hint">· 1 to 5</span></label><select data-score="${esc(c)}"><option value="">—</option>${[1, 2, 3, 4, 5].map((n) => `<option>${n}</option>`).join("")}</select></div>`).join("")}
+          <div class="f"><label>Reviewed by <span class="hint">· optional</span></label><input type="text" id="rv-who"></div></div>
+        <div class="f"><label>Why <span class="hint">· optional</span></label><textarea id="rv-comment" rows="2" style="min-height:0"></textarea></div>
+        <div class="f"><label>What it should have said <span class="hint">· optional</span></label><textarea id="rv-corrected" rows="2" style="min-height:0" placeholder="${v.dataset ? "Becomes what this case is checked against" : ""}"></textarea></div>
+        <div style="margin-top:14px; display:flex; gap:9px"><button class="btn" onclick="reviewSubmit('pass')">It passes</button><button class="btn ghost" onclick="reviewSubmit('fail')">It fails</button></div>`}`;
+}
+async function reviewSubmit(verdict) {
+  const scores = {};
+  for (const el of document.querySelectorAll("#lab-form [data-score]")) if (el.value) scores[el.dataset.score] = Number(el.value);
+  const corrected = document.getElementById("rv-corrected").value.trim();
+  const body = { verdict, scores, comment: document.getElementById("rv-comment").value, reviewer: document.getElementById("rv-who").value, ...(corrected ? { corrected } : {}) };
+  const r = await REST("POST", "/api/reviews/" + LABID + "/submit", body);
+  if (!r.ok) return note("lab-note", said(r.body), true);
+  note("lab-note", "Recorded."); labEdit(r.body.review); labLoad();
+}
+function variationsView(v) {
+  const waiting = (v.proposals || []).some((p) => p.status === "proposed");
+  return `<div class="rhead"><b>${esc(v.dataset)} / ${esc(v.item)}</b><span class="rmeta">${(v.proposals || []).length} proposal(s)</span></div>
+    <table class="sess-table"><tr><th style="width:40px"></th><th style="width:110px">Kind</th><th>The user would say</th><th style="width:90px">Decision</th></tr>
+    ${(v.proposals || []).map((p, i) => `<tr><td>${p.status === "proposed" ? `<input type="checkbox" data-accept="${i}" data-kind="${esc(p.kind)}">` : ""}</td><td>${esc(p.kind)}</td><td>${esc(p.text)}</td><td>${statusTag(p.status === "accepted" ? "pass" : p.status === "rejected" ? "fail" : "")}${p.status === "proposed" ? "waiting" : ""}</td></tr>`).join("")}</table>
+    ${waiting ? `<div class="f"><label>Checks for the ones that are not paraphrases <span class="hint">· a paraphrase keeps its case's checks</span></label><textarea id="vr-checks" class="mono" rows="2" style="min-height:0" placeholder='[{"type": "answer", "contains": "manager"}]'></textarea></div>
+      <div style="margin-top:14px; display:flex; gap:9px"><button class="btn" onclick="variationsAccept(false)">Add the ticked ones to the dataset</button><button class="btn ghost" onclick="variationsAccept(true)">Add them and reject the rest</button></div>` : ""}`;
+}
+async function variationsAccept(rejectRest) {
+  let checks;
+  try { checks = readJSON("vr-checks", "The checks"); } catch (e) { return note("lab-note", e.message, true); }
+  const accept = [...document.querySelectorAll("#lab-form [data-accept]:checked")].map((el) => ({ index: Number(el.dataset.accept), ...(checks && el.dataset.kind !== "paraphrase" ? { checks } : {}) }));
+  if (!accept.length) return note("lab-note", "Tick the ones to keep.", true);
+  const r = await REST("POST", "/api/variations/" + LABID + "/accept", { accept, rejectRest });
+  if (!r.ok) return note("lab-note", said(r.body), true);
+  note("lab-note", `Added ${r.body.added.length} case(s): the dataset is now v${r.body.datasetVersion}.`);
+  const again = await REST("GET", "/api/variations/" + LABID); if (again.ok) labEdit(again.body.variations); labLoad();
+}
+function variationsGenerate() {
+  return `<details class="fgen"><summary>Ask a model for new ones</summary>
+    <div class="frow"><div class="f"><label>Dataset</label><select id="vg-dataset">${REF.datasets.map((d) => `<option>${esc(d)}</option>`).join("")}</select></div>
+      <div class="f"><label>Case</label><input type="text" id="vg-item" class="mono" placeholder="the case's id"></div>
+      <div class="f"><label>Of each kind</label><input type="number" id="vg-count" class="mono" value="2" min="1" max="10"></div></div>
+    <div style="margin-top:12px; display:flex; gap:9px; align-items:center"><button class="btn ghost" onclick="variationsAsk()">Propose variations</button><span class="fh" style="margin:0">It needs a model that really answers: the ChatGPT plan or an upstream, not the script.</span></div></details>`;
+}
+async function variationsAsk() {
+  const r = await REST("POST", "/api/variations/generate", { dataset: document.getElementById("vg-dataset").value, item: document.getElementById("vg-item").value.trim(), count: Number(document.getElementById("vg-count").value) || 2 });
+  if (!r.ok) return note("lab-listnote", said(r.body), true);
+  note("lab-listnote", "Proposed " + r.body.proposals.length + "."); labLoad();
+}
+PAGES.lab = { enter: async () => { labTabs(); await labRef(); labLoad(); } };
 
 
 
@@ -1821,6 +2560,11 @@ function renderChat() {
     text = CG.signedIn
       ? `<span class="tag plan">plan</span> Answered by the ChatGPT plan (<code>${esc(CFG.chatgpt.model || CG.default || "its own default model")}</code>), signed in as ${esc(CG.email || "a ChatGPT account")}. This spends the plan.`
       : `<span class="tag err">not signed in</span> This model is routed to the ChatGPT plan and will fail until you sign in. ${go}`;
+  } else if (r === "anthropic") {
+    kind = CFG.anthropic.keySet ? "ok" : "warn";
+    text = CFG.anthropic.keySet
+      ? `<span class="tag plan">claude</span> Answered by Anthropic's API (<code>${esc(CFG.anthropic.model || "the Claude model asked for")}</code>). This is billed to the key.`
+      : `<span class="tag err">no key</span> This model is routed to Anthropic's API and will fail until a key is saved. ${go}`;
   } else if (r === "relay") {
     kind = CFG.upstream.url ? "ok" : "warn";
     text = CFG.upstream.url
@@ -2416,7 +3160,8 @@ const runAll = () => execute({}, "all");
 const runOne = (id) => execute({ testIds: [id] });
 const runPlan = (id) => execute({ planId: id });
 
-show("models");
+show((location.hash || "").slice(1) || "overview");
+window.addEventListener("hashchange", () => { const v = (location.hash || "").slice(1); if (v && v !== VIEW) show(v); });
 load();
 setInterval(load, 1500);
 </script>

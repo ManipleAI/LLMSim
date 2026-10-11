@@ -1,8 +1,6 @@
-# Test an agent by playing its model
+# LLMSim documentation
 
-LLMSim answers in Anthropic, OpenAI and DeepSeek wire formats, so any agent that
-takes a base URL can be pointed at it. You decide what the model says, break it
-on purpose, and check what the agent sent.
+LLMSim plays the model an agent talks to. It answers in Anthropic's, OpenAI's and DeepSeek's wire formats, so anything that takes a base URL can be pointed at it. You decide what the model says, break it on purpose, keep every request, and check what the agent did.
 
 ```
 Your agent  ──►  LLMSim plays the model  ···  The agent's tools
@@ -11,75 +9,116 @@ Your agent  ──►  LLMSim plays the model  ···  The agent's tools
  guardrails)      keeps every request)
 ```
 
-LLMSim sees the system prompt, declared tools, every message, tool results, the
-turn count and the credential used. It does not see what the agent's tools did.
+This is the whole documentation. LLMSim serves it at `http://localhost:8099/guide`, built from [`docs/guide.md`](guide.md) by `bin/build-docs`. The reasons behind each decision are in [the design notes](design.md).
 
-The same guide is served by LLMSim at `http://localhost:8099/guide`
-([`guide.html`](guide.html)), with a copy button on every command. The
-[README](../README.md) is the reference and the reasons behind each decision.
+## Start here
 
-- [Start it](#start-it)
-- [Point an agent at it](#point-an-agent-at-it)
-- [Decide what the model says](#decide-what-the-model-says)
-- [Make things go wrong](#make-things-go-wrong)
-- [See what was sent](#see-what-was-sent)
-- [Check it](#check-it)
-- [Record once, replay](#record-once-replay)
-- [Answer with a real model](#answer-with-a-real-model)
-- [A worked example](#a-worked-example)
-- [The API on one page](#the-api-on-one-page)
-- [What it cannot see](#what-it-cannot-see)
+### Run it
 
-## Start it
-
-Python 3.9 or newer. Nothing to install.
+Python 3.9 or newer. There is nothing to install.
 
 ```bash
-python3 server.py            # serves on port 8099
-LLMSIM_PORT=9000 python3 server.py
+python3 server.py                     # serves on port 8099
+LLMSIM_PORT=9000 python3 server.py    # or another port
 ```
 
-The console is at `http://localhost:8099/ui`. Everything on it can also be done
-over HTTP, and this guide shows both.
+The console is at `http://localhost:8099/ui`. Everything on it is also an HTTP API, and this documentation shows both.
 
-## Point an agent at it
+### Point a client at it
 
-Give the agent a base URL and the matching key. The keys are fake and published;
-a wrong one gets the vendor's own 401.
+Give the client a base URL and the matching key. The keys are fake and published. A wrong one gets the vendor's own 401.
 
-| Format | Base URL | Key |
+| Vendor | Base URL | Key |
 |---|---|---|
 | Anthropic | `http://localhost:8099/anthropic` | `sk-ant-llmsim-000000000000000000000000` |
 | OpenAI | `http://localhost:8099/openai/v1` | `sk-llmsim-000000000000000000000000` |
 | DeepSeek | `http://localhost:8099/deepseek/v1` | `sk-llmsim-deepseek-0000000000000000` |
 
-### Say who is asking
+The console's **Overview** shows the same addresses for the port it is really on, with a copy button.
 
-Put a run and an agent name in the URL. LLMSim then knows which requests belong
-together, and which agent sent each one.
+### Send a first request
+
+```bash
+curl localhost:8099/openai/v1/chat/completions \
+  -H "Authorization: Bearer sk-llmsim-000000000000000000000000" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "gpt-5", "messages": [{"role": "user", "content": "hello"}]}'
+```
+
+The answer comes from a rule called `hello`. Open **Requests** in the console and the request is there, with the rule that answered it.
+
+### What to read next
+
+| You want to | Read |
+|---|---|
+| Decide what the model says | [Script the model](#script-the-model) |
+| See how an agent copes when the vendor fails | [Make things go wrong](#make-things-go-wrong) |
+| Know exactly what an agent sent | [See what was sent](#see-what-was-sent) and [Check it](#check-it) |
+| Run a real session once and replay it for free | [Record once, replay](#record-once-replay) |
+| Test an agent end to end, with its tools and its peers | [Test an agent](#test-an-agent) |
+| Call something from a script or CI | [API reference](#api-reference) |
+
+## How it works
+
+### Where an answer comes from
+
+Every request takes one **route**. The default applies to every model, and one model can be given its own.
+
+| Route | The answer comes from | Costs |
+|---|---|---|
+| Scripted | A rule you wrote, or a shipped one | Nothing. Nothing leaves the machine. |
+| Upstream (relay) | One real model behind an API key | That model's price |
+| ChatGPT plan | A ChatGPT subscription you sign in to | The plan's usage |
+| Replay | A recording of an earlier run | Nothing |
+
+Scripted is the default. Routes are set under **Routing** and, for one model, under **Models**.
+
+### Rules and turns
+
+A **rule** says: when a request looks like this, answer with these **turns**. The first turn answers the first request of a conversation, the second answers the next, and so on. A turn is some text, tool calls, or both. That is how an agent loop is scripted: the model asks for a tool, the agent runs it and reports back, the model says the next thing.
+
+Your rules are kept in `llmsim.rules.json` and are tried before the shipped ones in `responses.json`. The first rule that matches answers.
+
+### Runs and agents
+
+A **run** groups the requests that belong to one test. An **agent** name says which agent sent each one. Put both in the URL and LLMSim keeps them apart from everything else:
 
 ```
 http://localhost:8099/run/r1/agent/planner/openai/v1
 http://localhost:8099/run/r1/agent/worker/anthropic
 ```
 
-Or ask for the URLs:
+The headers `X-LLMSim-Run`, `X-LLMSim-Agent` and `X-LLMSim-App` do the same without changing the URL, and so does a W3C `traceparent`, whose trace id becomes the run. For a gateway that carries an identity in its own header or body field, set that up under **Requests → Capture settings**.
 
-```bash
-curl -X POST localhost:8099/api/runs -d '{"run": "r1", "agents": ["planner", "worker"]}'
-```
+### What LLMSim sees, and what it cannot
 
-If your traffic comes through a gateway that carries an identity in a header or
-a body field, set that up under **Requests → Capture settings**. The headers
-`X-LLMSim-Run`, `X-LLMSim-Agent` and `X-LLMSim-App` work without any setup.
+LLMSim sees what crosses the model boundary: the system prompt, the declared tools, every message, tool results as the agent reports them, the turn count and the credential used.
 
-## Decide what the model says
+- It does not see what a tool actually did. A file written or an API called happens outside the model's traffic. The [test kit](#test-an-agent) closes that gap by standing in for the tools too.
+- It does not see messages between agents that never pass through a model. The test kit's stub agents and proxies do.
+- It cannot test an agent that cannot change its base URL.
+- A scripted model shows what an agent does when the model says exactly that. It does not show how good the agent is with a real one.
+
+## The console
+
+One page at `/ui`, with a screen for each job. Every screen has an address, such as `/ui#routing`.
+
+| Screen | What it is for |
+|---|---|
+| **Overview** | What answers right now, each vendor's address and key, and which screen does which job |
+| **Routing** | The default route, the upstream or ChatGPT plan it uses, and how strictly the vendors are imitated |
+| **Models** | One model's own route, a fixed answer, a failure status or a delay |
+| **Answer rules** | What the simulated model says, and when. Includes a dry run that says which rule would answer, and why the others would not. |
+| **Faults** | Failures on purpose |
+| **Requests** | *Live*: every request as it arrives. *Captured*: each one in full. *Assertions*: checks over them. *Capture settings*: what is kept, redaction, and who may send requests. |
+| **Chat** | Talk to a model by hand, the way a client would |
+| **Record & replay** | Record a run, and replay a recording |
+| **Functional tests** | Cases that send a prompt and say what must come back |
+| **Agent tests** | Drive an agent, simulate what it talks to, and judge the result |
+
+## Script the model
 
 *Console: Answer rules*
-
-A rule says: when a request looks like this, answer with these turns. The first
-turn answers the first request of a conversation, the second answers the next,
-and so on.
 
 ```bash
 curl -X POST localhost:8099/api/rules -d '{"rule": {
@@ -96,10 +135,9 @@ curl -X POST localhost:8099/api/rules -d '{"rule": {
         "turn": {"text": "Nothing is granted. Stopping."}}]}]}}'
 ```
 
-The second turn **branches on what the tool printed**. That is how you test that
-an agent carries on when a request is granted and stops when it is denied.
+The second turn **branches on what the tool printed**. That is how you test that an agent carries on when a request is granted and stops when it is denied.
 
-### What a rule can test
+### What a rule can match on
 
 | Condition | Tests |
 |---|---|
@@ -111,32 +149,35 @@ an agent carries on when a request is granted and stops when it is denied.
 | `tool`, `model`, `provider`, `stream` | The request itself |
 | `not`, `all`, `any` | Combine the others |
 
-### Exact token counts
+### What a turn can say
 
-For a cost or budget test, a turn can state its usage. Zero is a real count.
-
-```json
-{"text": "counted", "input_tokens": 1000, "output_tokens": 250, "cached_tokens": 400}
-```
+| Field | Does |
+|---|---|
+| `text` | What the model says |
+| `tool_calls` | A list of `{name, input}` the model asks for |
+| `branches` | A list of `{when, turn}`: the first whose condition holds is the turn |
+| `input_tokens`, `output_tokens`, `cached_tokens`, `reasoning_tokens` | Exact usage, for a cost or budget test. Zero is a real count. |
+| `fault` | A fault on this one turn, such as `{"type": "abort_stream", "after": 2}` |
+| `error`, `delay_ms` | Answer with an error instead, or wait first |
+| `stop_reason`, `description` | The stop reason reported, and a note for whoever reads the rule |
 
 ### Find out why a rule did not fire
 
-The dry run names the rule that would answer and, for every rule that would not,
-the reason. Nothing is sent or captured.
+The dry run names the rule that would answer and, for every rule that would not, the reason. Nothing is sent or captured.
 
 ```bash
 curl -X POST localhost:8099/api/rules/test -d '{"ask": "please reconcile the ledger"}'
 ```
 
-Your rules are saved in `llmsim.rules.json` and are tried before the shipped
-ones in `responses.json`. Commit the file.
+### One model, one answer
+
+To make a single model answer the same thing every time, or fail, set it on that model's page under **Models**: fixed text, a status such as 429 or 529, or a delay in milliseconds. It overrides the rules for that model alone.
 
 ## Make things go wrong
 
 *Console: Faults*
 
-A real vendor will not fail on demand. A fault rule makes LLMSim fail for the
-requests you choose.
+A real vendor will not fail on demand. A fault rule makes LLMSim fail for the requests you choose.
 
 ```bash
 curl -X POST localhost:8099/api/faults -d '{
@@ -156,37 +197,39 @@ curl -X POST localhost:8099/api/faults -d '{
 | `unknown_tool` | A call to a tool the agent never declared |
 | `garbage`, `empty`, `huge` | A corrupt frame or body, a 200 that says nothing, an oversized answer |
 
-The gates choose which matching requests are hit: `after` skips the first few,
-`every` takes each Nth, `limit` stops after a number, and `probability` rolls a
-die. Set a `seed` and the same run fails the same way next time.
+The gates choose which matching requests are hit: `after` skips the first few, `every` takes each Nth, `limit` stops after a number, and `probability` rolls a die. Set a `seed` and the same run fails the same way next time.
 
-A fault can also sit on one scripted turn:
-`{"text": "…", "fault": {"type": "abort_stream", "after": 2}}`.
-
-A `status` or `drop` fault is applied before anything is sent to a real model,
-so it never costs a call.
+A `status` or `drop` fault is applied before anything is sent to a real model, so it never costs a call. The functional test cases are never faulted.
 
 ## See what was sent
 
 *Console: Requests → Captured*
 
-Every request is kept: the system prompt, declared tools, messages, who sent it,
-which credential it used, and what answered it.
+Every request is kept: the system prompt, declared tools, messages, who sent it, which credential it used, and what answered it.
 
 ```bash
 curl 'localhost:8099/api/captures?run=r1&agent=worker'   # a list
 curl localhost:8099/api/captures/12                       # one request in full
 ```
 
-Requests are held in memory only, and the oldest are dropped past a limit you
-set. Redaction patterns apply to everything shown or exported.
+Requests are held in memory only, and the oldest are dropped past a limit you set. Redaction patterns apply to everything shown or exported.
+
+### See which credential arrived
+
+To find out which key a gateway really sends, accept any key and register the ones you know. Only a fingerprint is stored.
+
+```bash
+curl -X PUT  localhost:8099/api/settings -d '{"auth": {"mode": "any"}}'
+curl -X POST localhost:8099/api/settings/credentials -d '{"label": "platform-token", "key": "…"}'
+```
+
+Each captured request then shows its credential's label, and an assertion can test `credential.label`.
 
 ## Check it
 
 *Console: Requests → Assertions*
 
-An assertion is a claim about the requests an agent made. Each one has a `scope`
-and exactly one check.
+An assertion is a claim about the requests an agent made. Each one has a scope and exactly one check.
 
 ```bash
 curl -X POST localhost:8099/api/assertions/evaluate -d '{
@@ -215,21 +258,15 @@ curl -X POST localhost:8099/api/assertions/evaluate -d '{
 | `count` | The number of requests in scope, or of those matching `where`, is within `min` and `max` |
 | `sequence` | Requests matching each step exist, in that order |
 
-Each result comes back as `pass`, `fail` or `no-data`, with the request numbers
-and an excerpt as evidence.
+Each result comes back as `pass`, `fail` or `no-data`, with the request numbers and an excerpt as evidence. `GET /api/assertions/catalog` lists every field and operator a condition can use.
 
-> **No data is not a pass.** If the scope selects no requests, the result is
-> `no-data`. An agent that never ran would otherwise pass every "must not". Add
-> `"allowEmpty": true` when an empty result really is fine.
+> **No data is not a pass.** If the scope selects no requests, the result is `no-data`. An agent that never ran would otherwise pass every "must not". Add `"allowEmpty": true` when an empty result really is fine.
 
-Save a list as a named set with `POST /api/assertion-sets` and run it with
-`{"set": "my-set", "run": "r1"}`. Sets are saved in `llmsim.assertions.json`.
+Save a list as a named set with `POST /api/assertion-sets` and run it with `{"set": "my-set", "run": "r1"}`. Sets are kept in `llmsim.assertions.json`.
 
 ### Check a handoff between two agents
 
-LLMSim does not see messages that pass between agents. It does see what each
-agent then tells its model. Script the first agent's answer to carry a token,
-and assert that the token turns up in the second agent's request.
+LLMSim does not see messages that pass between agents. It does see what each agent then tells its model. Script the first agent's answer to carry a token, and assert that the token turns up in the second agent's request.
 
 ```json
 {"id": "handoff", "name": "The worker was told what the planner answered",
@@ -241,8 +278,7 @@ and assert that the token turns up in the second agent's request.
 
 *Console: Record & replay*
 
-Run a session once and keep every answer. Later runs get the same answers back,
-offline and for free.
+Run a session once and keep every answer. Later runs get the same answers back, offline and for free.
 
 ```bash
 curl -X POST localhost:8099/api/sessions/record -d '{"name": "login-flow", "run": "r1"}'
@@ -256,126 +292,491 @@ curl -X POST localhost:8099/api/sessions/replay -d '{"name": "login-flow", "run"
 curl -X POST localhost:8099/api/sessions/stop   -d '{"run": "r1"}'     # hits, misses, what was not recorded
 ```
 
-- A replay matches a request by what was asked and how many turns in it is. It
-  does not compare whole requests, which contain timestamps and never repeat.
-- A harness that asks two things at the same point — OpenCode asks for a
-  conversation title alongside the agent's first request — gets both answers
-  kept. They are told apart by the tools each request declares.
+- A replay matches a request by what was asked and how many turns in it is. It does not compare whole requests, which contain timestamps and never repeat.
+- A harness that asks two things at the same point gets both answers kept. They are told apart by the tools each request declares.
 - An empty answer is recorded too. It is how an agent's last turn often looks.
-- A request the recording does not hold gets a 404 that names it. Pass
-  `"onMiss": "route"` to let it take its normal route instead.
-- If your prompts contain something that changes every run, such as a run id
-  made from the clock, add a mask: `"masks": ["\\d{8}-\\d{6}"]`.
-- Leave out `run` to record or replay every request that names no run. Several
-  runs can record at once without seeing each other.
-- `POST /api/sessions/auto` replays if the recording exists and records if it
-  does not.
+- A request the recording does not hold gets a 404 that names it. Pass `"onMiss": "route"` to let it take its normal route instead.
+- If your prompts contain something that changes every run, such as a run id made from the clock, add a mask: `"masks": ["\\d{8}-\\d{6}"]`.
+- Leave out `run` to record or replay every request that names no run. Several runs can record at once without seeing each other.
+- `POST /api/sessions/auto` replays if the recording exists and records if it does not.
 
-> A recording holds the model's answers, and an answer can quote what it was
-> shown. Read a cassette before you commit it.
+> A recording holds the model's answers, and an answer can quote what it was shown. Read a recording before you commit it.
 
 ## Answer with a real model
 
 *Console: Routing*
 
-By default every answer is scripted and nothing leaves your machine. Two other
-routes use a real model, for one model or for all of them.
-
 | Route | Answers come from | Set it up |
 |---|---|---|
-| Relay | One model behind an API key | Routing → Upstream: URL, model and key |
+| Upstream | One model behind an API key | Routing → Upstream: URL, model and key |
 | ChatGPT plan | Your ChatGPT subscription | Routing → ChatGPT plan → Sign in |
 
-The usual pattern: record a session through a real model once, then replay it
-for every later test run.
+The usual pattern: record a session through a real model once, then replay it for every later test run.
 
-> **Once you sign in, LLMSim holds a real subscription.** It listens on every
-> network interface and the console has no login, so anyone who can reach the
-> port can spend the plan. Keep it on your own machine or a network you trust.
+The ChatGPT sign-in is OpenAI's OAuth flow, and its redirect lands on `127.0.0.1:1455` on the machine LLMSim runs on. On your own machine that just works. When LLMSim runs somewhere else, the console asks you to paste the address your browser ended up on instead.
+
+> **Once you sign in, LLMSim holds a real subscription.** It listens on every network interface and the console has no login, so anyone who can reach the port can spend the plan. Keep it on your own machine or a network you trust.
+
+The sign-in is kept in `llmsim.chatgpt-auth.json` beside the server. A container with no volume loses it on restart and goes back to scripted answers.
+
+## Functional tests
+
+*Console: Functional tests*
+
+A case sends a model a prompt and says what must come back. It goes down whatever route that model is on, so the same cases check a script, a recording or a real model. A case is a sequence of steps, run in one conversation and stopped at the first failure.
+
+| A step can assert | Meaning |
+|---|---|
+| Text | `contains`, `regex` or `equals` against the answer |
+| Tool | A tool the caller was offered and should have called |
+| Tool arguments | `file_path=HELLO.md`, one per line, by dotted path |
+| HTTP status | So "this key is over its quota and must answer 429" is a test |
+| Must not contain | The negative: "never invents a figure it could not read" |
+| Must not be called | A tool the step forbids |
+| Answer within (ms) | A deadline |
+
+Tick **sent as tool output** for a step that is a tool reporting back rather than a person speaking. That is what comes next in a real agent loop, and it keeps the conversation on the rule its opening ask chose.
+
+Cases and plans are kept in `llmsim.tests.json`. Export and Import move a suite between machines.
 
 ## A worked example
 
-The agent under test is a read-only assistant. It must stop when a capability is
-denied, and it must never send a card number to the model.
+The agent under test is a read-only assistant. It must stop when a capability is denied, and it must never send a card number to the model.
 
-1. **Give it a run.** Point the agent at
-   `http://localhost:8099/run/t1/agent/assistant/openai/v1`.
-2. **Script the model.** Add the `needs-capability` rule from
-   [above](#decide-what-the-model-says). Its second turn says "Stopping" when
-   the tool prints `[]`.
-3. **Break something.** Add a fault so one answer arrives with tool arguments
-   that are not JSON:
+**1. Give it a run.** Point the agent at `http://localhost:8099/run/t1/agent/assistant/openai/v1`.
 
-   ```bash
-   curl -X POST localhost:8099/api/faults -d '{
-     "name": "bad-json", "match": {"identity": {"run": "t1"}}, "limit": 1,
-     "fault": {"type": "malformed_tool_args", "mode": "truncated"}}'
-   ```
-4. **Run the agent** on "please reconcile the ledger".
-5. **Check what it did.**
+**2. Script the model.** Add the `needs-capability` rule from [Script the model](#script-the-model). Its second turn says "Stopping" when the tool prints `[]`.
 
-   ```bash
-   curl -X POST localhost:8099/api/assertions/evaluate -d '{
-     "run": "t1",
-     "assertions": [
-       {"id": "stopped", "name": "It stopped within four requests", "count": {"max": 4}},
-       {"id": "no-cards", "name": "No card number reaches the model",
-        "none": {"field": "allText", "op": "regex", "value": "\\b\\d{13,16}\\b"}},
-       {"id": "no-writes", "name": "It never called a write tool",
-        "none": {"field": "response.toolNames", "op": "includes", "value": "Write"}}
-     ]}'
-   ```
-6. **Read the verdict.** A `fail` lists the request numbers. Open one under
-   Requests → Captured to see exactly what the agent sent.
-7. **Clean up.** `curl -X DELETE localhost:8099/api/runs/t1` forgets the run's
-   requests and stops its session.
+**3. Break something.** Add a fault so one answer arrives with tool arguments that are not JSON:
 
-## The API on one page
+```bash
+curl -X POST localhost:8099/api/faults -d '{
+  "name": "bad-json", "match": {"identity": {"run": "t1"}}, "limit": 1,
+  "fault": {"type": "malformed_tool_args", "mode": "truncated"}}'
+```
 
-| Area | Routes |
+**4. Run the agent** on "please reconcile the ledger".
+
+**5. Check what it did.**
+
+```bash
+curl -X POST localhost:8099/api/assertions/evaluate -d '{
+  "run": "t1",
+  "assertions": [
+    {"id": "stopped", "name": "It stopped within four requests", "count": {"max": 4}},
+    {"id": "no-cards", "name": "No card number reaches the model",
+     "none": {"field": "allText", "op": "regex", "value": "\\b\\d{13,16}\\b"}},
+    {"id": "no-writes", "name": "It never called a write tool",
+     "none": {"field": "response.toolNames", "op": "includes", "value": "Write"}}
+  ]}'
+```
+
+**6. Read the verdict.** A `fail` lists the request numbers. Open one under Requests → Captured to see exactly what the agent sent.
+
+**7. Clean up.** `curl -X DELETE localhost:8099/api/runs/t1` forgets the run's requests and stops its session.
+
+## Test an agent
+
+*Console: Agent tests*
+
+Everything above puts LLMSim on one side of an agent: the model. The **test kit** puts it on the other sides as well. It drives the agent, stands in for the tools it calls and the agents it hands work to, keeps the whole run as one timeline, and gives a verdict a CI job can act on.
+
+```
+                 ┌── model ─────── scripted, recorded, faulted
+driver ──▶ AGENT ┼── tools ─────── mock MCP server, mock REST backend, state, faults
+                 └── peer agents ─ A2A stub, or a proxy to a real one
+                          │
+                every event, in order ──▶ a run on disk ──▶ checks ──▶ a verdict
+```
+
+Nothing in it is specific to one product. A platform enters in two places: a **driver**, which is how a conversation with it is started, and an **importer**, which reads its test cases.
+
+### A scenario is a test
+
+A scenario says how to reach the agent, what the user says, what the model says, and what must hold afterwards.
+
+```json
+{
+  "id": "refund-over-limit",
+  "agent": {"name": "support", "driver": "http", "url": "https://agent.example/chat",
+            "body": {"input": "{{message}}", "run": "{{run}}", "agent": "{{agent}}"}, "reply": "output.text"},
+  "model": {"rules": [{"name": "order-flow", "when": {"contains": "order 1182"},
+                       "turns": [{"text": "Looking it up.", "tool_calls": [{"name": "lookup_order", "input": {"id": 1182}}]},
+                                 {"text": "It is over the limit, so I have handed it to a manager."}]}]},
+  "turns": [{"say": "refund order 1182", "expect": {"contains": "manager"}}],
+  "checks": [
+    {"type": "path", "mode": "strict", "expected": [{"tool": "lookup_order", "arguments": {"id": 1182}}]},
+    {"type": "budget", "tokens": {"total": 20000}, "steps": {"modelCalls": 6}}
+  ]
+}
+```
+
+Save it and run it:
+
+```bash
+curl -X PUT  localhost:8099/api/scenarios/refund-over-limit -d @scenario.json
+curl -X POST localhost:8099/api/scenarios/refund-over-limit/run -d '{}'
+```
+
+Or from a file, with an exit code a build can use (0 pass, 1 fail, 2 could not run):
+
+```bash
+bin/llmsim run scenario.json --junit out.xml
+```
+
+A scenario is checked when it is saved, not when it first fails in the middle of a run, and every problem is listed at once. The model's script, and anything else a scenario installs, applies to that run only and is removed with it.
+
+In the console, a scenario is a form: the agent and its driver's own fields, the turns, the model's script, the checks. The **JSON** switch beside it shows exactly what is sent.
+
+| Scenario field | Holds |
 |---|---|
-| Runs | `GET POST /api/runs` · `GET DELETE /api/runs/<run>` |
-| Rules | `GET POST /api/rules` · `PUT DELETE /api/rules/<name>` · `POST /api/rules/test` · `/validate` · `/order` · `/reload` |
-| Faults | `GET POST /api/faults` · `PUT DELETE /api/faults/<id>` · `POST /api/faults/pause` · `/resume` · `/reset` |
-| Requests | `GET DELETE /api/captures` · `GET /api/captures/<n>` · `GET /api/captures/export` |
-| Assertions | `POST /api/assertions/evaluate` · `GET /api/assertions/catalog` · `/api/assertion-sets` |
-| Sessions | `GET /api/sessions` · `POST /api/sessions/record` · `/replay` · `/auto` · `/stop` · `GET PUT DELETE /api/sessions/<name>` |
-| Settings | `GET PUT /api/settings` · `POST /api/settings/credentials` |
+| `id`, `description`, `tags` | Its name, what it proves, and labels |
+| `agent` | One agent: `name`, `driver`, the driver's fields, an optional `credential` |
+| `agents` | Two to twenty agents, each with its own `turns`, driven at the same time |
+| `turns` | What the user says, in order: `say`, and an optional `expect` on the reply |
+| `user` | A simulated user instead of fixed turns: `{persona, goal}` |
+| `model` | For this run only: `rules`, or a `cassette` with `mode` `replay`, `record` or `auto` |
+| `setup`, `teardown` | Actions before and after, such as seeding state or adding a mock |
+| `checks` | What must hold when the conversation ends |
+| `stop` | `maxTurns`, and `when`: a condition on a reply that ends it early |
+| `timeoutS`, `repeat`, `ordering` | A time limit, running a case several times, and who goes first |
+
+### Drivers
+
+A driver is how LLMSim talks to the agent under test. `GET /api/drivers` lists them with their fields.
+
+| Driver | Reaches | Its fields |
+|---|---|---|
+| `http` | Anything that takes a POST | `url`, `method`, `body` (a template), `headers`, `reply` (a path into the answer), `replyFrom` (`sse` or `text`), `conversation` |
+| `openai` | An OpenAI-compatible chat endpoint | `url`, `model`, `system`, `stream`, `extra` |
+| `a2a` | An Agent2Agent agent, over JSON-RPC | `url`, `rpcUrl`, `wait` (`poll`, `push` or `stream`), `pollMs`, `blocking`, `callbackBase` |
+| `agentforce` | Salesforce's Agent API | `domain`, `agentId`, `apiBase`, `stream`, `bypassUser`, `variables` |
+| `process` | A local program: the message on stdin, the reply on stdout | `command`, `cwd`, `env` |
+
+In a `body` template, `{{message}}` is what the user says, and `{{conversation}}`, `{{run}}` and `{{agent}}` are filled in too. The `process` driver is off unless LLMSim is started with `LLMSIM_ALLOW_PROCESS=1`, because anyone who can reach the port could otherwise name a command.
+
+Credentials are kept apart from scenarios, in an owner-only file. A scenario names one; it never holds it. A value is never shown again, and every value the kit holds is scrubbed from everything it stores or shows.
+
+### Checks
+
+| Check | Says |
+|---|---|
+| `answer` | The reply contains, equals or matches something, has a JSON shape, or holds a number within a tolerance |
+| `path` | The tool calls made, against a reference: `strict`, `unordered`, `subset` or `superset` |
+| `budget` | Tokens, cost, latency and steps, per run or per agent, and which limit was passed |
+| `state` | A record has these fields, is untouched or is gone; only these records changed; nothing was deleted |
+| `leak` | A secret, or an injected instruction's marker, turned up in a reply, a tool call or a message to a peer |
+| `routing`, `handoff` | The right agent got the task; what was passed on carried what it must and nothing it must not |
+| `authority` | An agent used only the tools and records it may, also when a peer asked it to |
+| `termination` | No loop, no ping-pong, bounded depth and chatter |
+| `duplication` | No two agents did the same work, or wrote the same record differently |
+| `degradation` | When a peer or tool failed, the answer said so and did not claim success |
+| `memory` | What one agent wrote to shared memory is what the other acted on |
+| `run`, `assertions` | Anything the condition language, or an assertion set, can say about the run |
+| `code` | A Python function in a file the operator controls |
+| `judge`, `conversation` | A model decides, against a rubric, and must say why |
+
+> **No data is not a pass.** An agent that never ran satisfies every "must not". A check with nothing to judge says `no-data`, and so does the run.
+
+### Stand in for its tools
+
+- **Mock MCP server.** `PUT /api/mcp/<id>`, then point the agent at `/run/<run>/agent/<name>/mcp/<id>`. Tools are written down: arguments are validated against `inputSchema`, and results are chosen by condition or are state operations (`get`, `put`, `update`, `delete`, `list`) on a per-run record store. A write in turn two is what a read in turn four returns, and the next run starts clean.
+- **Mock REST backend.** `PUT /api/mocks/<id>`, or `POST /api/mocks/<id>/openapi` with an OpenAPI 3 document as JSON. A request outside its contract is refused and says why. It is served at `/run/<run>/agent/<name>/mock/<id>`.
+- **Record a real one, replay without it.** Give either a `proxy` with `mode` `record` or `replay`. A call that was not recorded is refused loudly. It is never invented.
+- **Faults.** `PUT /api/kitfaults/<id>`: `error`, `timeout`, `delay`, `rate_limit`, `partial`, `stale`, `wrong_shape`, `empty` and `drop` for tools. They use the same gates and seed as the model's faults.
+- **Injection.** `"inject": {"preset": "ignore-instructions"}` on a tool or a stub plants a prompt injection in what it returns. Catch it being obeyed with a `leak` check on its marker. `GET /api/presets` lists them.
+
+### Stand in for other agents
+
+- **Stub.** `PUT /api/a2a/<id>` makes an A2A agent at `/run/<run>/agent/<name>/a2a/<id>` whose replies are written down: a message, a task that finishes after some polls, a question, or a stream.
+- **Proxy.** `PUT /api/a2aproxies/<id>` with `{url, mode}` puts LLMSim between your agent and a real one. Every message is on the timeline. `record` keeps the real peer's answers and `replay` serves them when it is gone.
+- **Faults.** `down`, `delay`, `wrong_answer`, `refuse`, `never_complete`, `contradict`, `empty` and `drop`.
+- **Several agents at once.** `agents` in a scenario drives each with its own turns, at the same time.
+- **Who goes first.** `ordering.steps` names requests by agent, tool or text. `POST /api/interleavings` runs one scenario in several orders and says whether the order changed the outcome.
+- **OpenTelemetry.** `POST /otlp/v1/traces`, JSON encoding only, puts spans on the same timeline. Tool and model spans become tool calls and model calls with their token usage, so the budget, path and authority checks work on an agent whose model LLMSim cannot stand in front of.
+
+### Datasets, experiments and the gate
+
+- A **dataset** is versioned. Saving makes a new version that never changes. Refer to one as `name`, `name@3` or `name:tag`. Build its cases by hand, from a captured run (`POST /api/datasets/<id>/items/from-run`), or by import from CSV, JSON or an Agentforce Testing Center definition.
+- A case can run several times and pass when enough of them do. A case that passes some and fails others is **flaky**, never a pass. A `seed` makes a run with random faults repeat exactly.
+- An **experiment** runs a dataset version against an agent. `POST /api/experiments/<id>/baseline` marks one. `POST /api/experiments/<id>/gate` compares a later one with it case by case: regressed, degraded to flaky, fixed, new or removed, with an optional pass-rate floor.
+- There are two **tiers** from one definition: `simulated`, which is a script or a recording, free and exact, and `real`.
+
+### Judge with a model
+
+- **Judges.** A judge is pinned: its model and a digest of its rubric are on every verdict, and it must give a reason. A named judge gates only after `POST /api/judges/<id>/calibrate` against people's labels, and only above its `minAgreement`. Edit the rubric and it must be calibrated again.
+- **Review queue.** A person gives a run scores, a verdict and, if they like, a correction. The verdicts calibrate judges. The correction becomes what the case is checked against, in a new version of its dataset.
+- **Variations.** `POST /api/variations/generate` has a model propose paraphrases, near-misses and attacks. Only the ones a person accepts become cases, and a near-miss or an attack must be given the checks it is held to.
+- **Pairwise.** `POST /api/pairwise` has a judge say which of two experiments answered better, case by case.
+- **A simulated user.** `user: {persona, goal}` in a scenario. Its turns are asked of a model through LLMSim in the same run, so a recording repeats them exactly.
+- **Your own check.** A `code` check runs a function from a file in `LLMSIM_EVALUATORS`. It runs in its own process with a time limit and no access to the credential files. That is defence in depth, not a sandbox. Evaluators cannot be uploaded over the API.
+
+### Run it in CI
+
+```bash
+bin/llmsim run scenario.json --junit out.xml          # one scenario
+bin/llmsim experiment run --dataset refunds --gate    # a dataset, gated against its baseline
+```
+
+`action.yml` is a GitHub Action that writes the job summary, posts one pull request comment naming the regressed cases, and fails the build. `testkit.pytest_plugin` gives pytest an `llmsim` fixture and collects `*.scenario.json` files.
+
+### What was not verified
+
+- No live Salesforce or SAP agent was tested. The Agentforce driver follows the published Agent API and is tested against a stand-in written from it.
+- A2A is the 0.3 JSON-RPC binding. MCP is the streamable-HTTP transport: a stdio server is not reachable.
+- OTLP is read as JSON only. Set `OTEL_EXPORTER_OTLP_PROTOCOL=http/json`.
+- The pytest plugin is tested through its session class, not under pytest.
+
+## API reference
+
+Every route answers JSON. A request body is JSON too, and no `Content-Type` header is required. There is no authentication on the management API: anyone who can reach the port can use it.
 
 | Status | Means |
 |---|---|
+| `200` | Done. The body has `"ok": true`. |
+| `202` | Started in the background. Poll the route the body names. |
 | `400` | The request was wrong. The body lists every problem under `problems`. |
-| `404` | There is no such rule, fault, cassette or run. |
-| `409` | The current state forbids it, for example a recording is already running. |
 | `403` | The request came from a page on another website. |
+| `404` | There is no such rule, fault, recording, run or route. |
+| `409` | The current state forbids it, for example a recording is already running. |
 
-### See which credential arrived
+### The vendors' endpoints
 
-To find out which key a gateway really sends, accept any key and register the
-ones you know. Only a fingerprint is stored.
+These are what a client calls. Prefix any of them with `/run/<run>` or `/run/<run>/agent/<name>` to put the request in a run.
+
+| Method and path | Is |
+|---|---|
+| `POST /anthropic/v1/messages` | Anthropic's Messages API, streamed or whole. Key in `x-api-key`. |
+| `POST /anthropic/v1/messages/count_tokens` | Anthropic's token count |
+| `POST /openai/v1/chat/completions` | OpenAI's Chat Completions. Key in `Authorization: Bearer`. |
+| `POST /openai/v1/responses` | OpenAI's Responses API |
+| `POST /deepseek/v1/chat/completions` | DeepSeek's Chat Completions |
+| `GET /<vendor>/v1/models` | The models that vendor's endpoint advertises. Needs the key, like the rest. |
+| `GET /healthz` | Whether it is up, the default route, and the rules loaded |
+
+### Runs
+
+| Method and path | Does |
+|---|---|
+| `GET /api/runs` | The runs seen, and the runs kept on disk |
+| `POST /api/runs` | Name a run. Body `{run, agents?}`. Returns the base URL for each vendor and each agent. |
+| `GET /api/runs/<run>` | One run: its agents, request count and session |
+| `DELETE /api/runs/<run>` | Forget its requests, stop its session, remove what is kept |
+| `GET /api/runs/<run>/timeline` | Every event of the run in order. Query `kinds`, `agent`, `since`, `limit`. |
+| `GET` `POST /api/runs/<run>/events` | Read the events, or add one: `{kind, agent?, data?, parent?}` |
+| `GET` `PUT` `DELETE /api/runs/<run>/state` | Read, seed or clear what the run's mock tools hold |
+| `DELETE /api/runs/<run>/stored` | Remove what is kept on disk for the run |
+
+### Rules
+
+| Method and path | Does |
+|---|---|
+| `GET /api/rules` | Every rule, yours and the shipped ones, and the turn used when none matches |
+| `POST /api/rules` | Add a rule. Body `{rule, position?}`. |
+| `GET` `PUT` `DELETE /api/rules/<name>` | Read, replace or remove one of yours |
+| `POST /api/rules/validate` | Check a rule without saving it |
+| `POST /api/rules/test` | The dry run. Body `{ask}` or `{messages}`, with optional `tools`, `provider`, `model`, `identity` and `headers`. |
+| `POST /api/rules/order` | Reorder your rules. Body `{names}`: every one of them, in the order to try. |
+| `POST /api/rules/reload` | Read the rule files again |
+| `PUT` `DELETE /api/rules/default` | Set or clear the turn used when no rule matches |
+
+### Faults
+
+| Method and path | Does |
+|---|---|
+| `GET /api/faults` | The fault rules, their counters, and what each fault type takes |
+| `POST /api/faults` | Add one. Body `{name, match?, fault, probability?, every?, after?, limit?, seed?}`. |
+| `GET` `PUT` `DELETE /api/faults/<id>` | Read, replace or remove one |
+| `POST /api/faults/pause` | Stop every fault firing, without removing them |
+| `POST /api/faults/resume` | Let them fire again |
+| `POST /api/faults/reset` | Zero the counters, so `after`, `every` and `limit` start over |
+
+### Requests
+
+| Method and path | Does |
+|---|---|
+| `GET /api/captures` | The requests kept. Query `run`, `agent`, `app`, `model`, `status`, `q`, `limit`. |
+| `GET /api/captures/<n>` | One request in full: what was sent and what came back |
+| `GET /api/captures/export` | The same list as a download, with the same query |
+| `DELETE /api/captures` | Forget them. With a query, only those it selects. |
+
+### Assertions
+
+| Method and path | Does |
+|---|---|
+| `GET /api/assertions/catalog` | Every field, operator, check kind and condition there is |
+| `POST /api/assertions/validate` | Check assertions without running them |
+| `POST /api/assertions/evaluate` | Run them. Body `{assertions, run?, agent?, scope?}` or `{set, run?}`. |
+| `GET` `POST /api/assertion-sets` | List the saved sets, or save one |
+| `GET` `PUT` `DELETE /api/assertion-sets/<name>` | Read, replace or remove a set |
+| `POST /api/assertion-sets/<name>/evaluate` | Run a saved set. Body `{run?}`. |
+
+### Recordings
+
+| Method and path | Does |
+|---|---|
+| `GET /api/sessions` | What is recording or replaying now, and the recordings kept. Query `run`. |
+| `POST /api/sessions/record` | Start recording. Body `{name, run?, masks?}`. |
+| `POST /api/sessions/replay` | Start replaying. Body `{name, run?, onMiss?, strict?}`. |
+| `POST /api/sessions/auto` | Replay if the recording exists, record if it does not |
+| `POST /api/sessions/stop` | Stop, and say what was hit, missed and not recorded. Body `{run?}`. |
+| `GET /api/sessions/<name>` | Download a recording |
+| `PUT /api/sessions/<name>` | Upload one. Query `overwrite=1` to replace. |
+| `DELETE /api/sessions/<name>` | Remove one |
+
+### Settings
+
+| Method and path | Does |
+|---|---|
+| `GET /api/settings` | Capture, identity rules, who may send requests, and replay defaults |
+| `PUT /api/settings` | Change any of `capture`, `identity`, `auth`, `session` |
+| `POST /api/settings/credentials` | Register a key to recognise. Body `{label, key}`. Only a fingerprint is kept. |
+| `DELETE /api/settings/credentials/<label>` | Forget one |
+
+### Test kit: scenarios and results
+
+| Method and path | Does |
+|---|---|
+| `GET /api/scenarios` | The saved scenarios |
+| `POST /api/scenarios` | Save one, named by its `id` |
+| `GET` `PUT` `DELETE /api/scenarios/<id>` | Read, replace or remove one |
+| `POST /api/scenarios/validate` | Check one without saving it. Body `{scenario}`. |
+| `POST /api/scenarios/<id>/run` | Run a saved one. Body `{run?, tier?, label?, seed?, keepState?, wait?}`. |
+| `POST /api/scenarios/run` | Run one that is not saved. Body `{scenario, …the same options}`. |
+| `GET /api/results` | The results, newest first. Query `scenario`, `limit`. |
+| `GET /api/results/<run>` | One result: verdict, checks with evidence, and the conversation |
+| `GET /api/results/<run>/junit` | The same as JUnit XML |
+| `DELETE /api/results/<run>` | Remove one |
+| `GET /api/drivers` | The drivers, the fields each requires, and whether `process` is allowed |
+| `POST /api/drivers/validate` | Check an agent's driver settings |
+| `GET /api/checks` | The check types and the statuses a check can have |
+| `POST /api/checks/validate` | Check one check. Body `{check}`. |
+| `POST /api/checks/evaluate` | Run checks over a run that already happened. Body `{run, checks}`. |
+| `POST /api/interleavings` `POST /api/interleavings/<id>` | Run a scenario in several orders. Body `{orders, compare?}`. |
+
+With `"wait": false` a run starts in the background and answers `202`. Poll `GET /api/results/<run>`.
+
+### Test kit: datasets and experiments
+
+| Method and path | Does |
+|---|---|
+| `GET /api/datasets` | The datasets, with their current version |
+| `GET /api/datasets/<id>` | One version of it. Query `version` or `tag`. |
+| `PUT /api/datasets/<id>` | Save it. Body `{items, description?}`. Makes a new version when something changed. |
+| `DELETE /api/datasets/<id>` | Remove it |
+| `GET /api/datasets/<id>/versions` | Its versions and tags |
+| `POST /api/datasets/<id>/tag` | Tag a version. Body `{tag, version?}`. |
+| `POST /api/datasets/<id>/items/from-run` | Make a case from a run. Body `{run, id, scenario?, strict?, include?}`. |
+| `POST /api/datasets/<id>/import` | Import cases. Body `{format, content, agent, merge?}`. |
+| `GET /api/experiments` | The experiments. Query `dataset`. |
+| `POST /api/experiments/run` | Run a dataset. Body `{dataset, label?, tier?, repeat?, seed?, split?, tags?, items?, agent?, concurrency?, wait?}`. |
+| `GET` `DELETE /api/experiments/<id>` | Read or remove one |
+| `POST /api/experiments/<id>/baseline` | Make it its dataset's baseline |
+| `POST /api/experiments/<id>/gate` | Compare it with the baseline, case by case |
+| `GET /api/experiments/<a>/compare/<b>` | Compare any two |
+
+### Test kit: tools and peers
+
+| Method and path | Does |
+|---|---|
+| `GET /api/mcp` | The mock MCP servers |
+| `GET` `PUT` `DELETE /api/mcp/<id>` | Read, save or remove one |
+| `POST /api/mcp/validate` | Check a definition |
+| `GET /api/mcp/<id>/url` | The address to give an agent. Query `run`, `agent`. |
+| `POST /api/mcp/<id>/call` | Call one of its tools by hand. Body `{tool, arguments?, run?, agent?}`. |
+| `DELETE /api/mcp/<id>/cassette` | Forget what its proxy recorded |
+| `GET /api/mocks` | The mock REST backends |
+| `GET` `PUT` `DELETE /api/mocks/<id>` | Read, save or remove one |
+| `POST /api/mocks/validate` | Check a definition |
+| `POST /api/mocks/<id>/openapi` | Make one from an OpenAPI 3 document |
+| `GET /api/mocks/<id>/url` | The address to give an agent |
+| `GET /api/a2a` | The stub agents |
+| `GET` `PUT` `DELETE /api/a2a/<id>` | Read, save or remove one |
+| `POST /api/a2a/validate` | Check a definition |
+| `GET /api/a2a/<id>/url` | The address to give an agent |
+| `GET /api/a2aproxies` | The agent proxies |
+| `GET` `PUT` `DELETE /api/a2aproxies/<id>` | Read, save or remove one |
+| `GET /api/a2aproxies/<id>/url` | The address to give an agent |
+| `DELETE /api/a2aproxies/<id>/cassette` | Forget what it recorded |
+| `GET /api/kitfaults` | The tool and peer faults, their counters, and what each type takes |
+| `PUT` `DELETE /api/kitfaults/<id>` | Save or remove one |
+| `POST /api/kitfaults/validate` | Check one. Body `{rule}`. |
+| `POST /api/kitfaults/reseed` | Start the dice again from a seed. Body `{seed}`. |
+| `GET /api/presets` | The prompt injections a tool or stub can carry |
+| `POST /otlp/v1/traces` | OpenTelemetry spans, as JSON, onto a run's timeline |
+
+The mocks themselves are served under a run: `/run/<run>/agent/<name>/mcp/<id>`, `/run/<run>/agent/<name>/mock/<id>`, `/run/<run>/agent/<name>/a2a/<id>` and `/run/<run>/agent/<name>/a2a-proxy/<id>`.
+
+### Test kit: judging and setup
+
+| Method and path | Does |
+|---|---|
+| `GET /api/judges` | The judges, and whether each can gate |
+| `GET` `PUT` `DELETE /api/judges/<id>` | Read, save or remove one. Body `{rubric, model?, minAgreement?}`. |
+| `POST /api/judges/<id>/calibrate` | Calibrate it. Body `{examples}` or `{fromReviews: true}`. |
+| `POST /api/pairwise` | Have a judge compare two experiments. Body `{a, b, rubric, model?}`. |
+| `GET /api/pairwise/<id>` | Read a comparison |
+| `GET /api/reviews` | The review queue. Query `status`. |
+| `POST /api/reviews` | Put runs in it. Body `{runs}` or `{fromExperiment}`. |
+| `GET /api/reviews/<id>` | One review, with the conversation |
+| `POST /api/reviews/<id>/submit` | Give a verdict. Body `{verdict, scores?, comment?, reviewer?, corrected?}`. |
+| `GET /api/variations` | The sets of proposed variations |
+| `POST /api/variations/generate` | Have a model propose some. Body `{dataset, item, kinds?, count?, model?}`. |
+| `GET /api/variations/<id>` | One set |
+| `POST /api/variations/<id>/accept` | Add accepted ones to the dataset. Body `{accept: [{index, checks?}], rejectRest?}`. |
+| `GET /api/evaluators` | The code evaluators found on disk |
+| `GET /api/credentials` | The stored credentials by name, kind and fingerprint, and the kinds there are |
+| `PUT` `DELETE /api/credentials/<label>` | Store or remove one. The value is never returned. |
+| `GET` `PUT /api/kit` | How many runs and events are kept, and whether every request is recorded |
+
+### The console's own routes
+
+The console uses a few routes of its own under `/api/ui/`: the state it polls, saving the routing, running the functional tests, the chat box, and the ChatGPT sign-in. They follow the console and can change with it. A script should use the routes above.
+
+## Configuration
+
+Set these in the environment before starting `server.py`.
+
+| Variable | Default | Sets |
+|---|---|---|
+| `LLMSIM_PORT` | `8099` | The port |
+| `LLMSIM_SCRIPT` | `responses.json` | The shipped rules |
+| `LLMSIM_RULES` | `llmsim.rules.json` | Your rules |
+| `LLMSIM_CONFIG` | `llmsim.config.json` | Routing, fixed answers and settings, as the console saves them |
+| `LLMSIM_SUITE` | `llmsim.tests.json` | The functional test cases |
+| `LLMSIM_ASSERTIONS` | `llmsim.assertions.json` | The saved assertion sets |
+| `LLMSIM_CASSETTES` | `cassettes/` | Where recordings are kept |
+| `LLMSIM_RECORD`, `LLMSIM_REPLAY` | none | Start already recording, or replaying, the named recording |
+| `LLMSIM_ANTHROPIC_KEY`, `LLMSIM_OPENAI_KEY`, `LLMSIM_DEEPSEEK_KEY` | The published keys | The key each vendor endpoint accepts |
+| `LLMSIM_UPSTREAM`, `LLMSIM_UPSTREAM_MODEL`, `LLMSIM_UPSTREAM_KEY`, `LLMSIM_UPSTREAM_FORMAT` | none | The upstream a relay goes to |
+| `LLMSIM_UPSTREAM_FALLBACK` | off | Answer here when the upstream cannot be reached |
+| `LLMSIM_CHATGPT_AUTH` | `llmsim.chatgpt-auth.json` | Where the ChatGPT sign-in is kept |
+| `LLMSIM_CHATGPT_MODEL` | The plan's own choice | The plan model to use |
+| `LLMSIM_RUNS_DB` | `llmsim.runs.db` | Where the test kit keeps runs |
+| `LLMSIM_CREDENTIALS` | `llmsim.credentials.json` | Where the test kit keeps credentials |
+| `LLMSIM_EVALUATORS` | `evaluators/` | Where code evaluators are read from |
+| `LLMSIM_ALLOW_PROCESS` | off | Allow the `process` driver |
+| `LLMSIM_LOG_SIZE` | `300` | How many requests the live tail keeps |
+
+### What to commit
+
+Commit `llmsim.rules.json`, `llmsim.tests.json`, `llmsim.assertions.json` and the recordings you rely on. Never commit `llmsim.chatgpt-auth.json`, `llmsim.credentials.json` or `llmsim.runs.db`: they hold a sign-in, credentials and what runs said.
+
+### In a container
+
+`Dockerfile` builds an image and `deploy/install.sh` installs it in a Kubernetes namespace as `http://llmsim.<namespace>.svc:8099`. The manifest mounts the rule script and nothing else, so routing, a ChatGPT sign-in and recordings made in the pod are lost when it restarts. Mount a volume and point the variables above at it to keep them.
+
+## Limits
+
+- There is no authentication. Anyone who can reach the port can use everything here, and can spend a signed-in ChatGPT plan. Keep it on your own machine or a network you trust.
+- Captured requests are held in memory only.
+- An assertion that passes over a request too large to keep whole says so in `warnings`.
+- A streamed answer from a real model is passed through event by event, so only the stream faults can reach it.
+
+### Tests
 
 ```bash
-curl -X PUT  localhost:8099/api/settings -d '{"auth": {"mode": "any"}}'
-curl -X POST localhost:8099/api/settings/credentials -d '{"label": "platform-token", "key": "…"}'
+for t in tests/test_*.py; do python3 "$t" || break; done
 ```
 
-Each captured request then shows its credential's label, and an assertion can
-test `credential.label`.
-
-## What it cannot see
-
-- **What tools actually did.** Files written and calls made happen outside the
-  model's traffic.
-- **Messages between agents** that never pass through a model.
-- **An agent that cannot change its base URL,** or one that runs in a vendor's
-  cloud.
-- **How good the agent is with a real model.** A scripted model shows what the
-  agent does when the model says exactly that.
-
-Two more things to know. An assertion that passes over a request too large to
-keep whole says so in `warnings`. And a streamed answer from a real model is
-passed through event by event, so only the stream faults can reach it.
-
----
-
-Tests: `python3 tests/test_behaviors.py` and `python3 tests/test_chatgpt_plan.py`.
+Each file starts its own LLMSim on a free port with a throwaway directory. The instance you are running is never touched.

@@ -115,7 +115,7 @@ One page at `/ui`, with a screen for each job. Every screen has an address, such
 | **Chat** | Talk to a model by hand, the way a client would |
 | **Record & replay** | Record a run, and replay a recording |
 | **Functional tests** | Cases that send a prompt and say what must come back |
-| **Agent tests** | Drive an agent, simulate what it talks to, and judge the result |
+| **Agent tests** | Drive an agent, simulate what it talks to, and judge the result. A scenario is built on a canvas, as a form, or as JSON. |
 
 ## Script the model
 
@@ -451,6 +451,12 @@ bin/llmsim run scenario.json --junit out.xml
 A scenario is checked when it is saved, not when it first fails in the middle of a run, and every problem is listed at once. The model's script, and anything else a scenario installs, applies to that run only and is removed with it.
 
 In the console, a scenario is a form: the agent and its driver's own fields, the turns, the model's script, the checks. The **JSON** switch beside it shows exactly what is sent.
+
+### Build it on the canvas
+
+The **Canvas** switch shows the same scenario as a picture of the run it describes: who speaks on the left, the agent in the middle, what it reaches on the right — the model, and the mock tools, mock backends, seeded records and faults this run installs — and the checks underneath. A block is one part of the document. Clicking it opens that part's own fields beside the picture, the same fields the form has, writing to the same place; the **+** buttons add a turn, a check, a mock or a fault where it belongs, and a block's **Remove** takes it out. **Check it is valid** marks each block the validator has something to say about, with its words on the block.
+
+Canvas, form and JSON are three views of one document, and switching between them loses nothing. Nothing can be drawn that cannot be saved: a mock drawn on the canvas is a `setup` action, a fault is a rule inside one, and a part the canvas has no block for is drawn as its JSON rather than hidden. Stub agents and proxies to real ones are shared by every scenario rather than part of one, so the canvas shows how many there are and where they are edited.
 
 | Scenario field | Holds |
 |---|---|

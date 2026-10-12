@@ -263,6 +263,29 @@ eq(getAt(d, ['nope', 'deeper']), undefined, 'a missing path reads as nothing');
         assert ran.returncode == 0, ran.stderr[:600]
 
 
+def case_a_scenario_is_drawn_as_a_canvas_that_reaches_every_part_of_it(sim):
+    """The canvas is a third view of a scenario beside the form and the JSON: the run as a picture,
+    each block one part of the document. A part the canvas has no block for would be a part nobody
+    can see from it, so what it draws is held to the validator's own list of a scenario's fields, and
+    the setup actions it draws to the kinds the server accepts. The form's parts were made to work at a
+    path so the canvas could reuse them; a mock backend's proxy is one of them, and names the real one
+    as the server wants it."""
+    import re
+    page = open(os.path.join(ROOT, "ui.html")).read()
+    assert 'id="lab-mode-canvas"' in page and "function cvDraw" in page
+    assert "canvas: true" in page.split("const LAB = {")[1].split("\n};")[0].split("\n  results:")[0], "the scenario area has no canvas"
+    covers = set(re.findall(r'"(\w+)"', page.split("const CV_COVERS = [")[1].split("]")[0]))
+    sys.path.insert(0, ROOT)
+    from testkit.scenario import TOP
+    assert set(TOP) <= covers, "the canvas has no block for %s" % sorted(set(TOP) - covers)
+    _s, body = sim.api("POST", "/api/scenarios/validate", {"scenario": {"id": "x", "agent": {"driver": "http", "url": "http://x"}, "turns": [{"say": "hi"}], "checks": [{"type": "answer", "contains": "x"}], "setup": [{"type": "zzz"}]}})
+    said = next(p for p in body["problems"] if "setup[0].type is one of " in p)
+    kinds = set(said.split("one of ")[1].split(", "))
+    drawn = set(re.findall(r"\n  (\w+): \(", page.split("const CV_SETUP = {")[1].split("\n};")[0]))
+    assert kinds <= drawn, "the canvas cannot draw the setup action(s) %s" % sorted(kinds - drawn)
+    assert 'proxyFields(p.concat("proxy"), "baseUrl")' in page, "a mock backend's proxy must be saved as baseUrl, which is what the server reads"
+
+
 def main():
     sim = Sim().start()
     sim.agent = FakeAgent(sim.base)

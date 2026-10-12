@@ -115,7 +115,7 @@ One page at `/ui`, with a screen for each job. Every screen has an address, such
 | **Chat** | Talk to a model by hand, the way a client would |
 | **Record & replay** | Record a run, and replay a recording |
 | **Functional tests** | Cases that send a prompt and say what must come back |
-| **Agent tests** | Drive an agent, simulate what it talks to, and judge the result. A scenario is built on a canvas, as a form, or as JSON. |
+| **Agent tests** | Add the agents under test, run scenarios on them, and keep how each went. Also what an agent talks to while it runs, and how its work is judged. A scenario is built on a canvas, as a form, or as JSON. |
 
 ## Script the model
 
@@ -415,6 +415,61 @@ driver ──▶ AGENT ┼── tools ─────── mock MCP server, mo
 
 Nothing in it is specific to one product. A platform enters in two places: a **driver**, which is how a conversation with it is started, and an **importer**, which reads its test cases.
 
+### Connect an agent
+
+*Console: Agent tests, Agents*
+
+An agent under test is saved once, and scenarios are run on it. Adding one starts with where it lives, because the platform decides how it is reached.
+
+| Platform | Reached by | Credential |
+|---|---|---|
+| **Salesforce Agentforce** | Salesforce's Agent API (`agentforce`), or A2A, which Salesforce describes as a beta | OAuth client credentials from an external client app, token URL `<domain>/services/oauth2/token` |
+| **SAP Joule** | A2A, through the SAP Agent Gateway | OAuth client credentials from SAP Cloud Identity Services |
+| **ServiceNow** | A2A, through AI Agent Fabric, once "Allow third party to access ServiceNow AI agents" is switched on | OAuth client credentials from the instance, or an `x-sn-apikey` header |
+| **Azure AI Foundry** | A2A, once incoming A2A is enabled on the agent, or the Responses API with the agent named as an agent reference | OAuth client credentials for a Microsoft Entra service principal, scope `https://ai.azure.com/.default` |
+| **Custom** | A2A, an OpenAI-compatible chat endpoint, the Responses API, any HTTP endpoint, or a local program | Whatever the agent wants: a bearer token, a header, basic, or OAuth client credentials |
+
+`GET /api/agents` returns this list with each connection's address laid out as that platform's is. An address is saved only once its blanks are filled in.
+
+```json
+{
+  "label": "Helper (Foundry project)",
+  "system": "azure-foundry",
+  "connection": {
+    "driver": "a2a",
+    "url": "https://acme.services.ai.azure.com/api/projects/support/agents/helper/endpoint/protocols/a2a",
+    "card": "agentCard/v0.3",
+    "headers": {"A2A-Version": "0.3"},
+    "credential": "entra-foundry"
+  }
+}
+```
+
+```bash
+curl -X PUT  localhost:8099/api/agents/helper -d @agent.json
+curl -X POST localhost:8099/api/agents/helper/test -d '{"say": "Hello"}'
+```
+
+**Test the connection.** A test reaches the agent the way a run would and says what happened at each of three steps: the credential (is it stored, and does the platform issue a token for it), the connection (does the address answer as that protocol), and one message. The message is the only step that proves the agent answers, and it is really sent; `"say": ""` sends none. A changed connection is "not tested" again.
+
+**Run scenarios on it.** A scenario names a saved agent instead of describing one, `"agent": {"use": "helper"}`, so fifty scenarios do not each hold an address, and the same scenario runs on another agent unchanged:
+
+```bash
+curl -X POST localhost:8099/api/scenarios/refund-over-limit/run -d '{"agent": "support-next"}'
+```
+
+`agent` on a run sends it to that saved agent whatever the scenario says. What is the scenario's own stays: the agent's name on the timeline, which checks refer to, and what is said to it. For a scenario that drives several agents it is `{"<name>": "<saved agent>"}`.
+
+**A test run** is a set of scenarios run on one agent, kept as one thing: which passed, which did not, and why.
+
+```bash
+curl -X POST localhost:8099/api/testruns -d '{"agent": "helper", "tags": ["smoke"], "label": "before the release"}'
+```
+
+Choose the scenarios with `scenarios` (ids), `tags` (any of these) or `"all": true`. They run one after another, since they are conversations with the same agent. `GET /api/agents/<id>/coverage` lists every saved scenario with how its last run on that agent went. A test run is what a person presses a button for; an [experiment](#datasets-experiments-and-the-gate) is what a release is gated on, and takes `"agent": "<saved agent>"` too.
+
+> **What LLMSim can see of a hosted agent.** LLMSim stands in for the model, the tools and the peers of an agent it is in front of. An agent hosted on Salesforce, SAP, ServiceNow or Azure calls its own model and its own tools, and LLMSim is in front of none of them. It sees the conversation, so `answer`, `judge`, `conversation` and time checks work. `path`, token and cost checks have nothing to read, and say `no-data`, unless the agent's tools are pointed at LLMSim or it sends OpenTelemetry spans here. `model.rules` in a scenario script a model the hosted agent never calls.
+
 ### A scenario is a test
 
 A scenario says how to reach the agent, what the user says, what the model says, and what must hold afterwards.
@@ -463,7 +518,7 @@ A block can be dragged to where it reads best, and the lines follow it. Where a 
 | Scenario field | Holds |
 |---|---|
 | `id`, `description`, `tags` | Its name, what it proves, and labels |
-| `agent` | One agent: `name`, `driver`, the driver's fields, an optional `credential` |
+| `agent` | One agent. A saved one, `{"use": "<id>", "name"?}`, or one described here: `name`, `driver`, the driver's fields, an optional `credential` |
 | `agents` | Two to twenty agents, each with its own `turns`, driven at the same time |
 | `turns` | What the user says, in order: `say`, and an optional `expect` on the reply |
 | `user` | A simulated user instead of fixed turns: `{persona, goal}` |
@@ -496,7 +551,8 @@ A driver is how LLMSim talks to the agent under test. `GET /api/drivers` lists t
 |---|---|---|
 | `http` | Anything that takes a POST | `url`, `method`, `body` (a template), `headers`, `reply` (a path into the answer), `replyFrom` (`sse` or `text`), `conversation` |
 | `openai` | An OpenAI-compatible chat endpoint | `url`, `model`, `system`, `stream`, `extra` |
-| `a2a` | An Agent2Agent agent, over JSON-RPC | `url`, `rpcUrl`, `wait` (`poll`, `push` or `stream`), `pollMs`, `blocking`, `callbackBase` |
+| `responses` | An endpoint that speaks the Responses API, which is also how an Azure AI Foundry agent is called | `url`, `model`, `instructions`, `extra`, `chain` (`previous`, `conversation` or `none`), `query` |
+| `a2a` | An Agent2Agent agent, over JSON-RPC | `url`, `rpcUrl`, `wait` (`poll`, `push` or `stream`), `pollMs`, `blocking`, `callbackBase`, `card` (where the agent card is, when not at the usual address), `headers` |
 | `agentforce` | Salesforce's Agent API | `domain`, `agentId`, `apiBase`, `stream`, `bypassUser`, `variables` |
 | `process` | A local program: the message on stdin, the reply on stdout | `command`, `cwd`, `env` |
 
@@ -570,7 +626,9 @@ bin/llmsim experiment run --dataset refunds --gate    # a dataset, gated against
 
 ### What was not verified
 
-- No live Salesforce or SAP agent was tested. The Agentforce driver follows the published Agent API and is tested against a stand-in written from it.
+- No live Salesforce, SAP, ServiceNow or Azure agent was tested. Each connection follows what its vendor publishes and is tested against a stand-in written from the same: the Agentforce driver against the Agent API, Azure AI Foundry against Microsoft's description of incoming A2A.
+- For ServiceNow and SAP, the vendors' public documentation says agents are reached over A2A 0.3 and does not give the address an agent answers on, so none is laid out: use the one your instance gives. SAP's reference architecture says access from outside through its Agent Gateway is still being rolled out.
+- For Azure AI Foundry, this driver speaks A2A 0.3, which Foundry serves as a preview; 1.0 is its generally available version. The Responses address is the one Microsoft's SDK uses and was not confirmed against a live project.
 - A2A is the 0.3 JSON-RPC binding. MCP is the streamable-HTTP transport: a stdio server is not reachable.
 - OTLP is read as JSON only. Set `OTEL_EXPORTER_OTLP_PROTOCOL=http/json`.
 - The pytest plugin is tested through its session class, not under pytest.
@@ -689,9 +747,9 @@ These are what a client calls. Prefix any of them with `/run/<run>` or `/run/<ru
 | `POST /api/scenarios` | Save one, named by its `id` |
 | `GET` `PUT` `DELETE /api/scenarios/<id>` | Read, replace or remove one |
 | `POST /api/scenarios/validate` | Check one without saving it. Body `{scenario}`. |
-| `POST /api/scenarios/<id>/run` | Run a saved one. Body `{run?, tier?, label?, seed?, keepState?, wait?}`. |
+| `POST /api/scenarios/<id>/run` | Run a saved one. Body `{run?, tier?, label?, seed?, keepState?, wait?, agent?}`. `agent` is a saved agent to run it on. |
 | `POST /api/scenarios/run` | Run one that is not saved. Body `{scenario, …the same options}`. |
-| `GET /api/results` | The results, newest first. Query `scenario`, `limit`. |
+| `GET /api/results` | The results, newest first. Query `scenario`, `agent` (a saved agent), `limit`. |
 | `GET /api/results/<run>` | One result: verdict, checks with evidence, and the conversation |
 | `GET /api/results/<run>/junit` | The same as JUnit XML |
 | `DELETE /api/results/<run>` | Remove one |
@@ -703,6 +761,22 @@ These are what a client calls. Prefix any of them with `/run/<run>` or `/run/<ru
 | `POST /api/interleavings` `POST /api/interleavings/<id>` | Run a scenario in several orders. Body `{orders, compare?}`. |
 
 With `"wait": false` a run starts in the background and answers `202`. Poll `GET /api/results/<run>`.
+
+### Test kit: agents and test runs
+
+| Method and path | Does |
+|---|---|
+| `GET /api/agents` | The saved agents with whether each answers, and `systems`: the platforms, and how each is reached |
+| `GET` `PUT` `DELETE /api/agents/<id>` | Read, replace or remove one. An agent that scenarios name is not removed without `?force=1`. |
+| `POST /api/agents/validate` | Check one without saving it. Body `{agent}`. |
+| `POST /api/agents/<id>/test` | Reach it and say what happened at each step. Body `{say?}`; `""` sends no message. The result is kept with the agent. |
+| `POST /api/agents/test` | The same for one that is not saved. Body `{agent, say?}`. |
+| `GET /api/agents/<id>/coverage` | Every saved scenario, with its last run on this agent |
+| `GET /api/testruns` | The test runs, newest first. Query `agent`. |
+| `POST /api/testruns` | Run scenarios on an agent. Body `{agent, scenarios \| tags \| all, label?, tier?, wait?}`. |
+| `GET` `DELETE /api/testruns/<id>` | Read or remove one |
+
+With `"wait": false` a test run starts in the background and answers `202`. Poll `GET /api/testruns/<id>`.
 
 ### Test kit: datasets and experiments
 

@@ -101,7 +101,7 @@
   @media (max-width:1000px) { .ov-stats { grid-template-columns:repeat(2, minmax(0, 1fr)); } .ov-tasks { grid-template-columns:1fr; } }
 
   /* ── agent tests: the areas, grouped by what they are for ───────── */
-  .lab-groups { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:14px 18px; }
+  .lab-groups { display:grid; grid-template-columns:repeat(5, minmax(0, 1fr)); gap:14px 18px; }
   .lab-group h3 { font:600 10px/1 var(--mono); letter-spacing:.14em; text-transform:uppercase; color:var(--muted); margin:0 0 3px; }
   .lab-group p { color:var(--faint); font-size:11.5px; margin:0 0 8px; }
   .lab-group button { display:block; width:100%; text-align:left; background:none; border:0; border-radius:6px;
@@ -112,6 +112,28 @@
   .lab-rows tr { cursor:pointer; }
   .lab-rows tr:hover td { background:var(--subtle); }
   .lab-rows tr.on td { background:var(--primary-tint); }
+
+  /* ── agent tests: an agent under test ───────────────────────────── */
+  .sys-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(215px, 1fr)); gap:12px; margin-top:12px; }
+  .sys { display:flex; flex-direction:column; align-items:flex-start; text-align:left; background:#fff; border:1px solid var(--border); border-radius:10px; padding:13px 14px 14px; font:inherit; color:inherit; cursor:pointer; }
+  .sys:hover { border-color:var(--primary); box-shadow:0 0 0 2px var(--primary-tint); }
+  .sys b { display:block; font-size:14px; letter-spacing:-.01em; }
+  .sys > span { display:block; color:var(--muted); font-size:12px; margin-top:3px; }
+  .sys .via { margin-top:9px; display:flex; gap:5px; flex-wrap:wrap; }
+  .sys-mark { display:inline-flex; align-items:center; justify-content:center; min-width:30px; height:30px; padding:0 7px; border-radius:7px;
+    background:var(--chrome); color:#fff; font:700 10.5px/1 var(--mono); letter-spacing:.04em; }
+  .sys .sys-mark { display:inline-flex; color:#fff; margin:0 0 9px; }
+  .sys-line { display:flex; align-items:center; gap:10px; margin:10px 0 2px; }
+  .sys-line b { font-size:14px; }
+  .sys-line span.fh { margin:0; }
+  .steps { list-style:none; padding:0; margin:10px 0 0; }
+  .steps li { display:grid; grid-template-columns:70px 100px minmax(0, 1fr); gap:10px; align-items:baseline; padding:7px 0; border-top:1px solid var(--border-soft); font-size:12.5px; }
+  .steps li b { font-weight:600; }
+  .steps li .tag { justify-self:start; }
+  .steps li span { overflow-wrap:anywhere; }
+  .pick { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
+  .pick label { display:inline-flex; align-items:center; gap:6px; border:1px solid var(--border); border-radius:7px; padding:5px 9px; font-size:12.5px; color:var(--ink); background:#fff; cursor:pointer; margin:0; }
+  .runon { width:auto; padding:7px 9px; font-size:12.5px; }
 
   /* ── agent tests: forms ─────────────────────────────────────────── */
   .fsec { border-top:1px solid var(--border-soft); padding:16px 0 4px; }
@@ -1881,20 +1903,29 @@ PAGES.evidence = { enter: evEnter, poll: evPoll };
 //
 // It does nothing the API does not: whatever a person does here a CI job can do.
 const LAB = {
-  scenarios: { title: "Scenarios", group: "cases", help: "One test of an agent: how to reach it, what the user says, what the model says, and what must hold afterwards.", list: "/api/scenarios", key: "scenarios", id: "id",
-    cols: (r) => `${r.driver || ""} · ${r.checks} check(s)`, one: (id) => "/api/scenarios/" + id, oneKey: "scenario", put: (id) => "/api/scenarios/" + id, del: (id) => "/api/scenarios/" + id,
-    actions: [["Run", (id) => ["POST", "/api/scenarios/" + id + "/run", {}], "primary"], ["Check it is valid", (id, doc) => ["POST", "/api/scenarios/validate", { scenario: doc }]]],
+  agents: { title: "Agents", group: "agents", help: "The agents under test. Add one, check that it answers, then run scenarios on it.", list: "/api/agents", key: "agents", id: "id",
+    cols: (r) => `${r.systemName} · ${(DRIVER_NAME[r.driver] || r.driver || "").split(":")[0]}${r.label ? " · " + r.label : ""}`, status: (r) => r.status,
+    one: (id) => "/api/agents/" + id, oneKey: "agent", put: (id) => "/api/agents/" + id, del: (id) => "/api/agents/" + id,
+    blank: { id: "", system: "", connection: {} }, newLabel: "Add agent", opened: () => agentLoad(),
+    form: () => agentForm() },
+  scenarios: { title: "Scenarios", group: "cases", help: "One test of an agent: which agent, what the user says, what the model says, and what must hold afterwards.", list: "/api/scenarios", key: "scenarios", id: "id",
+    cols: (r) => `${(r.uses || []).length ? "on " + r.uses.join(", ") : r.several ? "several agents" : r.driver || ""} · ${r.checks} check(s)`, one: (id) => "/api/scenarios/" + id, oneKey: "scenario", put: (id) => "/api/scenarios/" + id, del: (id) => "/api/scenarios/" + id,
+    actions: [["Run", (id) => ["POST", "/api/scenarios/" + id + "/run", RUNON ? { agent: RUNON } : {}], "primary"], ["Check it is valid", (id, doc) => ["POST", "/api/scenarios/validate", { scenario: doc }]]], runOn: true,
     blank: { id: "my-scenario", agent: { name: "agent", driver: "http", url: "http://localhost:9000/chat", body: { input: "{{message}}" }, reply: "reply" }, model: { rules: [] }, turns: [{ say: "hello", expect: { contains: "hi" } }], checks: [] },
     form: () => scenarioForm(), canvas: true },
-  results: { title: "Results", group: "cases", help: "What each run did and which checks held.", list: "/api/results", key: "results", id: "run",
-    cols: (r) => `${r.scenario} · ${r.tier}${r.label ? " · " + r.label : ""}`, status: (r) => r.verdict, one: (id) => "/api/results/" + id, oneKey: "result", readonly: true, del: (id) => "/api/results/" + id,
+  testruns: { title: "Test runs", group: "runs", help: "A set of scenarios run on one agent, kept together: which passed, which did not, and why.", list: "/api/testruns", key: "testruns", id: "id",
+    cols: (r) => `${r.agent} · ${(r.summary || {}).pass ?? 0} of ${(r.summary || {}).total ?? 0} passed${r.label ? " · " + r.label : ""} · ${when(r.startedAt)}`, status: (r) => r.verdict || r.status,
+    one: (id) => "/api/testruns/" + id, oneKey: "testrun", readonly: true, del: (id) => "/api/testruns/" + id,
+    view: (doc) => testrunView(doc), extra: () => testrunStart(), opened: () => { if (LABDOC.status === "running") testrunWatch(LABID); } },
+  results: { title: "Results", group: "runs", help: "What each run did and which checks held.", list: "/api/results", key: "results", id: "run",
+    cols: (r) => `${r.scenario} · ${r.tier}${(r.agents || []).length ? " · on " + r.agents.join(", ") : ""}${r.label && !r.testrun ? " · " + r.label : ""}`, status: (r) => r.verdict, one: (id) => "/api/results/" + id, oneKey: "result", readonly: true, del: (id) => "/api/results/" + id,
     view: (doc) => resultView(doc) },
   datasets: { title: "Datasets", group: "cases", help: "Scenarios kept together as versions that never change. Saving makes a new version; tag one \"baseline\" to compare against.", list: "/api/datasets", key: "datasets", id: "id",
     cols: (r) => `v${r.version} · ${r.items} case(s)${r.description ? " · " + r.description : ""}`, one: (id) => "/api/datasets/" + id, oneKey: null, put: (id) => "/api/datasets/" + id, del: (id) => "/api/datasets/" + id,
     actions: [["Run as an experiment", (id) => ["POST", "/api/experiments/run", { dataset: id }], "primary"], ["Versions", (id) => ["GET", "/api/datasets/" + id + "/versions"]], ["Tag this version baseline", (id) => ["POST", "/api/datasets/" + id + "/tag", { tag: "baseline" }]]],
     blank: { id: "my-dataset", description: "", items: [{ id: "case-1", scenarioId: "" }] },
     form: () => datasetForm() },
-  experiments: { title: "Experiments", group: "cases", help: "A dataset version run against an agent, case by case. Mark one as the baseline, then gate the next against it.", list: "/api/experiments", key: "experiments", id: "id",
+  experiments: { title: "Experiments", group: "runs", help: "A dataset version run against an agent, case by case. Mark one as the baseline, then gate the next against it.", list: "/api/experiments", key: "experiments", id: "id",
     cols: (r) => `${r.dataset} v${r.version} · ${r.tier}${r.label ? " · " + r.label : ""}${r.passRate != null ? " · " + Math.round(r.passRate * 100) + "% pass" : ""}`, status: (r) => r.verdict || r.status, one: (id) => "/api/experiments/" + id, oneKey: "experiment", readonly: true,
     actions: [["Make this the baseline", (id) => ["POST", "/api/experiments/" + id + "/baseline", {}]], ["Gate against the baseline", (id) => ["POST", "/api/experiments/" + id + "/gate", {}]], ["Send failures to review", (id) => ["POST", "/api/reviews", { fromExperiment: id }]]],
     view: (doc) => experimentView(doc) },
@@ -1933,23 +1964,24 @@ const LAB = {
   variations: { title: "Variations", group: "judging", help: "Inputs a model proposed near an existing case. Nothing enters a dataset until a person accepts it.", list: "/api/variations", key: "variations", id: "id",
     cols: (r) => `${r.dataset} / ${r.item} · ${r.accepted} of ${r.proposals} accepted`, one: (id) => "/api/variations/" + id, oneKey: "variations", readonly: true,
     view: (doc) => variationsView(doc), extra: () => variationsGenerate() },
-  credentials: { title: "Credentials", group: "setup", help: "What a driver uses to reach an agent. A value is never shown again, and is scrubbed from everything the kit keeps.", list: "/api/credentials", key: "credentials", id: "label",
+  credentials: { title: "Credentials", group: "agents", help: "What a driver uses to reach an agent. A value is never shown again, and is scrubbed from everything the kit keeps.", list: "/api/credentials", key: "credentials", id: "label",
     cols: (r) => `${r.type} · ${r.fingerprint}`, pick: true, put: (id) => "/api/credentials/" + id, del: (id) => "/api/credentials/" + id, blank: { label: "agent-token", type: "bearer" }, write: (doc) => { const { label, fingerprint, ...rest } = doc; return rest; }, fresh: true,
     form: () => credentialForm() },
 };
-let LABK = "scenarios", LABROWS = [], LABID = null, LABNEW = false;
+let LABK = "agents", LABROWS = [], LABID = null, LABNEW = false, RUNON = "";
 let LABDOC = null, LABMODE = "form", LABPREF = "form", LABRAW = {};
 // What the forms offer in their lists, asked of the API rather than written here.
-const REF = { drivers: [], processAllowed: false, checks: [], credTypes: {}, creds: [], presets: {}, faultTypes: {}, toolFaults: [], peerFaults: [], judges: [], builtinJudges: [], scenarios: [], datasets: [] };
+const REF = { drivers: [], processAllowed: false, checks: [], credTypes: {}, creds: [], presets: {}, faultTypes: {}, toolFaults: [], peerFaults: [], judges: [], builtinJudges: [], scenarios: [], datasets: [], systems: [], agents: [] };
 
-// Thirteen areas in one row is a wall. They are four kinds of thing, in the
-// order a test is put together: the cases, what the agent talks to while it
-// runs, how its work is judged, and what reaching it needs.
+// Fifteen areas in one row is a wall. They are five kinds of thing, in the
+// order a team works: who is tested, what is asked of them, how it went,
+// what the agent talks to while it runs, and how its work is judged.
 const LAB_GROUPS = [
-  ["cases", "Cases and runs", "What is tested, and how it went"],
+  ["agents", "Agents", "Who is tested, and how it is reached"],
+  ["cases", "Tests", "What is asked of them"],
+  ["runs", "Runs", "How it went"],
   ["world", "What the agent talks to", "Simulated tools, backends and other agents"],
   ["judging", "Judging", "Deciding what a rule cannot"],
-  ["setup", "Setup", "Reaching the agent"],
 ];
 function labTabs() {
   document.getElementById("lab-tabs").innerHTML = LAB_GROUPS.map(([g, title, what]) => `<div class="lab-group"><h3>${esc(title)}</h3><p>${esc(what)}</p>`
@@ -1957,11 +1989,13 @@ function labTabs() {
     + `</div>`).join("");
 }
 function labClose() { LABID = null; LABNEW = false; LABDOC = null; LABRAW = {}; document.getElementById("lab-editor").hidden = true; document.getElementById("lab-out-card").hidden = true; }
-function labSelect(k) { LABK = k; labClose(); labTabs(); labLoad(); }
+// The list is emptied at once: until the new area's rows arrive, the old area's would be shown under the new heading.
+function labSelect(k) { LABK = k; labClose(); labTabs(); document.getElementById("lab-list").innerHTML = ""; document.getElementById("lab-extra").innerHTML = ""; labLoad(); }
 
 async function labRef() {
   const get = async (p) => { const r = await REST("GET", p); return r.ok ? r.body : {}; };
-  const [d, c, cr, pr, kf, j, s, ds, st, px] = await Promise.all(["/api/drivers", "/api/checks", "/api/credentials", "/api/presets", "/api/kitfaults", "/api/judges", "/api/scenarios", "/api/datasets", "/api/a2a", "/api/a2aproxies"].map(get));
+  const [d, c, cr, pr, kf, j, s, ds, st, px, ag] = await Promise.all(["/api/drivers", "/api/checks", "/api/credentials", "/api/presets", "/api/kitfaults", "/api/judges", "/api/scenarios", "/api/datasets", "/api/a2a", "/api/a2aproxies", "/api/agents"].map(get));
+  REF.systems = ag.systems || []; REF.agents = ag.agents || []; REF.scenarioRows = s.scenarios || [];
   REF.drivers = d.drivers || []; REF.processAllowed = !!d.processAllowed; REF.checks = c.types || [];
   REF.credTypes = cr.types || {}; REF.creds = (cr.credentials || []).map((x) => x.label);
   REF.presets = pr.injections || {}; REF.faultTypes = kf.types || {}; REF.toolFaults = kf.tool || []; REF.peerFaults = kf.peer || [];
@@ -1970,13 +2004,14 @@ async function labRef() {
   REF.stubs = (st.stubs || []).map((x) => x.id); REF.proxies = (px.proxys || []).map((x) => x.id);
 }
 
-const STATUS_TAG = { pass: "set", done: "set", on: "set", fail: "err", error: "err", flaky: "replay", "no-data": "", open: "replay", off: "", running: "replay" };
+const STATUS_TAG = { pass: "set", done: "set", on: "set", fail: "err", error: "err", flaky: "replay", "no-data": "", open: "replay", off: "", running: "replay",
+  connected: "set", failing: "err", unverified: "replay", "not tested": "", ok: "set", warn: "replay", waiting: "", interrupted: "err" };
 const statusTag = (s) => (s ? `<span class="tag ${STATUS_TAG[s] ?? ""}">${esc(s)}</span>` : "");
 async function labLoad() {
   const a = LAB[LABK];
   document.getElementById("lab-title").textContent = a.title;
   document.getElementById("lab-help").textContent = a.help;
-  document.getElementById("lab-new").hidden = !!a.readonly;
+  document.getElementById("lab-new").hidden = !!a.readonly; document.getElementById("lab-new").textContent = a.newLabel || "New";
   document.getElementById("lab-extra").innerHTML = a.extra ? a.extra() : "";
   const r = await REST("GET", a.list);
   const el = document.getElementById("lab-list");
@@ -2014,8 +2049,10 @@ function labEdit(doc) {
   document.getElementById("lab-editing").textContent = (LABNEW ? "New: " : "") + a.title + (LABID ? " · " + LABID : "");
   document.getElementById("lab-mode").hidden = !!a.readonly || !a.form;
   document.getElementById("lab-save").hidden = !a.put; document.getElementById("lab-del").hidden = !a.del || LABNEW;
-  document.getElementById("lab-actions").innerHTML = LABNEW ? "" : (a.actions || []).map(([label, , kind], j) => `<button class="btn ${kind === "primary" ? "" : "ghost"}" onclick="labAct(${j})">${esc(label)}</button>`).join("");
+  RUNON = "";
+  document.getElementById("lab-actions").innerHTML = LABNEW ? "" : labActions();
   note("lab-note", "");
+  if (a.opened) a.opened();
   labDraw();
   document.getElementById("lab-editor").scrollIntoView({ block: "nearest", behavior: "smooth" });
 }
@@ -2051,7 +2088,7 @@ async function labSave() {
   const a = LAB[LABK];
   let doc;
   try { doc = labDoc(); } catch (e) { return note("lab-note", e.message, true); }
-  const id = LABID || doc.id || doc.label;
+  const id = LABID || doc[a.id];              // each area says which of its fields is its name
   if (!id) return note("lab-note", "Give it a name first.", true);
   const r = await REST("PUT", a.put(id), a.write ? a.write(doc) : doc);
   if (!r.ok) return note("lab-note", said(r.body), true);
@@ -2059,9 +2096,18 @@ async function labSave() {
   if (a.canvas) cvPosKeep();
   document.getElementById("lab-editing").textContent = a.title + " · " + id;
   document.getElementById("lab-del").hidden = !a.del;
-  document.getElementById("lab-actions").innerHTML = (a.actions || []).map(([label, , kind], j) => `<button class="btn ${kind === "primary" ? "" : "ghost"}" onclick="labAct(${j})">${esc(label)}</button>`).join("");
+  document.getElementById("lab-actions").innerHTML = labActions();
+  if (a.opened) a.opened();
   if (LABMODE === "form") labForm();
   note("lab-note", "Saved " + id + "."); await labRef(); labLoad();
+  if (LABMODE === "form" && LABID === id) labForm();
+}
+// A scenario's Run can be pointed at a saved agent, whatever agent the scenario itself names.
+function labActions() {
+  const a = LAB[LABK];
+  const on = a.runOn && REF.agents.length ? `<select class="runon" id="lab-runon" title="The agent Run is sent to" onchange="RUNON = this.value">`
+    + [["", "on the agent it names"], ...REF.agents.map((x) => [x.id, "on " + x.id])].map(([v, t]) => `<option value="${esc(v)}" ${v === RUNON ? "selected" : ""}>${esc(t)}</option>`).join("") + `</select>` : "";
+  return (a.actions || []).map(([label, , kind], j) => `<button class="btn ${kind === "primary" ? "" : "ghost"}" onclick="labAct(${j})">${esc(label)}</button>` + (j === 0 ? on : "")).join("");
 }
 async function labDelete() {
   const a = LAB[LABK];
@@ -2208,6 +2254,22 @@ const AFTER = {
     dropRaw(p);
   },
   check: (p) => { const c = getAt(LABDOC, p) || {}; for (const k of Object.keys(c)) if (k !== "type" && k !== "name") delete c[k]; dropRaw(p); },
+  // Naming a saved agent drops how this one was reached, which is now the saved agent's to say;
+  // going back to describing it here starts from the simplest way of reaching one.
+  use: (p) => {
+    let a = getAt(LABDOC, p);
+    if (!a) { a = {}; setAt(LABDOC, p, a); }
+    if (a.use) { for (const k of Object.keys(a)) if (!["use", "name", "turns", "user"].includes(k)) delete a[k]; }
+    else if (!a.driver) Object.assign(a, { name: a.name || "agent", driver: "http", url: "", body: { input: "{{message}}" }, reply: "reply" });
+    dropRaw(p);
+  },
+  // Another protocol for the same platform is another connection: its own fields, from that platform's template.
+  protocol: () => {
+    const c = connOf(sysOf(LABDOC.system), LABDOC.connection.driver), keep = LABDOC.connection.credential;
+    LABDOC.connection = { driver: LABDOC.connection.driver, ...JSON.parse(JSON.stringify((c || {}).defaults || {})) };
+    if (keep) LABDOC.connection.credential = keep;
+    dropRaw(["connection"]);
+  },
   fault: (q) => {
     // Reached from the rule's target (q is the rule) and from fault.type (q is the rule's fault).
     const base = q[q.length - 1] === "fault" ? q.slice(0, -1) : q, d = getAt(LABDOC, base) || {};
@@ -2258,7 +2320,14 @@ const DRIVER_FIELDS = {
   a2a: (p) => fRow(fText(p.concat("url"), "Agent URL", { mono: 1, ph: "https://agent.example", span: 2, help: "Its agent card is read from here." }), fText(p.concat("rpcUrl"), "JSON-RPC URL", { opt: 1, mono: 1, help: "Only when it is not the one the card gives." }))
     + fRow(fSel(p.concat("wait"), "Wait for the task by", [["", "Polling"], ["push", "A push callback"], ["stream", "A stream"]], { redraw: 1, same: "poll" }),
         getAt(LABDOC, p.concat("wait")) === "push" ? fText(p.concat("callbackBase"), "Callback base URL", { opt: 1, mono: 1, help: "Where the agent can reach LLMSim." }) : fNum(p.concat("pollMs"), "Poll every (ms)", { opt: 1, ph: "300" }),
-        fTog(p.concat("blocking"), "Ask it to block until done", { dflt: true })),
+        fTog(p.concat("blocking"), "Ask it to block until done", { dflt: true }))
+    + fRow(fText(p.concat("card"), "Where its agent card is", { opt: 1, mono: 1, ph: ".well-known/agent-card.json", help: "A path under the URL, or an address. Only when it is not where the specification puts it." }),
+        fJson(p.concat("headers"), "Headers sent with every request", { opt: 1, rows: 2, ph: '{"A2A-Version": "0.3"}' })),
+  responses: (p) => fRow(fText(p.concat("url"), "Base URL", { mono: 1, ph: "https://agent.example/v1", span: 2, help: "<code>/responses</code> is added." }), fText(p.concat("model"), "Model", { opt: 1, mono: 1 }),
+      fSel(p.concat("chain"), "Turns are joined by", [["", "The response before"], ["conversation", "A conversation made first"], ["none", "Nothing: each on its own"]], { same: "previous" }))
+    + fArea(p.concat("instructions"), "Instructions", { opt: 1, rows: 2 })
+    + fRow(fJson(p.concat("extra"), "Extra request fields", { opt: 1, rows: 2, ph: '{"agent_reference": {"type": "agent_reference", "name": "my-agent"}}', help: "Where an Azure AI Foundry agent is named." }),
+        fJson(p.concat("query"), "Added to every address", { opt: 1, rows: 2, ph: '{"api-version": "v1"}' })),
   agentforce: (p) => fRow(fText(p.concat("domain"), "My Domain URL", { mono: 1, ph: "https://acme.my.salesforce.com", span: 2 }), fText(p.concat("agentId"), "Agent ID", { mono: 1, ph: "0Xx…" }))
     + fRow(fText(p.concat("apiBase"), "API base", { opt: 1, mono: 1, ph: "https://api.salesforce.com" }), fTog(p.concat("stream"), "Stream the answer"), fTog(p.concat("bypassUser"), "Bypass user", { dflt: true }))
     + fJson(p.concat("variables"), "Session variables", { opt: 1, ph: "[]" })
@@ -2267,17 +2336,26 @@ const DRIVER_FIELDS = {
     + fJson(p.concat("env"), "Environment", { opt: 1, ph: '{"MODE": "test"}' })
     + (REF.processAllowed ? "" : `<div class="note warn" style="margin-top:12px">This server does not allow the process driver. Start it with <code>LLMSIM_ALLOW_PROCESS=1</code> to use it.</div>`),
 };
-const DRIVER_KEYS = { http: ["url", "method", "body", "headers", "reply", "replyFrom", "conversation"], openai: ["url", "model", "system", "stream", "extra"], a2a: ["url", "rpcUrl", "wait", "callbackBase", "pollMs", "blocking"], agentforce: ["domain", "agentId", "apiBase", "stream", "bypassUser", "variables"], process: ["command", "cwd", "env"] };
+const DRIVER_KEYS = { http: ["url", "method", "body", "headers", "reply", "replyFrom", "conversation"], openai: ["url", "model", "system", "stream", "extra"], a2a: ["url", "rpcUrl", "wait", "callbackBase", "pollMs", "blocking", "card", "headers"], responses: ["url", "model", "instructions", "extra", "chain", "query"], agentforce: ["domain", "agentId", "apiBase", "stream", "bypassUser", "variables"], process: ["command", "cwd", "env"] };
 function agentFields(p) {
   const a = getAt(LABDOC, p) || {}, driver = a.driver || "";
   const doc = (REF.drivers.find((d) => d.name === driver) || {}).doc || "";
-  return fRow(fText(p.concat("name"), "Its name", { mono: 1, ph: "support", help: "How it appears on the timeline." }),
+  const which = REF.agents.length || a.use ? fSel(p.concat("use"), "Which agent", [["", "One described here"], ...REF.agents.map((x) => [x.id, `${x.id} · ${x.systemName}`])],
+    { redraw: 1, after: "use", help: "A saved agent is reached the way Agents says. The scenario only names it, so the same test runs on another agent unchanged." }) : "";
+  if (a.use) {
+    const saved = REF.agents.find((x) => x.id === a.use);
+    return fRow(which, fText(p.concat("name"), "Its name here", { opt: 1, mono: 1, ph: a.use, help: "How it appears on the timeline, and what checks call it." }))
+      + `<div class="note plain" style="margin-top:12px">${saved ? `Reached as <b>${esc(saved.id)}</b> is: ${esc(saved.systemName)}, ${esc((DRIVER_NAME[saved.driver] || saved.driver || "").split(":")[0])}. ${statusTag(saved.status)}`
+        : `There is no saved agent called <b>${esc(a.use)}</b>. One has to exist by the time this runs.`}</div>`
+      + alsoHas(leftovers(a, ["use", "name", "turns", "user"]));
+  }
+  return (which ? fRow(which) : "") + fRow(fText(p.concat("name"), "Its name", { mono: 1, ph: "support", help: "How it appears on the timeline." }),
       fSel(p.concat("driver"), "How it is reached", REF.drivers.length ? REF.drivers.map((d) => [d.name, DRIVER_NAME[d.name] || d.name]) : Object.keys(DRIVER_NAME).map((d) => [d, DRIVER_NAME[d]]), { redraw: 1, after: "driver" }),
       credSel(p.concat("credential")), fNum(p.concat("timeoutS"), "Give up after (s)", { opt: 1 }))
     + (DRIVER_FIELDS[driver] ? DRIVER_FIELDS[driver](p) : doc ? `<pre class="fh" style="white-space:pre-wrap">${esc(doc)}</pre>` : "")
     + alsoHas(leftovers(a, ["name", "driver", "credential", "timeoutS", "turns", "user", ...(DRIVER_KEYS[driver] || [])]));
 }
-const DRIVER_NAME = { http: "HTTP: post a message, read a reply", openai: "OpenAI-compatible chat", a2a: "Agent2Agent (A2A)", agentforce: "Salesforce Agentforce", process: "A local program" };
+const DRIVER_NAME = { http: "HTTP: post a message, read a reply", openai: "OpenAI-compatible chat", responses: "Responses API", a2a: "Agent2Agent (A2A)", agentforce: "Salesforce Agentforce", process: "A local program" };
 // The checks whose settings have their own fields. Every other type is listed
 // with what it takes and edited in one box.
 const CHECK_FIELDS = {
@@ -2522,6 +2600,187 @@ async function variationsAsk() {
 }
 PAGES.lab = { enter: async () => { labTabs(); await labRef(); labLoad(); } };
 
+// ── an agent under test ─────────────────────────────────────────────────────
+// Adding an agent starts with where it lives, because the platform decides how it
+// is reached: the protocols it answers on, what its address looks like, the kind of
+// credential it wants. All of that is the server's list (GET /api/agents), drawn
+// here; nothing about a platform is written into this page.
+//
+// An agent that is saved is something to run tests on. Its page lists every
+// scenario with how it last went on this agent, and runs the ones that are ticked.
+let AG = { cover: null, check: null, picked: new Set(), run: null, saved: "", say: "Hello", busy: "", cred: {}, credOpen: false };
+const SYS_MARK = { salesforce: "SF", sap: "SAP", servicenow: "NOW", "azure-foundry": "AZ", custom: "{ }" };
+const STEP_NAME = { credential: "Credential", connection: "Connection", message: "Message" };
+const sysOf = (id) => (REF.systems || []).find((x) => x.id === id);
+const connOf = (sys, driver) => ((sys || {}).connections || []).find((c) => c.driver === driver);
+function agentPick(id) {
+  const sys = sysOf(id), c = sys.connections.find((x) => x.recommended) || sys.connections[0];
+  LABDOC.system = id; LABDOC.connection = { driver: c.driver, ...JSON.parse(JSON.stringify(c.defaults || {})) };
+  dropRaw([]); labForm();
+}
+function agentUnpick() { delete LABDOC.system; LABDOC.connection = {}; dropRaw([]); labForm(); }
+async function agentLoad() {
+  AG = { cover: null, check: null, picked: new Set(), run: null, saved: JSON.stringify(LABDOC), say: AG.say || "Hello", busy: "", cred: {}, credOpen: false };
+  if (LABNEW || !LABID) { AG.cover = []; return; }
+  const id = LABID, [a, c] = await Promise.all([REST("GET", "/api/agents/" + id), REST("GET", `/api/agents/${id}/coverage`)]);
+  if (LABID !== id || LABK !== "agents") return;
+  AG.check = a.ok ? a.body.check : null;
+  AG.cover = (c.ok ? c.body.scenarios : []).sort((x, y) => (y.names - x.names) || x.scenario.localeCompare(y.scenario));
+  AG.picked = new Set(AG.cover.filter((r) => r.names && !r.several).map((r) => r.scenario));
+  if (LABMODE === "form") labForm();
+}
+function agentForm() {
+  const d = LABDOC, sys = sysOf(d.system);
+  document.getElementById("lab-save").hidden = !sys;        // there is nothing to save until a platform is chosen
+  if (!sys) return fSec("Where does the agent live?", "Each platform is reached its own way. Choose one and its connection is laid out for you.",
+    `<div class="sys-grid">${REF.systems.map((x) => `<button class="sys" onclick="agentPick('${esc(x.id)}')"><span class="sys-mark">${esc(SYS_MARK[x.id] || "?")}</span><b>${esc(x.name)}</b><span>${esc(x.about)}</span>
+      <span class="via">${x.connections.map((c) => `<span class="tag">${esc(c.label.split(":")[0])}</span>`).join("")}</span></button>`).join("")}</div>`);
+  const p = ["connection"], conn = d.connection || (d.connection = {}), c = connOf(sys, conn.driver) || {};
+  const many = sys.connections.length > 1;
+  return fSec("The agent", "", `<div class="sys-line"><span class="sys-mark">${esc(SYS_MARK[sys.id] || "?")}</span><b>${esc(sys.name)}</b><span class="fh">${esc(sys.about)}</span>${LABNEW ? `<span style="flex:1"></span><button class="mini" onclick="agentUnpick()">Choose another</button>` : ""}</div>`
+      + fRow(idField(), fText(["label"], "Shown as", { opt: 1, ph: "Support agent (production)" }), fTags(["tags"], "Tags", { opt: 1 }))
+      + fText(["description"], "What it is for", { opt: 1 }))
+    + fSec("How it is reached", "",
+        fRow(fSel(p.concat("driver"), "Protocol", sys.connections.map((x) => [x.driver, x.label + (many && x.recommended ? " (recommended)" : "")]), { redraw: 1, after: "protocol" }),
+          credSel(p.concat("credential")), fNum(p.concat("timeoutS"), "Give up after (s)", { opt: 1, ph: "30" }))
+        + (c.note ? `<div class="note plain">${esc(c.note)}</div>` : "")
+        + (DRIVER_FIELDS[conn.driver] ? DRIVER_FIELDS[conn.driver](p) : "")
+        + agentCredential(c)
+        + alsoHas(leftovers(conn, ["driver", "credential", "timeoutS", ...(DRIVER_KEYS[conn.driver] || [])])))
+    + fSec("What LLMSim can see of it", "", `<p class="help" style="margin:6px 0 0">${esc(sys.sees)}</p>`
+        + ((sys.docs || []).length ? `<p class="fh">${sys.docs.map((u) => `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(u.replace(/^https?:\/\//, "").split("/")[0])}</a>`).join(" · ")}: the vendor's own description of this connection.</p>` : ""))
+    + fSec("Is it there?", "Reaches the agent the way a run would: the credential, the connection, then one message. The message is really sent to the agent.", `<div id="ag-check">${agentCheckBody()}</div>`)
+    + (LABNEW ? "" : fSec("Scenarios on this agent", "Every saved scenario, with how its last run on this agent went. Tick some and run them.", `<div id="ag-cover">${agentCoverBody()}</div>`))
+    + alsoHas(leftovers(d, ["id", "label", "system", "description", "tags", "connection"]));
+}
+// What kind of credential the platform wants, and a way to store one without leaving the agent.
+function agentCredential(c) {
+  const h = c.credential, types = Object.keys(REF.credTypes), type = AG.cred.type || (h || {}).type || types[0] || "bearer";
+  const want = h ? `<div class="fh" style="margin-top:10px">It needs ${[`a <b>${esc(h.type.replace(/_/g, " "))}</b> credential`, h.tokenUrl ? `whose token URL is <code>${esc(h.tokenUrl)}</code>` : "", h.scope ? `with the scope <code>${esc(h.scope)}</code>` : ""].filter(Boolean).join(" ")}.${h.note ? " " + esc(h.note) : ""}</div>` : "";
+  const fields = [...(REF.credTypes[type] || []), ...(type === "oauth_client_credentials" ? ["scope"] : [])];
+  const preset = (f) => AG.cred[f] ?? (h && h.type === type && !/</.test(h[f] || "") ? h[f] : "") ?? "";
+  const secret = (f) => /token$|secret|password|value/i.test(f) && f !== "tokenUrl";
+  return want + `<details class="fgen" ${AG.credOpen ? "open" : ""} ontoggle="AG.credOpen = this.open"><summary>Store a new credential for it</summary>
+    <div class="frow"><div class="f"><label>Name</label><input type="text" class="mono" data-f="label" value="${esc(AG.cred.label ?? "")}" oninput="AG.cred.label = this.value" placeholder="agent-credential" autocomplete="off"></div>
+      <div class="f"><label>Kind</label><select onchange="AG.cred.type = this.value; labForm()">${types.map((t) => `<option value="${esc(t)}" ${t === type ? "selected" : ""}>${esc(t.replace(/_/g, " "))}</option>`).join("")}</select></div></div>
+    <div class="frow">${fields.map((f) => `<div class="f"><label>${esc(f.replace(/([A-Z])/g, " $1").toLowerCase())}${f === "scope" ? ' <span class="hint">· optional</span>' : ""}</label><input type="${secret(f) ? "password" : "text"}" class="${secret(f) ? "" : "mono"}" value="${esc(preset(f))}" oninput="AG.cred['${f}'] = this.value" autocomplete="off"></div>`).join("")}</div>
+    <div style="margin-top:12px; display:flex; gap:9px; align-items:center"><button class="btn ghost" onclick="agentCredStore(${pj(h || {})})">Store it and use it</button><span class="fh" style="margin:0">Its value is never shown again.</span></div></details>`;
+}
+async function agentCredStore(hint) {
+  const type = AG.cred.type || hint.type || Object.keys(REF.credTypes)[0], label = (AG.cred.label || "").trim();
+  if (!label) return note("lab-note", "Give the credential a name first.", true);
+  const entry = { type };
+  for (const f of [...(REF.credTypes[type] || []), "scope"]) {
+    const v = AG.cred[f] ?? (hint.type === type && !/</.test(hint[f] || "") ? hint[f] : undefined);
+    if (v) entry[f] = v;
+  }
+  if (type !== "oauth_client_credentials") delete entry.scope;
+  const r = await REST("PUT", "/api/credentials/" + encodeURIComponent(label), entry);
+  if (!r.ok) return note("lab-note", said(r.body), true);
+  await labRef();
+  LABDOC.connection.credential = label; AG.cred = {}; AG.credOpen = false;
+  note("lab-note", `Stored ${label}, and this agent now uses it.`); labForm();
+}
+function agentCheckBody() {
+  const t = AG.check, busy = AG.busy === "test";
+  return `<div style="display:flex; gap:9px; align-items:flex-end; margin-top:8px"><div class="f" style="flex:1"><label>Say to it</label><input type="text" id="ag-say" value="${esc(AG.say)}" oninput="AG.say = this.value" placeholder="leave empty to send nothing" autocomplete="off"></div>
+      <button class="btn ghost" onclick="agentTest()" ${busy ? "disabled" : ""}>${busy ? "Testing…" : "Test connection"}</button></div>`
+    + (t ? `<p style="margin:14px 0 0">${statusTag(t.status)} <span class="fh">${t.at ? esc(when(t.at)) : ""}</span></p>
+        <ul class="steps">${(t.steps || []).map((x) => `<li>${statusTag(x.status)}<b>${esc(STEP_NAME[x.step] || x.step)}</b><span>${esc(x.detail)}</span></li>`).join("")}</ul>
+        ${t.reply != null ? `<div class="rturn" style="margin-top:10px"><div><span class="who">You</span>${esc(t.said)}</div><div><span class="who">Agent</span>${esc(t.reply)}</div></div>` : ""}`
+      : `<p class="help" style="margin:12px 0 0">Not tested yet.</p>`);
+}
+async function agentTest() {
+  let doc;
+  try { doc = labDoc(); } catch (e) { return note("lab-note", e.message, true); }
+  const part = (html) => { const el = document.getElementById("ag-check"); if (el) el.innerHTML = html; };
+  AG.busy = "test"; part(agentCheckBody());
+  // What is on screen is what is tested. Only a test of the agent as it is saved is kept with it.
+  const asSaved = !LABNEW && JSON.stringify(doc) === AG.saved;
+  const r = asSaved ? await REST("POST", "/api/agents/" + LABID + "/test", { say: AG.say }) : await REST("POST", "/api/agents/test", { agent: { ...doc, id: doc.id || "new-agent" }, say: AG.say });
+  AG.busy = "";
+  if (r.ok) AG.check = r.body.test;
+  note("lab-note", r.ok ? (asSaved ? "" : "That tested what is on screen. Save the agent to keep the result with it.") : said(r.body), !r.ok);
+  part(agentCheckBody());
+  if (r.ok && asSaved) { await labRef(); labLoad(); }
+}
+function agentCoverBody() {
+  const rows = AG.cover, run = AG.run;
+  if (rows === null) return `<p class="help" style="margin:8px 0 0">Loading…</p>`;
+  if (!rows.length) return `<p class="help" style="margin:8px 0 0">No scenario is saved yet. Add one under <b>Scenarios</b>; it can name this agent, or be run on it from here.</p>`;
+  const item = (r) => run && run.items.find((i) => i.scenario === r.scenario);
+  const state = (r) => { const it = item(r); return it ? statusTag(it.verdict === "waiting" && run.status === "running" ? "running" : it.verdict) : r.last ? statusTag(r.last.verdict) : `<span class="tag">never run</span>`; };
+  const why = (r) => { const it = item(r); const src = it && it.verdict !== "waiting" ? it : null; return src ? esc(src.error || (src.failed || []).map((f) => `${f.name}: ${f.detail}`).join("; ")) : r.last ? esc(r.last.error || "") : ""; };
+  const lastRun = (r) => (item(r) || {}).run || (r.last || {}).run;
+  const going = run && run.status === "running", done = run ? run.items.filter((i) => i.verdict !== "waiting").length : 0;
+  return `<table class="sess-table" style="margin-top:8px"><tr><th style="width:26px"></th><th>Scenario</th><th style="width:120px">On this agent</th><th>What happened</th><th style="width:150px">Last run</th><th></th></tr>
+    ${rows.map((r) => `<tr><td><input type="checkbox" data-s="${esc(r.scenario)}" ${AG.picked.has(r.scenario) ? "checked" : ""} ${r.several ? "disabled title=\"It drives several agents at once\"" : ""} onchange="this.checked ? AG.picked.add(this.dataset.s) : AG.picked.delete(this.dataset.s); agentCoverDraw()"></td>
+      <td><b>${esc(r.scenario)}</b>${r.names ? ` <span class="tag set">names this agent</span>` : ""}<div class="fh" style="margin:0">${esc(r.description || "")}</div></td>
+      <td>${state(r)}</td><td>${why(r)}</td><td>${r.last && !item(r) ? esc(when(r.last.finishedAt)) : item(r) && item(r).verdict !== "waiting" ? "just now" : ""}</td>
+      <td class="act">${lastRun(r) ? `<button class="mini" data-run="${esc(lastRun(r))}" onclick="labRun('GET', '/api/results/' + this.dataset.run)">Open</button>` : ""}</td></tr>`).join("")}</table>
+    <div style="margin-top:12px; display:flex; gap:9px; align-items:center; flex-wrap:wrap">
+      <button class="btn" onclick="agentRun(false)" ${going ? "disabled" : ""}>Run the ${AG.picked.size || ""} ticked</button>
+      <button class="btn ghost" onclick="agentRun(true)" ${going ? "disabled" : ""}>Run every scenario</button>
+      <span class="fh" style="margin:0">${going ? `Running: ${done} of ${run.items.length} done.` : run ? `${statusTag(run.verdict)} ${run.summary.pass} of ${run.summary.total} passed. It is kept under <b>Test runs</b> as ${esc(run.id)}.` : "The ones written for this agent are ticked. They run one after another, on the agent as it is saved."}</span></div>`;
+}
+function agentCoverDraw() { const el = document.getElementById("ag-cover"); if (el) el.innerHTML = agentCoverBody(); }
+async function agentRun(all) {
+  const ids = all ? (AG.cover || []).filter((r) => !r.several).map((r) => r.scenario) : [...AG.picked];
+  if (!ids.length) return note("lab-note", "Tick the scenarios to run first.", true);
+  const agent = LABID, r = await REST("POST", "/api/testruns", { agent, scenarios: ids, wait: false });
+  if (!r.ok) return note("lab-note", said(r.body), true);
+  note("lab-note", ""); AG.run = r.body.testrun; agentCoverDraw();
+  while (LABK === "agents" && LABID === agent && AG.run && AG.run.status === "running") {
+    await new Promise((res) => setTimeout(res, 500));
+    const p = await REST("GET", "/api/testruns/" + AG.run.id);
+    if (!p.ok) break;
+    AG.run = p.body.testrun; agentCoverDraw();
+  }
+  const c = await REST("GET", `/api/agents/${agent}/coverage`);
+  if (c.ok && LABID === agent && LABK === "agents") { AG.cover = c.body.scenarios.sort((x, y) => (y.names - x.names) || x.scenario.localeCompare(y.scenario)); agentCoverDraw(); }
+}
+
+// ── a test run: scenarios on one agent, kept as one thing ───────────────────
+let TR = { agent: "", picked: new Set(), label: "" };
+function testrunStart() {
+  if (!REF.agents.length) return `<div class="fgen"><p class="help" style="margin:0">Add an agent first, under <b>Agents</b>. A test run is scenarios run on one.</p></div>`;
+  const rows = REF.scenarioRows || [];
+  if (!TR.agent || !REF.agents.some((a) => a.id === TR.agent)) TR.agent = REF.agents[0].id;
+  return `<details class="fgen" open><summary>Run tests on an agent</summary>
+    <div class="frow" style="margin-top:4px"><div class="f"><label>Agent</label><select onchange="TR.agent = this.value">${REF.agents.map((a) => `<option value="${esc(a.id)}" ${a.id === TR.agent ? "selected" : ""}>${esc(a.id)} · ${esc(a.systemName)}</option>`).join("")}</select></div>
+      <div class="f"><label>Label <span class="hint">· optional</span></label><input type="text" value="${esc(TR.label)}" oninput="TR.label = this.value" placeholder="before the release" autocomplete="off"></div></div>
+    <label style="margin-top:14px">Scenarios <span class="hint">· none ticked means all of them</span></label>
+    ${rows.length ? `<div class="pick">${rows.map((r) => `<label><input type="checkbox" data-s="${esc(r.id)}" ${TR.picked.has(r.id) ? "checked" : ""} ${r.several ? "disabled" : ""} onchange="this.checked ? TR.picked.add(this.dataset.s) : TR.picked.delete(this.dataset.s)"> ${esc(r.id)}</label>`).join("")}</div>`
+      : `<p class="help" style="margin:6px 0 0">No scenario is saved yet.</p>`}
+    <div style="margin-top:12px"><button class="btn" onclick="testrunGo()" ${rows.length ? "" : "disabled"}>Run</button></div></details>`;
+}
+async function testrunGo(spec) {
+  const body = spec || { agent: TR.agent, ...(TR.picked.size ? { scenarios: [...TR.picked] } : { all: true }), ...(TR.label ? { label: TR.label } : {}) };
+  const r = await REST("POST", "/api/testruns", { ...body, wait: false });
+  if (!r.ok) return note("lab-listnote", said(r.body), true);
+  note("lab-listnote", "");
+  LABID = r.body.testrun.id; LABNEW = false; labEdit(r.body.testrun); labLoad();
+}
+async function testrunWatch(id) {
+  while (LABK === "testruns" && LABID === id) {
+    await new Promise((res) => setTimeout(res, 500));
+    const r = await REST("GET", "/api/testruns/" + id);
+    if (!r.ok || LABK !== "testruns" || LABID !== id) return;
+    LABDOC = r.body.testrun; labDraw();
+    if (LABDOC.status !== "running") { labLoad(); return; }
+  }
+}
+function testrunView(t) {
+  const sum = t.summary || {}, going = t.status === "running", done = (t.items || []).filter((i) => i.verdict !== "waiting").length;
+  return `<div class="rhead">${statusTag(going ? "running" : t.verdict || t.status)} <b>${esc(t.agent)}</b><span class="rmeta">test run <span class="mono">${esc(t.id)}</span>${t.label ? " · " + esc(t.label) : ""} · ${esc(t.tier || "")} tier · ${esc(when(t.startedAt))}${t.finishedAt ? " · took " + ago(Math.round((t.finishedAt - t.startedAt) * 1000)) : ""}</span></div>
+    <p class="rsum">${going ? `Running: ${done} of ${sum.total} done.` : `${sum.pass} of ${sum.total} passed` + ["fail", "error", "no-data"].filter((k) => sum[k]).map((k) => ` · ${sum[k]} ${k}`).join("")}</p>
+    <table class="sess-table"><tr><th style="width:80px">Result</th><th>Scenario</th><th>What happened</th><th style="width:70px">Took</th><th></th></tr>
+      ${(t.items || []).map((i) => `<tr><td>${statusTag(i.verdict === "waiting" && going ? "running" : i.verdict)}</td><td><b>${esc(i.scenario)}</b><div class="fh" style="margin:0">${esc(i.description || "")}</div></td>
+        <td>${esc(i.error || (i.failed || []).map((f) => `${f.name}: ${f.detail}`).join("; ") || (i.verdict === "pass" ? "Every check held." : ""))}</td><td>${i.durationS != null ? ago(Math.round(i.durationS * 1000)) : ""}</td>
+        <td class="act">${i.run ? `<button class="mini" data-run="${esc(i.run)}" onclick="labRun('GET', '/api/results/' + this.dataset.run)">Open</button>` : ""}</td></tr>`).join("")}</table>
+    ${going ? "" : `<div style="margin-top:14px"><button class="btn ghost" onclick="testrunGo({ agent: LABDOC.agent, scenarios: LABDOC.items.map((i) => i.scenario), ...(LABDOC.label ? { label: LABDOC.label } : {}) })">Run these again</button></div>`}`;
+}
+
 // ── a scenario, drawn ───────────────────────────────────────────────────────
 // The same document the form edits, as a picture of the run it describes: who
 // speaks to the agent, what the agent reaches while it runs, what must hold at
@@ -2586,7 +2845,7 @@ function cvBlocks() {
   else if (d.agents) out.push({ key: "user", lane: "user", role: "user", kind: "The user", title: "Says something to each agent", sub: "the turns are on the agents", help: "With several agents, each has its own turns: open an agent to set what is said to it.", problem: "turns", fields: () => `<p class="help" style="margin:0">Each agent block holds what the user says to that agent.</p>`, cls: "ghost" });
   else { const t = listOf(d.turns); out.push({ key: "user", lane: "user", role: "user", kind: "The user says", title: t.length ? cut(t[0].say, 48) || "…" : "nothing yet", sub: t.length > 1 ? `then ${t.length - 1} more` : t.length ? "one turn" : "", help: "In order. Say what each reply must be, or leave that to the checks.", problem: "turns", fields: () => turnsList(["turns"]),
     extra: `<button class="btn ghost" onclick="cvUser(true)">Use a simulated user instead</button>` }); }
-  const agent = (p, a, i) => ({ key: p.join("."), lane: "agent", role: "agent", cls: "agent", kind: i == null ? "The agent under test" : `Agent ${i + 1}`, title: a.name || "unnamed", sub: cut(`${(DRIVER_NAME[a.driver] || a.driver || "no driver").split(":")[0]}${agentWhere(a) ? " · " + agentWhere(a) : ""}`, 70),
+  const agent = (p, a, i) => ({ key: p.join("."), lane: "agent", role: "agent", cls: "agent", kind: i == null ? "The agent under test" : `Agent ${i + 1}`, title: a.name || a.use || "unnamed", sub: a.use ? `the saved agent ${a.use}` : cut(`${(DRIVER_NAME[a.driver] || a.driver || "no driver").split(":")[0]}${agentWhere(a) ? " · " + agentWhere(a) : ""}`, 70),
     help: "How LLMSim reaches it: the driver and that driver's own fields.", problem: p.length === 1 ? "agent" : `agents[${i}]`,
     fields: () => agentFields(p) + (i == null ? "" : `<label style="margin-top:14px">What the user says to it</label>` + turnsList(p.concat("turns"))),
     remove: i == null ? null : () => cvRemoveAgent(i) });

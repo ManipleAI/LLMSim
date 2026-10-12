@@ -63,6 +63,11 @@ curl -X POST localhost:8099/api/faults -d '{
   "name": "rate-limited", "fault": {"type": "status", "status": 429, "retry_after": 2}, "limit": 1}'
 ```
 
+**Connect the agents you test, and run tests on them.** Add an agent by where it
+lives — Salesforce Agentforce, SAP Joule, ServiceNow, Azure AI Foundry, or your
+own — check that it answers, and run scenarios on it. A test run keeps which
+passed and which did not.
+
 **See what the agent sent, and check it.** Every request is kept in full. An
 assertion is a claim about them, and an agent that never ran does not pass.
 

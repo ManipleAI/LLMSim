@@ -9,6 +9,7 @@ other half, and need an account.
 import json
 import threading
 import time
+import urllib.parse
 import urllib.request
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -193,5 +194,97 @@ class FakeSalesforce(_Server):
                 me.ended.append((sid, self.headers.get("x-session-end-reason")))
                 me.sessions.pop(sid, None)
                 _reply(self, 200, {})
+
+        super().__init__(H)
+
+
+class FakeFoundry(_Server):
+    """Microsoft Foundry Agent Service, as its documentation describes the two ways an agent is called.
+
+    Written from "Enable incoming A2A on a Foundry agent" and strict where that page is: nothing answers
+    without a Microsoft Entra token, the token is only issued for the https://ai.azure.com/.default scope,
+    the agent card is at agentCard/v0.3 under the A2A base path and nowhere else, and a version asked for
+    that is not 0.3 is refused. The Responses side wants the agent named as an agent reference.
+    """
+    A2A = "/api/projects/support/agents/helper/endpoint/protocols/a2a"
+    OPENAI = "/api/projects/support/openai/v1"
+    TOKEN = "entra-access-token-9f3a"
+
+    def __init__(self, client_id="app-id", client_secret="entra-client-secret-77"):
+        self.client_id, self.client_secret, self.seen, self.responses, self.conversations = client_id, client_secret, [], {}, {}
+        me = self
+
+        class H(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def log_message(self, *a):
+                pass
+
+            def authed(self):
+                if self.headers.get("Authorization") == "Bearer " + me.TOKEN:
+                    return True
+                _reply(self, 401, {"error": {"code": "Unauthorized", "message": "A Microsoft Entra token is required."}})
+                return False
+
+            def do_GET(self):
+                path = self.path.split("?")[0]
+                me.seen.append({"method": "GET", "path": self.path, "auth": self.headers.get("Authorization")})
+                if not self.authed():
+                    return
+                if path == me.A2A + "/agentCard/v0.3":
+                    return _reply(self, 200, {"name": "helper", "description": "Answers questions", "protocolVersion": "0.3.0", "url": me.url + me.A2A,
+                                              "capabilities": {"streaming": False}, "skills": [{"id": "general-qa", "name": "General Q&A"}]})
+                _reply(self, 404, {"error": {"code": "NotFound"}})
+
+            def do_POST(self):
+                raw = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                path, _, query = self.path.partition("?")
+                if path == "/tenant-1/oauth2/v2.0/token":
+                    form = dict(urllib.parse.parse_qsl(raw.decode()))
+                    me.seen.append({"method": "POST", "path": path, "scope": form.get("scope")})
+                    if form.get("client_id") != me.client_id or form.get("client_secret") != me.client_secret:
+                        return _reply(self, 401, {"error": "invalid_client"})
+                    if form.get("scope") != "https://ai.azure.com/.default":
+                        return _reply(self, 400, {"error": "invalid_scope"})
+                    return _reply(self, 200, {"access_token": me.TOKEN, "expires_in": 3600, "token_type": "Bearer"})
+                body = json.loads(raw or b"{}")
+                me.seen.append({"method": "POST", "path": path, "query": query, "auth": self.headers.get("Authorization"),
+                                "version": self.headers.get("A2A-Version"), "body": body})
+                if not self.authed():
+                    return
+                if path == me.A2A:
+                    if self.headers.get("A2A-Version") not in (None, "0.3"):
+                        return _reply(self, 400, {"type": "version-not-supported"})
+                    message = (body.get("params") or {}).get("message") or {}
+                    context = message.get("contextId") or uuid.uuid4().hex
+                    turn = me.conversations[context] = me.conversations.get(context, 0) + 1
+                    text = " ".join(p.get("text", "") for p in message.get("parts", []))
+                    return _reply(self, 200, {"jsonrpc": "2.0", "id": body.get("id"), "result": {
+                        "kind": "message", "role": "agent", "contextId": context, "messageId": uuid.uuid4().hex,
+                        "parts": [{"kind": "text", "text": "Foundry helper, turn %d: you said %s" % (turn, text)}]}})
+                if path == me.OPENAI + "/conversations":
+                    cid = "conv_%d" % (len(me.conversations) + 1)
+                    me.conversations[cid] = 0
+                    return _reply(self, 200, {"id": cid, "object": "conversation"})
+                if path == me.OPENAI + "/responses":
+                    ref = body.get("agent_reference") or {}
+                    if ref.get("type") != "agent_reference" or ref.get("name") != "helper":
+                        return _reply(self, 400, {"error": {"message": "agent_reference must name an agent in this project"}})
+                    said = body["input"][-1]["content"] if isinstance(body.get("input"), list) else body.get("input")
+                    if "break" in said:
+                        return _reply(self, 200, {"id": "resp_x", "status": "failed", "error": {"message": "the agent's tool failed"}})
+                    if body.get("conversation"):
+                        me.conversations[body["conversation"]] += 1
+                        turn, after = me.conversations[body["conversation"]], " in %s" % body["conversation"]
+                    else:
+                        prev = body.get("previous_response_id")
+                        turn = me.responses.get(prev, 0) + 1
+                        after = " after %s" % prev if prev else ""
+                    rid = "resp_%d" % (len(me.responses) + 1)
+                    me.responses[rid] = turn
+                    return _reply(self, 200, {"id": rid, "object": "response", "status": "completed", "output": [
+                        {"type": "reasoning", "summary": []},
+                        {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Turn %d%s: you said %s" % (turn, after, said)}]}]})
+                _reply(self, 404, {"error": {"code": "NotFound"}})
 
         super().__init__(H)

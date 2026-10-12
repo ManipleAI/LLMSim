@@ -335,6 +335,42 @@ def case_spans_from_an_agent_llmsim_cannot_stand_in_front_of_land_on_the_same_ti
     assert sim.api("GET", "/api/runs/%s/timeline" % trace)[1]["counts"]["model_call"] == 3
 
 
+def case_a_scenario_brings_its_own_stub_agent_and_it_leaves_with_the_run(sim):
+    """A stub agent used to be saved once and shared by every scenario, so a test could not carry the
+    peer it needs: the file was not the whole test. A `peer` setup action brings a stub, or a proxy,
+    for one run. It is reached at the same address as a saved one, wins over a saved one of the same
+    name for that run only, and is gone when the run ends."""
+    setup(sim)                                                 # a saved billing, which answers R-77
+    desk = {"id": "refunds-desk", "results": [{"when": {"field": "text", "op": "contains", "value": "refund"}, "result": "Approved by the desk, reference D-1."}]}
+    own = run(sim, scenario(sim.agent, [{"type": "routing", "expect": [{"when": {"contains": "refund"}, "to": "refunds-desk"}]}],
+                            [script(to="refunds-desk")], setup=[{"type": "peer", "kind": "stub", "definition": desk}]))
+    assert own["verdict"] == "pass", own
+    said = [e["data"] for e in sim.api("GET", "/api/runs/%s/timeline?kinds=peer_message" % own["run"])[1]["events"]]
+    assert (said[0]["to"], said[1]["from"]) == ("refunds-desk", "refunds-desk") and "D-1" in said[1]["text"], said
+    # it was never saved, and it did not outlive its run
+    assert "refunds-desk" not in [x["id"] for x in sim.api("GET", "/api/a2a")[1]["stubs"]]
+    assert sim.call("GET", "/a2a/refunds-desk/.well-known/agent-card.json")[0] == 404
+    assert sim.call("GET", "/run/%s/agent/orchestrator/a2a/refunds-desk/.well-known/agent-card.json" % own["run"])[0] == 404
+
+    # the run's own wins over the saved one of the same name, and the saved one is untouched
+    mine = dict(BILLING, results=[{"when": {}, "result": "This run's billing, reference B-9."}])
+    shadow = run(sim, scenario(sim.agent, [{"type": "run", "cond": {"field": "turns", "op": "gte", "value": 1}}], setup=[{"type": "peer", "kind": "stub", "definition": mine}]))
+    said = [e["data"]["text"] for e in sim.api("GET", "/api/runs/%s/timeline?kinds=peer_message" % shadow["run"])[1]["events"]]
+    assert "B-9" in said[1], said
+    assert sim.api("GET", "/api/a2a/billing")[1]["stub"]["results"][0]["result"].endswith("R-77.")
+    again = run(sim, scenario(sim.agent, [{"type": "answer", "contains": "R-77"}]))
+    assert "R-77" in [e["data"]["text"] for e in sim.api("GET", "/api/runs/%s/timeline?kinds=peer_message" % again["run"])[1]["events"]][1]
+
+    # it is checked with the scenario, in the words a saved one is checked in
+    def problems(action):
+        return sim.api("POST", "/api/scenarios/validate", {"scenario": scenario(sim.agent, [{"type": "answer", "contains": "x"}], setup=[action])})[1]["problems"]
+    assert problems({"type": "peer", "kind": "stub", "definition": desk}) == []
+    assert problems({"type": "peer", "kind": "proxy", "definition": {"id": "real", "url": "https://agent.example", "mode": "replay"}}) == []
+    assert problems({"type": "peer", "kind": "friend", "definition": desk}) == ["setup[0]: kind is stub or proxy"]
+    assert any("unknown field 'answers'" in p for p in problems({"type": "peer", "kind": "stub", "definition": dict(desk, answers=[])}))
+    assert any("mode is record, replay or passthrough" in p for p in problems({"type": "peer", "kind": "proxy", "definition": {"id": "real", "url": "https://agent.example"}}))
+
+
 def main():
     sim = Sim().start()
     sim.agent = FakeAgent(sim.base)

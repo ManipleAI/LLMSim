@@ -115,7 +115,7 @@ One page at `/ui`, with a screen for each job. Every screen has an address, such
 | **Chat** | Talk to a model by hand, the way a client would |
 | **Record & replay** | Record a run, and replay a recording |
 | **Functional tests** | Cases that send a prompt and say what must come back |
-| **Agent tests** | Drive an agent, simulate what it talks to, and judge the result |
+| **Agent tests** | Drive an agent, simulate what it talks to, and judge the result. A scenario is built on a canvas, as a form, or as JSON. |
 
 ## Script the model
 
@@ -452,6 +452,14 @@ A scenario is checked when it is saved, not when it first fails in the middle of
 
 In the console, a scenario is a form: the agent and its driver's own fields, the turns, the model's script, the checks. The **JSON** switch beside it shows exactly what is sent.
 
+### Build it on the canvas
+
+The **Canvas** switch shows the same scenario as a picture of the run it describes: who speaks on the left, the agent in the middle, what it reaches on the right — the model, and the mock tools, mock backends, stub agents, proxies, seeded records and faults this run installs — and the checks underneath. A block is one part of the document. Clicking it opens that part's own fields beside the picture, the same fields the form has, writing to the same place; the **+** buttons add a turn, a check, a mock, another agent or a fault where it belongs, and a block's **Remove** takes it out. **Check it is valid** marks each block the validator has something to say about, with its words on the block.
+
+Canvas, form and JSON are three views of one document, and switching between them loses nothing. Nothing can be drawn that cannot be saved: a mock or a stub agent drawn on the canvas is a `setup` action, a fault is a rule inside one, and a part the canvas has no block for is drawn as its JSON rather than hidden. Stub agents and proxies that were saved on their own are shared by every scenario; the canvas shows how many there are, beside the ones this test brings itself.
+
+A block can be dragged to where it reads best, and the lines follow it. Where a block was put is kept in the browser, under the scenario's name, and is not part of the scenario: the file a CI job runs does not change when somebody tidies a picture. **Reset layout** puts every block back.
+
 | Scenario field | Holds |
 |---|---|
 | `id`, `description`, `tags` | Its name, what it proves, and labels |
@@ -460,10 +468,25 @@ In the console, a scenario is a form: the agent and its driver's own fields, the
 | `turns` | What the user says, in order: `say`, and an optional `expect` on the reply |
 | `user` | A simulated user instead of fixed turns: `{persona, goal}` |
 | `model` | For this run only: `rules`, or a `cassette` with `mode` `replay`, `record` or `auto` |
-| `setup`, `teardown` | Actions before and after, such as seeding state or adding a mock |
+| `setup`, `teardown` | Actions before and after: see [What a scenario brings with it](#what-a-scenario-brings-with-it) |
 | `checks` | What must hold when the conversation ends |
 | `stop` | `maxTurns`, and `when`: a condition on a reply that ends it early |
 | `timeoutS`, `repeat`, `ordering` | A time limit, running a case several times, and who goes first |
+
+### What a scenario brings with it
+
+A `setup` action installs something for one run. It is found by the run's id, served at the same address a saved one would be, and removed when the run ends, so a scenario file can be the whole test.
+
+| Action | Brings |
+|---|---|
+| `{"type": "mock", "kind": "mcp", "definition": {…}}` | A mock MCP server, written the way `PUT /api/mcp/<id>` takes it |
+| `{"type": "mock", "kind": "http", "definition": {…}}` | A mock REST backend, as `PUT /api/mocks/<id>` takes it |
+| `{"type": "peer", "kind": "stub", "definition": {…}}` | A stub agent, as `PUT /api/a2a/<id>` takes it |
+| `{"type": "peer", "kind": "proxy", "definition": {…}}` | A proxy to a real agent, as `PUT /api/a2aproxies/<id>` takes it. Its recording is kept under its name, so a later run can replay it. |
+| `{"type": "state", "seed": {collection: {key: record}}}` | The records the mock tools' store starts with |
+| `{"type": "faults", "rules": […]}` | Tool and peer faults, as `PUT /api/kitfaults/<id>` takes each |
+
+One brought by a scenario wins over a saved one of the same name, for that run only. The saved one is not touched.
 
 ### Drivers
 
@@ -514,6 +537,7 @@ Credentials are kept apart from scenarios, in an owner-only file. A scenario nam
 
 - **Stub.** `PUT /api/a2a/<id>` makes an A2A agent at `/run/<run>/agent/<name>/a2a/<id>` whose replies are written down: a message, a task that finishes after some polls, a question, or a stream.
 - **Proxy.** `PUT /api/a2aproxies/<id>` with `{url, mode}` puts LLMSim between your agent and a real one. Every message is on the timeline. `record` keeps the real peer's answers and `replay` serves them when it is gone.
+- **For one test only.** A scenario can bring a stub or a proxy itself, with a `peer` setup action, instead of relying on one that was saved beforehand.
 - **Faults.** `down`, `delay`, `wrong_answer`, `refuse`, `never_complete`, `contradict`, `empty` and `drop`.
 - **Several agents at once.** `agents` in a scenario drives each with its own turns, at the same time.
 - **Who goes first.** `ordering.steps` names requests by agent, tool or text. `POST /api/interleavings` runs one scenario in several orders and says whether the order changed the outcome.

@@ -285,6 +285,43 @@ def case_a_scenario_is_drawn_as_a_canvas_that_reaches_every_part_of_it(sim):
     assert kinds <= drawn, "the canvas cannot draw the setup action(s) %s" % sorted(kinds - drawn)
     assert 'proxyFields(p.concat("proxy"), "baseUrl")' in page, "a mock backend's proxy must be saved as baseUrl, which is what the server reads"
 
+    # A block can be dragged, and where it was put is the browser's, never the scenario's: nothing
+    # about a layout may reach the document that is saved. Blocks are named by their place in the
+    # document, so the one piece of this that can quietly go wrong is keeping each block's place
+    # with it when another is added or removed and the names after it shift.
+    assert "function cvGrab" in page and "localStorage" in page.split("function cvPosKeep")[1].split("\n")[0]
+    assert "CVPOS" not in page.split("async function labSave")[1].split("REST(")[1].split(")")[0], "a layout must not be sent with the scenario"
+    node = shutil.which("node")
+    if node:
+        rekey = "function cvRekey" + page.split("function cvRekey")[1].split("\nfunction cvTidy")[0]
+        script = """
+let CVPOS = {}, NOW = [];
+const cvKeys = () => NOW, cvPosKeep = () => {};
+""" + rekey + """
+const eq = (a, b, what) => { if (JSON.stringify(a) !== JSON.stringify(b)) { console.error(what + ': ' + JSON.stringify(a) + ' is not ' + JSON.stringify(b)); process.exit(1); } };
+const all = ['test', 'user', 'agent', 'model', 'setup.0', 'setup.1', 'setup.2.rules.0', 'checks.0', 'checks.1', 'stop'];
+// the middle setup action is removed: the fault after it is renamed, and keeps its place
+CVPOS = { 'setup.0': [1, 1], 'setup.1': [2, 2], 'setup.2.rules.0': [3, 3], 'checks.1': [4, 4] };
+NOW = ['test', 'user', 'agent', 'model', 'setup.0', 'setup.1.rules.0', 'checks.0', 'checks.1', 'stop'];
+cvRekey(all, 'setup.1', null);
+eq(CVPOS, { 'setup.0': [1, 1], 'setup.1.rules.0': [3, 3], 'checks.1': [4, 4] }, 'after a removal');
+// a second agent is added: the one agent is renamed agents.0, and the new one starts where the layout draws it
+CVPOS = { agent: [5, 5], 'checks.0': [6, 6] };
+NOW = ['test', 'user', 'agents.0', 'agents.1', 'model', 'setup.0', 'setup.1', 'setup.2.rules.0', 'checks.0', 'checks.1', 'stop'];
+cvRekey(all, null, 'agents.1');
+eq(CVPOS, { 'agents.0': [5, 5], 'checks.0': [6, 6] }, 'after an addition');
+// if the blocks cannot be matched one for one, no place is guessed at
+CVPOS = { agent: [5, 5] }; NOW = ['test', 'user'];
+cvRekey(all, null, null);
+eq(CVPOS, {}, 'when they cannot be matched');
+"""
+        import tempfile
+        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as fh:
+            fh.write(script)
+        ran = subprocess.run([node, fh.name], capture_output=True, text=True)
+        os.unlink(fh.name)
+        assert ran.returncode == 0, ran.stderr[:600]
+
 
 def main():
     sim = Sim().start()

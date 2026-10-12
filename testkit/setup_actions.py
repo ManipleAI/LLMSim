@@ -2,12 +2,13 @@
 
   state    seed the records the run's fake backends start with
   mock     bring a mock MCP server or backend for this run only
+  peer     bring a stub agent, or a proxy to a real one, for this run only
   faults   bring tool or peer faults for this run only
 
 Everything installed is installed for ONE run: it is found by the run's id, and removed with it.
 """
 
-from . import core, fakes, http_mock, mcp_mock
+from . import a2a_peer, core, fakes, http_mock, mcp_mock
 from .scenario import setup_action
 
 
@@ -35,6 +36,24 @@ def _validate_mock(action):
 def _mock(action, ctx):
     module = mcp_mock if action["kind"] == "mcp" else http_mock
     ctx.cleanup.append(module.install_for_run(ctx.run, action["definition"]))
+    return []
+
+
+def _validate_peer(action):
+    kind = action.get("kind")
+    if kind not in ("stub", "proxy"):
+        return ["kind is stub or proxy"]
+    return (a2a_peer.validate_stub if kind == "stub" else a2a_peer.validate_proxy)(action.get("definition"))
+
+
+@setup_action("peer", _validate_peer)
+def _peer(action, ctx):
+    """Another agent for this run: reached at /run/<run>/agent/<name>/a2a/<id>, or /a2a-proxy/<id>.
+
+    A proxy's recording is kept under its name like a saved proxy's, because a recording is the
+    thing a later run replays; only the definition goes with the run."""
+    area = "a2a" if action["kind"] == "stub" else "a2aproxy"
+    ctx.cleanup.append(a2a_peer.install_for_run(ctx.run, area, action["definition"]))
     return []
 
 

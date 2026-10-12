@@ -142,17 +142,22 @@
   .cv-grid { position:relative; display:grid; grid-template-columns:minmax(150px, 1fr) minmax(190px, 1.25fr) minmax(190px, 1.25fr); gap:22px 40px; }
   .cv-lane { display:flex; flex-direction:column; gap:10px; min-width:0; }
   .cv-lane > h4 { margin:0; font:600 9.5px/1 var(--mono); letter-spacing:.14em; text-transform:uppercase; color:var(--faint); }
+  .cv-lane > h4 > span { position:relative; background:var(--subtle); padding:3px 8px 3px 0; }
   .cv-lane.wide { grid-column:1 / -1; }
   .cv-lane.row { flex-direction:row; flex-wrap:wrap; align-items:stretch; }
   .cv-lane.row > h4 { flex-basis:100%; }
   .cv-lane .cv-gap { height:14px; }
   .cvb { position:relative; text-align:left; background:#fff; border:1px solid var(--border); border-radius:9px; padding:9px 12px 10px; font:inherit; color:inherit; cursor:pointer; min-width:0; }
   .cv-lane.row .cvb { flex:1 1 170px; max-width:250px; }
+  .cvb { cursor:grab; touch-action:none; user-select:none; -webkit-user-select:none; }
   .cvb:hover { border-color:#c9c2b6; }
+  .cvb.drag { cursor:grabbing; z-index:3; box-shadow:0 6px 18px rgba(20, 24, 31, .16); }
+  .cv-tidy { position:absolute; right:12px; top:10px; z-index:2; border:1px solid var(--border); background:#fff; border-radius:6px; font:500 11px/1 inherit; padding:5px 8px; cursor:pointer; color:var(--muted); }
+  .cv-tidy:hover { color:var(--ink); border-color:#c9c2b6; }
   .cvb[aria-current=true] { border-color:var(--primary); box-shadow:0 0 0 2px var(--primary-tint); }
   .cvb.agent { border-width:2px; border-color:#d8cfc2; }
   .cvb.agent[aria-current=true] { border-color:var(--primary); }
-  .cvb.ghost { border-style:dashed; background:transparent; }
+  .cvb.ghost { border-style:dashed; background:var(--subtle); }
   .cvb.bad { border-color:#e6cf9f; background:var(--amber-tint); }
   .cvb .k { font:600 9px/1 var(--mono); letter-spacing:.12em; text-transform:uppercase; color:var(--faint); }
   .cvb b { display:block; font-size:13px; margin-top:3px; overflow-wrap:anywhere; }
@@ -160,7 +165,7 @@
   .cvb .n { position:absolute; top:-8px; right:-8px; background:var(--amber); color:#fff; font:600 10px/1 var(--mono); padding:4px 6px; border-radius:9px; }
   .cv-adds { display:flex; flex-wrap:wrap; gap:6px; }
   .cv-lane.row .cv-adds { flex:0 0 auto; align-self:center; }
-  .cv-add { border:1px dashed #c9c2b6; background:transparent; border-radius:9px; padding:6px 10px; font:500 12px/1.3 inherit; color:var(--muted); cursor:pointer; text-align:left; white-space:nowrap; }
+  .cv-add { position:relative; border:1px dashed #c9c2b6; background:var(--subtle); border-radius:9px; padding:6px 10px; font:500 12px/1.3 inherit; color:var(--muted); cursor:pointer; text-align:left; white-space:nowrap; }
   .cv-add:hover { color:var(--primary); border-color:var(--primary); }
   .cv-panel { background:#fff; border:1px solid var(--border); border-radius:10px; padding:14px 16px 16px; position:sticky; top:84px; max-height:calc(100vh - 110px); overflow:auto; }
   .cv-panel h3.cvt { font-size:14px; font-weight:650; margin:0; letter-spacing:-.01em; }
@@ -2003,7 +2008,7 @@ function labEdit(doc) {
   // Form or JSON is what the person last chose, not what the last area happened to show;
   // an area that can be drawn remembers that choice on its own.
   LABMODE = a.readonly || !a.form ? (a.form || a.view ? "form" : "json") : a.canvas ? CVPREF : LABPREF;
-  CVSEL = null; CVPROBLEMS = null;
+  CVSEL = null; CVPROBLEMS = null; cvPosLoad();
   document.getElementById("lab-editor").hidden = false;
   document.getElementById("lab-out-card").hidden = true;
   document.getElementById("lab-editing").textContent = (LABNEW ? "New: " : "") + a.title + (LABID ? " · " + LABID : "");
@@ -2029,6 +2034,11 @@ function labMode(m) {
   if (m === LABMODE) return;
   if (LABMODE === "json") { try { LABDOC = readJSON("lab-json", "That") || {}; } catch (e) { return note("lab-note", e.message, true); } LABRAW = {}; }
   else if (m === "json" && Object.keys(LABRAW).length) return note("lab-note", "Finish the JSON in the highlighted box first.", true);
+  // The form and the JSON can add and remove parts too. Blocks are named by where they are in
+  // the document, so if the parts changed while the canvas was away, dragged places no longer
+  // belong to the blocks they were given to, and the numbered ones are let go.
+  if (LABMODE === "canvas") CVKEYS = cvKeys().join(" ");
+  else if (m === "canvas" && CVKEYS !== null && CVKEYS !== cvKeys().join(" ")) { for (const k of Object.keys(CVPOS)) if (/\d/.test(k)) delete CVPOS[k]; cvPosKeep(); }
   LABMODE = m; if (LAB[LABK].canvas) CVPREF = m; else LABPREF = m;
   note("lab-note", ""); labDraw();
 }
@@ -2046,6 +2056,7 @@ async function labSave() {
   const r = await REST("PUT", a.put(id), a.write ? a.write(doc) : doc);
   if (!r.ok) return note("lab-note", said(r.body), true);
   LABID = id; LABNEW = false; LABDOC = JSON.parse(JSON.stringify(doc));
+  if (a.canvas) cvPosKeep();
   document.getElementById("lab-editing").textContent = a.title + " · " + id;
   document.getElementById("lab-del").hidden = !a.del;
   document.getElementById("lab-actions").innerHTML = (a.actions || []).map(([label, , kind], j) => `<button class="btn ${kind === "primary" ? "" : "ghost"}" onclick="labAct(${j})">${esc(label)}</button>`).join("");
@@ -2057,6 +2068,7 @@ async function labDelete() {
   if (!LABID || !confirm("Delete " + LABID + "?")) return;
   const r = await REST("DELETE", a.del(LABID));
   if (!r.ok) return note("lab-note", said(r.body), true);
+  if (a.canvas) { CVPOS = {}; cvPosKeep(); }
   labClose(); await labRef(); labLoad();
 }
 async function labAct(j) {
@@ -2378,16 +2390,18 @@ function mockFields(p, o = {}) {
     + alsoHas(leftovers(getAt(LABDOC, p), ["id", "description", "strict", "routes", "proxy"]));
 }
 function mockForm() { return mockFields([], { top: true }); }
-function stubForm() {
-  return fSec("The agent", "", fRow(idField(), fText(["name"], "Its display name", { opt: 1 }), fText(["description"], "What it does", { opt: 1 })) + fJson(["skills"], "Skills on its agent card", { opt: 1, rows: 2 }))
-    + fSec("What it answers", "First match wins.", resultRows(["results"], "answer") + fRow(fJson(["default"], "Otherwise it answers", { opt: 1, rows: 2 }), injectSel([])))
-    + alsoHas(leftovers(LABDOC, ["id", "name", "description", "skills", "results", "default", "inject"]));
+function stubFields(p, o = {}) {
+  return fSec("The agent", "", fRow(nameField(p, o), fText(p.concat("name"), "Its display name", { opt: 1 }), fText(p.concat("description"), "What it does", { opt: 1 })) + fJson(p.concat("skills"), "Skills on its agent card", { opt: 1, rows: 2 }))
+    + fSec("What it answers", "First match wins.", resultRows(p.concat("results"), "answer") + fRow(fJson(p.concat("default"), "Otherwise it answers", { opt: 1, rows: 2 }), injectSel(p)))
+    + alsoHas(leftovers(getAt(LABDOC, p), ["id", "name", "description", "skills", "results", "default", "inject"]));
 }
-function proxyForm() {
-  return fSec("The proxy", "", fRow(idField(), fText(["url"], "The real agent's URL", { mono: 1, ph: "https://agent.example", span: 2 }))
-      + fRow(fSel(["mode"], "It should", [["record", "Forward and record"], ["replay", "Replay the recording"], ["passthrough", "Forward only"]]), credSel(["credential"]), fText(["description"], "What it is", { opt: 1 })))
-    + alsoHas(leftovers(LABDOC, ["id", "url", "mode", "credential", "description"]));
+function stubForm() { return stubFields([], { top: true }); }
+function peerProxyFields(p, o = {}) {
+  return fSec("The proxy", "", fRow(nameField(p, o), fText(p.concat("url"), "The real agent's URL", { mono: 1, ph: "https://agent.example", span: 2 }))
+      + fRow(fSel(p.concat("mode"), "It should", [["record", "Forward and record"], ["replay", "Replay the recording"], ["passthrough", "Forward only"]]), credSel(p.concat("credential")), fText(p.concat("description"), "What it is", { opt: 1 })))
+    + alsoHas(leftovers(getAt(LABDOC, p), ["id", "url", "mode", "credential", "description"]));
 }
+function proxyForm() { return peerProxyFields([], { top: true }); }
 function faultFields(p, o = {}) {
   const d = getAt(LABDOC, p) || {}, target = d.target || "tool", type = (d.fault || {}).type || "", params = REF.faultTypes[type] || {};
   const kinds = target === "peer" ? REF.peerFaults : REF.toolFaults;
@@ -2518,7 +2532,12 @@ PAGES.lab = { enter: async () => { labTabs(); await labRef(); labLoad(); } };
 // It is not a second way of describing a test. Canvas, Form and JSON are three
 // views of one document; nothing can be drawn that cannot be saved, and a part
 // the canvas has no block for is drawn as its JSON rather than hidden.
+//
+// A block can be dragged. Where it was put is how one person likes to read one
+// test, not part of the test, so it is kept in this browser under the scenario's
+// name and never written into the document a CI job runs.
 let CVSEL = null, CVPROBLEMS = null, CVPREF = "canvas";
+let CVPOS = {}, CVDRAG = null, CVDRAGGED = false, CVKEYS = null;
 // Every top-level field a scenario may have is a block, or inside one. Held to the validator's list by a test.
 const CV_COVERS = ["id", "description", "tags", "notes", "agent", "agents", "turns", "user", "model", "setup", "teardown", "checks", "stop", "timeoutS", "repeat", "ordering"];
 const cut = (s, n = 60) => { s = String(s ?? "").replace(/\s+/g, " ").trim(); return s.length > n ? s.slice(0, n - 1) + "…" : s; };
@@ -2542,36 +2561,45 @@ const CV_SETUP = {
       help: mcp ? "Written-down tools the agent calls over MCP. Point the agent at its address for the run." : "A REST API the agent's tools call. A request outside a route's contract is refused.",
       problem: `setup[${i}]`, fields: () => (mcp ? mcpFields : mockFields)(["setup", i, "definition"]), remove: () => LABDOC.setup.splice(i, 1) }];
   },
+  peer: (i, act) => {
+    const d = act.definition || {}, stub = act.kind !== "proxy";
+    return [{ key: `setup.${i}`, lane: "world", role: "world", kind: stub ? "Stub agent · A2A" : "Agent proxy · A2A", title: d.name || d.id || "unnamed",
+      sub: stub ? `${(d.results || []).length} answer(s)${d.inject ? " · injects" : ""}` : `${d.mode || "no mode yet"} · ${cut(d.url, 40) || "no address yet"}`,
+      help: stub ? "Another agent, written down, for this run only. The agent under test reaches it at /run/<run>/agent/<name>/a2a/<its name>, and it wins over a saved stub of the same name."
+        : "LLMSim between the agent and a real one, for this run only: forward, record once, replay without it. Reached at /run/<run>/agent/<name>/a2a-proxy/<its name>.",
+      problem: `setup[${i}]`, fields: () => (stub ? stubFields : peerProxyFields)(["setup", i, "definition"]), remove: () => LABDOC.setup.splice(i, 1) }];
+  },
   state: (i, act) => [{ key: `setup.${i}`, lane: "world", role: "world", kind: "Seeded records", title: Object.keys(act.seed || {}).join(", ") || "nothing yet",
     sub: Object.entries(act.seed || {}).map(([c, rows]) => `${Object.keys(rows || {}).length} in ${c}`).join(", "), help: "What the mock tools' record store holds when the run starts: {collection: {key: record}}. A write in one turn is what a read in the next returns.",
     problem: `setup[${i}]`, fields: () => fJson(["setup", i, "seed"], "The records", { rows: 8, ph: '{"orders": {"1182": {"status": "open", "total": 1250}}}' }), remove: () => LABDOC.setup.splice(i, 1) }],
-  faults: (i, act) => (act.rules || []).map((r, j) => ({ key: `setup.${i}.rules.${j}`, lane: "world", role: "world", kind: "Fault", title: r.name || r.id || "unnamed",
+  faults: (i, act) => listOf(act.rules).map((r, j) => ({ key: `setup.${i}.rules.${j}`, lane: "world", role: "world", kind: "Fault", title: r.name || r.id || "unnamed",
     sub: `${r.target === "peer" ? "another agent" : "a tool"} · ${((r.fault || {}).type || "?").replace(/_/g, " ")}${r.enabled === false ? " · off" : ""}`, help: "A tool or a peer that fails on purpose, for this run only: the same gates and seed as the model's faults.",
     problem: `setup[${i}]: rules[${j}]`, fields: () => faultFields(["setup", i, "rules", j]),
     remove: () => { act.rules.splice(j, 1); if (!act.rules.length) LABDOC.setup.splice(i, 1); } })),
 };
+const listOf = (x) => (Array.isArray(x) ? x : []);
 function cvBlocks() {
   const d = LABDOC, out = [];
   out.push({ key: "test", lane: "head", role: "test", kind: "Scenario", title: d.id || "unnamed", sub: d.description || "", help: "Its name, what it proves, and labels to find it by.", problem: "", fields: testFields });
   if (d.user) out.push({ key: "user", lane: "user", role: "user", kind: "Simulated user", title: cut(d.user.persona || "cooperative", 40), sub: cut(d.user.goal, 70) || "no goal yet", help: "A model plays the user towards a goal, through LLMSim, so a recording repeats them exactly.", problem: "user", fields: userFields,
     extra: `<button class="btn ghost" onclick="cvUser(false)">Use fixed turns instead</button>` });
   else if (d.agents) out.push({ key: "user", lane: "user", role: "user", kind: "The user", title: "Says something to each agent", sub: "the turns are on the agents", help: "With several agents, each has its own turns: open an agent to set what is said to it.", problem: "turns", fields: () => `<p class="help" style="margin:0">Each agent block holds what the user says to that agent.</p>`, cls: "ghost" });
-  else { const t = d.turns || []; out.push({ key: "user", lane: "user", role: "user", kind: "The user says", title: t.length ? cut(t[0].say, 48) || "…" : "nothing yet", sub: t.length > 1 ? `then ${t.length - 1} more` : t.length ? "one turn" : "", help: "In order. Say what each reply must be, or leave that to the checks.", problem: "turns", fields: () => turnsList(["turns"]),
+  else { const t = listOf(d.turns); out.push({ key: "user", lane: "user", role: "user", kind: "The user says", title: t.length ? cut(t[0].say, 48) || "…" : "nothing yet", sub: t.length > 1 ? `then ${t.length - 1} more` : t.length ? "one turn" : "", help: "In order. Say what each reply must be, or leave that to the checks.", problem: "turns", fields: () => turnsList(["turns"]),
     extra: `<button class="btn ghost" onclick="cvUser(true)">Use a simulated user instead</button>` }); }
   const agent = (p, a, i) => ({ key: p.join("."), lane: "agent", role: "agent", cls: "agent", kind: i == null ? "The agent under test" : `Agent ${i + 1}`, title: a.name || "unnamed", sub: cut(`${(DRIVER_NAME[a.driver] || a.driver || "no driver").split(":")[0]}${agentWhere(a) ? " · " + agentWhere(a) : ""}`, 70),
     help: "How LLMSim reaches it: the driver and that driver's own fields.", problem: p.length === 1 ? "agent" : `agents[${i}]`,
     fields: () => agentFields(p) + (i == null ? "" : `<label style="margin-top:14px">What the user says to it</label>` + turnsList(p.concat("turns"))),
     remove: i == null ? null : () => cvRemoveAgent(i) });
-  if (d.agents) d.agents.forEach((a, i) => out.push(agent(["agents", i], a || {}, i)));
+  if (d.agents) listOf(d.agents).forEach((a, i) => out.push(agent(["agents", i], a || {}, i)));
   else out.push(agent(["agent"], d.agent || {}, null));
   const m = d.model || {};
   out.push({ key: "model", lane: "world", role: "world", kind: "The model", title: (m.rules || []).length ? `${m.rules.length} scripted rule(s)` : m.cassette ? `recording “${m.cassette}”` : "answers as Routing says", sub: m.cassette ? `used to ${m.mode || "replay"}` : (m.rules || []).length ? "tried before the saved rules" : "", help: "What the model says in this run: a script of rules, a recording, or whatever Routing does.", problem: "model", fields: modelFields });
-  (d.setup || []).forEach((act, i) => { const draw = CV_SETUP[(act || {}).type]; if (draw) out.push(...draw(i, act)); else out.push({ key: `setup.${i}`, lane: "world", role: "world", kind: `Setup · ${(act || {}).type || "?"}`, title: "not a kind the canvas knows", sub: "edited as JSON", problem: `setup[${i}]`, fields: () => fJson(["setup", i], "The action", { rows: 8 }), remove: () => LABDOC.setup.splice(i, 1) }); });
+  listOf(d.setup).forEach((act, i) => { const draw = CV_SETUP[(act || {}).type]; if (draw) out.push(...draw(i, act)); else out.push({ key: `setup.${i}`, lane: "world", role: "world", kind: `Setup · ${(act || {}).type || "?"}`, title: "not a kind the canvas knows", sub: "edited as JSON", problem: `setup[${i}]`, fields: () => fJson(["setup", i], "The action", { rows: 8 }), remove: () => LABDOC.setup.splice(i, 1) }); });
   if (d.teardown) out.push({ key: "teardown", lane: "world", role: "world", kind: "Teardown", title: `${(d.teardown || []).length} action(s) after the run`, sub: "", help: "Actions taken after the run, as JSON.", problem: "teardown", fields: () => fJson(["teardown"], "The actions", { rows: 8 }), remove: () => delete LABDOC.teardown });
   const stubs = REF.stubs || [], proxies = REF.proxies || [];
-  out.push({ key: "peers", lane: "world", role: "peers", cls: "ghost", kind: "Other agents", title: stubs.length + proxies.length ? `${stubs.length} stub(s), ${proxies.length} proxy(ies)` : "none saved", sub: "shared, not part of this test", help: "Stub agents and proxies to real ones are saved on their own and shared by every scenario; an agent reaches one at /run/<run>/agent/<name>/a2a/<id>. A peer fault here breaks them for this run.", problem: "\u0000",
+  if (stubs.length + proxies.length) out.push({ key: "peers", lane: "world", role: "peers", cls: "ghost", kind: "Saved agents", title: `${stubs.length} stub(s), ${proxies.length} proxy(ies)`, sub: "shared by every scenario", help: "Stub agents and proxies saved on their own are there for every scenario; an agent reaches one at /run/<run>/agent/<name>/a2a/<id>. To give this test one of its own, which travels with it, use + stub agent or + agent proxy.", problem: "\u0000",
     fields: () => `<p class="help">${stubs.length ? "Stubs: <b>" + esc(stubs.join(", ")) + "</b>. " : ""}${proxies.length ? "Proxies: <b>" + esc(proxies.join(", ")) + "</b>. " : ""}They are edited under <b>Stub agents (A2A)</b> and <b>Agent proxies (A2A)</b>; save this scenario first, opening them closes it.</p>` });
-  (d.checks || []).forEach((c, i) => out.push({ key: `checks.${i}`, lane: "check", role: "check", kind: `Check · ${(c || {}).type || "?"}`, title: (c || {}).name || (c || {}).type || "unnamed", sub: cut(checkSummary(c || {}), 70), help: CHECK_HELP[(c || {}).type] || "What must hold when the conversation ends.", problem: `checks[${i}]`, fields: () => checkFields(["checks", i]), remove: () => LABDOC.checks.splice(i, 1) }));
+  listOf(d.checks).forEach((c, i) => out.push({ key: `checks.${i}`, lane: "check", role: "check", kind: `Check · ${(c || {}).type || "?"}`, title: (c || {}).name || (c || {}).type || "unnamed", sub: cut(checkSummary(c || {}), 70), help: CHECK_HELP[(c || {}).type] || "What must hold when the conversation ends.", problem: `checks[${i}]`, fields: () => checkFields(["checks", i]), remove: () => LABDOC.checks.splice(i, 1) }));
   const st = d.stop || {}, parts = [st.maxTurns ? `after ${st.maxTurns} turns` : "", st.when ? "or when a reply matches" : "", d.timeoutS ? `${d.timeoutS}s limit` : "", d.repeat ? `${d.repeat.n || 1}×` : ""].filter(Boolean);
   out.push({ key: "stop", lane: "agent", role: "run", kind: "The run", title: parts.length ? parts.join(" · ") : "stops after the turns", sub: d.ordering ? "an order is imposed" : "", help: "When it stops, how long it may take, how many times it runs, and who goes first.", problem: "stop", also: ["timeoutS", "repeat", "ordering", "notes"], fields: () => stopFields() + runFields() });
   return out;
@@ -2581,18 +2609,19 @@ const cvProblemsOf = (b) => (CVPROBLEMS || []).filter((p) => b.problem !== "\u00
 function cvDraw() {
   const blocks = cvBlocks(), d = LABDOC, named = new Set(blocks.flatMap(cvProblemsOf));
   const orphans = (CVPROBLEMS || []).filter((p) => !named.has(p));
-  const block = (b) => { const bad = b.key === "test" ? orphans : cvProblemsOf(b); return `<button class="cvb ${b.cls || ""} ${bad.length ? "bad" : ""}" data-key="${esc(b.key)}" data-role="${b.role}" aria-current="${CVSEL === b.key}" onclick="cvSelect(this.dataset.key)" title="${esc(bad.join("\n"))}"><span class="k">${esc(b.kind)}</span><b>${esc(b.title)}</b>${b.sub ? `<span class="s">${esc(b.sub)}</span>` : ""}${bad.length ? `<span class="n">${bad.length}</span>` : ""}</button>`; };
+  const moved = (b) => (CVPOS[b.key] ? ` style="transform:translate(${+CVPOS[b.key][0]}px, ${+CVPOS[b.key][1]}px)"` : "");
+  const block = (b) => { const bad = b.key === "test" ? orphans : cvProblemsOf(b); return `<button class="cvb ${b.cls || ""} ${bad.length ? "bad" : ""}" data-key="${esc(b.key)}" data-role="${b.role}" aria-current="${CVSEL === b.key}"${moved(b)} onpointerdown="cvGrab(event, this)" onclick="cvSelect(this.dataset.key)" title="${esc(bad.join("\n"))}"><span class="k">${esc(b.kind)}</span><b>${esc(b.title)}</b>${b.sub ? `<span class="s">${esc(b.sub)}</span>` : ""}${bad.length ? `<span class="n">${bad.length}</span>` : ""}</button>`; };
   const add = (label, fn) => `<button class="cv-add" onclick="${fn}">+ ${esc(label)}</button>`;
-  const lane = (title, cls, keys, adds, role) => `<div class="cv-lane ${cls}"><h4 data-lane-head="${role || ""}">${esc(title)}</h4>${blocks.filter((b) => keys.includes(b.lane)).map(block).join("")}${adds ? `<div class="cv-adds">${adds}</div>` : ""}</div>`;
-  document.getElementById("cv").innerHTML = `<svg id="cv-wires"></svg><div class="cv-grid">`
+  const lane = (title, cls, keys, adds, role) => `<div class="cv-lane ${cls}"><h4 data-lane-head="${role || ""}"><span>${esc(title)}</span></h4>${blocks.filter((b) => keys.includes(b.lane)).map(block).join("")}${adds ? `<div class="cv-adds">${adds}</div>` : ""}</div>`;
+  document.getElementById("cv").innerHTML = `<svg id="cv-wires"></svg><button class="cv-tidy" id="cv-tidy" onclick="cvTidy()" title="Put every block back where the layout draws it" ${Object.keys(CVPOS).length ? "" : "hidden"}>Reset layout</button><div class="cv-grid">`
     + lane("The test", "wide", ["head"])
     + lane("Who speaks", "", ["user"], d.user || d.agents ? "" : add("turn", "cvAddTurn()"))
     + lane("The agent", "", ["agent"], add(d.agents ? "another agent" : "a second agent", "cvAddAgent()"))
-    + lane("What it reaches", "", ["world"], add("mock tool server", "cvAddSetup('mcp')") + add("mock backend", "cvAddSetup('http')") + add("seeded records", "cvAddSetup('state')") + add("fault", "cvAddSetup('fault')"))
+    + lane("What it reaches", "", ["world"], add("mock tool server", "cvAddSetup('mcp')") + add("mock backend", "cvAddSetup('http')") + add("stub agent", "cvAddSetup('stub')") + add("agent proxy", "cvAddSetup('proxy')") + add("seeded records", "cvAddSetup('state')") + add("fault", "cvAddSetup('fault')"))
     + lane("What must hold at the end", "wide row", ["check"], add("check", "cvAddCheck()"), "check")
     + `</div>`;
   cvPanel(blocks);
-  requestAnimationFrame(cvWire);
+  requestAnimationFrame(() => { cvFit(); cvWire(); });
 }
 function cvPanel(blocks) {
   const el = document.getElementById("cv-panel"), b = blocks.find((x) => x.key === CVSEL);
@@ -2600,7 +2629,8 @@ function cvPanel(blocks) {
     const n = (CVPROBLEMS || []).length;
     el.innerHTML = `<div class="cv-empty"><b style="color:var(--ink)">Click a block to set it up.</b><p style="margin:8px 0 0">Each block is one part of the test; its settings open here and are saved with it.</p>
       ${CVPROBLEMS ? `<p style="margin:8px 0 0">${n ? `${statusTag("fail")} ${n} problem(s), marked on the blocks.` : `${statusTag("pass")} It is valid.`}</p>` : ""}
-      <ul><li><b>Who speaks</b>: the user's turns, or a simulated user.</li><li><b>The agent</b>: how LLMSim reaches it.</li><li><b>What it reaches</b>: the model, and the tools, records and faults this run installs.</li><li><b>What must hold</b>: the checks that decide the verdict.</li></ul>
+      <ul><li><b>Who speaks</b>: the user's turns, or a simulated user.</li><li><b>The agent</b>: how LLMSim reaches it.</li><li><b>What it reaches</b>: the model, and the tools, other agents, records and faults this run installs.</li><li><b>What must hold</b>: the checks that decide the verdict.</li></ul>
+      <p style="margin:10px 0 0"><b>Drag a block</b> to put it where it reads best; the lines follow. Its place is remembered in this browser and is not part of the test.</p>
       <p style="margin:10px 0 0">Press <b>Check it is valid</b> below to mark what is still wrong, <b>Form</b> for the same test as one long form, or <b>JSON</b> for exactly what is sent.</p></div>`;
     return;
   }
@@ -2610,32 +2640,89 @@ function cvPanel(blocks) {
     ${b.fields()}
     <div class="cv-foot">${b.extra || ""}${b.remove ? `<button class="btn ghost" onclick="cvRemove()">Remove</button>` : ""}<span style="flex:1"></span><button class="btn ghost" onclick="cvSelect(null)">Done</button></div>`;
 }
-function cvSelect(key) { CVSEL = CVSEL === key ? null : key; cvDraw(); if (key) document.getElementById("cv-panel").scrollIntoView({ block: "nearest", behavior: "smooth" }); }
-function cvRemove() { const b = cvBlocks().find((x) => x.key === CVSEL); if (!b || !b.remove) return; b.remove(); dropRaw([]); CVSEL = null; cvStale(); cvDraw(); }
+function cvSelect(key) { if (CVDRAGGED) return; CVSEL = CVSEL === key ? null : key; cvDraw(); if (key) document.getElementById("cv-panel").scrollIntoView({ block: "nearest", behavior: "smooth" }); }
+function cvRemove() { const b = cvBlocks().find((x) => x.key === CVSEL); if (!b || !b.remove) return; const before = cvKeys(); b.remove(); dropRaw([]); cvRekey(before, CVSEL, null); CVSEL = null; cvStale(); cvDraw(); }
+
+// ── where a block was dragged to ────────────────────────────────────────────
+const cvKeys = () => cvBlocks().map((b) => b.key);
+const cvPosName = () => "llmsim.canvas." + LABID;
+// A browser that keeps nothing — a private window, storage switched off — still draws; it only forgets.
+function cvPosLoad() { CVPOS = {}; CVKEYS = null; if (!LABID) return; try { const kept = JSON.parse(localStorage.getItem(cvPosName()) || "{}"); if (kept && typeof kept === "object" && !Array.isArray(kept)) CVPOS = kept; } catch { CVPOS = {}; } }
+function cvPosKeep() { if (!LABID) return; try { if (Object.keys(CVPOS).length) localStorage.setItem(cvPosName(), JSON.stringify(CVPOS)); else localStorage.removeItem(cvPosName()); } catch { /* it only forgets */ } }
+// Blocks are named by where they are in the document — the second check, the third setup
+// action — so taking one out, or adding one, renames those after it. Their places go with them:
+// the blocks before and after are the same ones in the same order, less the one that went or came.
+function cvRekey(before, gone, added) {
+  const old = before.filter((k) => k !== gone), now = cvKeys().filter((k) => k !== added), next = {};
+  if (old.length === now.length) old.forEach((k, i) => { if (CVPOS[k]) next[now[i]] = CVPOS[k]; });
+  CVPOS = next; cvPosKeep();
+}
+function cvTidy() { CVPOS = {}; cvPosKeep(); cvDraw(); }
+function cvGrab(ev, el) {
+  if (ev.button) return;
+  const cv = document.getElementById("cv").getBoundingClientRect(), r = el.getBoundingClientRect(), from = CVPOS[el.dataset.key] || [0, 0];
+  // How far it may go: not off the canvas to the left, right or top. Downwards the canvas grows.
+  CVDRAG = { el, key: el.dataset.key, x: ev.clientX, y: ev.clientY, from, now: from, moved: false,
+    minX: from[0] - (r.left - cv.left) + 6, maxX: from[0] + (cv.right - r.right) - 6, minY: from[1] - (r.top - cv.top) + 6 };
+}
+window.addEventListener("pointermove", (ev) => {
+  const d = CVDRAG; if (!d) return;
+  const dx = ev.clientX - d.x, dy = ev.clientY - d.y;
+  if (!d.moved && Math.hypot(dx, dy) < 5) return;          // a click that wobbled is still a click
+  if (!d.moved) { d.moved = true; d.el.classList.add("drag"); }
+  d.now = [Math.round(Math.min(d.maxX, Math.max(d.minX, d.from[0] + dx))), Math.round(Math.max(d.minY, d.from[1] + dy))];
+  d.el.style.transform = `translate(${d.now[0]}px, ${d.now[1]}px)`;
+  cvFit(); cvWire();
+});
+function cvDrop() {
+  const d = CVDRAG; CVDRAG = null;
+  if (!d || !d.moved) return;
+  d.el.classList.remove("drag");
+  if (d.now[0] || d.now[1]) CVPOS[d.key] = d.now; else delete CVPOS[d.key];
+  cvPosKeep();
+  // The click that ends a drag is not a request to open the block.
+  CVDRAGGED = true; setTimeout(() => { CVDRAGGED = false; }, 0);
+  document.getElementById("cv-tidy").hidden = !Object.keys(CVPOS).length;
+  cvFit(); cvWire();
+}
+window.addEventListener("pointerup", cvDrop);
+window.addEventListener("pointercancel", cvDrop);
+// A dragged block does not push the canvas open, so the canvas is made tall enough to hold the lowest one.
+function cvFit() {
+  const cv = document.getElementById("cv"); if (!cv || cv.offsetParent === null) return;
+  cv.style.minHeight = "";
+  const top = cv.getBoundingClientRect().top; let low = 0;
+  for (const el of cv.querySelectorAll(".cvb, .cv-add")) low = Math.max(low, el.getBoundingClientRect().bottom - top);
+  if (low + 20 > cv.offsetHeight) cv.style.minHeight = Math.ceil(low + 20) + "px";
+}
 // An edit makes the last validation stale: its marks go, and the next Check it is valid says what is true now.
 function cvStale() { if (CVPROBLEMS === null) return; CVPROBLEMS = null; for (const el of document.querySelectorAll("#cv .cvb.bad")) { el.classList.remove("bad"); el.removeAttribute("title"); const n = el.querySelector(".n"); if (n) n.remove(); } }
 function cvAddTurn() { const t = LABDOC.turns || (LABDOC.turns = []); t.push({ say: "" }); CVSEL = "user"; cvStale(); cvDraw(); }
 function cvAddCheck() { const c = LABDOC.checks || (LABDOC.checks = []); c.push({ type: "answer" }); CVSEL = `checks.${c.length - 1}`; cvStale(); cvDraw(); }
 function cvAddSetup(kind) {
-  const d = LABDOC, s = d.setup || (d.setup = []), fresh = (k) => JSON.parse(JSON.stringify(LAB[k].blank)), taken = (list) => (id) => { let n = id, i = 2; while (list.includes(n)) n = id + "-" + i++; return n; };
-  if (kind === "fault") {
+  const d = LABDOC, before = cvKeys(), s = d.setup || (d.setup = []), fresh = (k) => JSON.parse(JSON.stringify(LAB[k].blank)), taken = (list) => (id) => { let n = id, i = 2; while (list.includes(n)) n = id + "-" + i++; return n; };
+  const named = (type, kinds) => s.filter((a) => a && a.type === type && kinds.includes(a.kind)).map((a) => (a.definition || {}).id);
+  if (kind === "stub" || kind === "proxy") {
+    const def = fresh(kind === "stub" ? "a2a" : "a2aproxies"); def.id = taken(named("peer", [kind]))(def.id);
+    s.push({ type: "peer", kind, definition: def }); CVSEL = `setup.${s.length - 1}`;
+  } else if (kind === "fault") {
     let act = s.find((a) => a && a.type === "faults");
     if (!act) { act = { type: "faults", rules: [] }; s.push(act); }
     const rule = fresh("kitfaults"); rule.id = taken(act.rules.map((r) => r.id))("my-fault"); act.rules.push(rule);
     CVSEL = `setup.${s.indexOf(act)}.rules.${act.rules.length - 1}`;
   } else if (kind === "state") { s.push({ type: "state", seed: { orders: { "1182": { status: "open" } } } }); CVSEL = `setup.${s.length - 1}`; }
   else {
-    const def = fresh(kind === "mcp" ? "mcp" : "mocks"); def.id = taken(s.filter((a) => a && a.type === "mock").map((a) => (a.definition || {}).id))(def.id);
+    const def = fresh(kind === "mcp" ? "mcp" : "mocks"); def.id = taken(named("mock", [kind]))(def.id);
     s.push({ type: "mock", kind, definition: def }); CVSEL = `setup.${s.length - 1}`;
   }
-  cvStale(); cvDraw();
+  cvRekey(before, null, CVSEL); cvStale(); cvDraw();
 }
 // One agent with the user's turns, or several each with its own: the document has one shape or the other.
 function cvAddAgent() {
-  const d = LABDOC;
+  const d = LABDOC, before = cvKeys();
   if (!d.agents) { const first = { ...(d.agent || { name: "agent", driver: "http" }), turns: d.turns || [] }; delete d.agent; delete d.turns; delete d.user; d.agents = [first]; }
   d.agents.push({ name: "agent" + (d.agents.length + 1), driver: "http", url: "", body: { input: "{{message}}" }, reply: "reply", turns: [{ say: "" }] });
-  CVSEL = `agents.${d.agents.length - 1}`; cvStale(); cvDraw();
+  CVSEL = `agents.${d.agents.length - 1}`; cvRekey(before, null, CVSEL); cvStale(); cvDraw();
 }
 function cvRemoveAgent(i) {
   const d = LABDOC; d.agents.splice(i, 1);
@@ -2643,17 +2730,49 @@ function cvRemoveAgent(i) {
 }
 function cvUser(on) { const d = LABDOC; if (on) { delete d.turns; d.user = { persona: "cooperative", goal: "" }; } else { delete d.user; d.turns = [{ say: "" }]; } CVSEL = "user"; cvStale(); cvDraw(); }
 // The lines: who speaks to the agent, what the agent reaches, and the checks it ends in. Drawn
-// over the blocks once they have a size, and again when the window changes.
+// under the blocks once they have a size, again while one is dragged, and when the window changes.
+// A line leaves the side of a block that faces the one it goes to, so it still reads after a
+// block has been dragged to the other side.
 function cvWire() {
   const cv = document.getElementById("cv"), svg = document.getElementById("cv-wires");
   if (!cv || !svg || cv.offsetParent === null) return;
   const box = cv.getBoundingClientRect(), at = (el) => { const r = el.getBoundingClientRect(); return { l: r.left - box.left, t: r.top - box.top, r: r.right - box.left, b: r.bottom - box.top, cx: (r.left + r.right) / 2 - box.left, cy: (r.top + r.bottom) / 2 - box.top }; };
   const q = (role) => [...cv.querySelectorAll(`.cvb[data-role="${role}"]`)];
-  const agents = q("agent"), users = q("user"), world = [...q("world"), ...q("peers")], checksHead = cv.querySelector('[data-lane-head="check"]');
+  const agents = q("agent"), users = q("user"), world = [...q("world"), ...q("peers")], checks = q("check"), run = q("run")[0];
   let paths = "";
-  const across = (a, b, dashed) => { const A = at(a), B = at(b), m = (A.r + B.l) / 2; paths += `<path d="M${A.r},${A.cy} C${m},${A.cy} ${m},${B.cy} ${B.l - 2},${B.cy}"${dashed ? ' stroke-dasharray="4 4"' : ""} marker-end="url(#cv-arrow)"/>`; };
-  for (const a of agents) { for (const u of users) across(u, a); for (const w of world) across(a, w, w.dataset.role === "peers"); }
-  if (agents.length && checksHead && (LABDOC.checks || []).length) { const A = at(agents[agents.length - 1]), H = at(checksHead); paths += `<path d="M${A.cx},${A.b} L${A.cx},${H.t - 8}" marker-end="url(#cv-arrow)"/>`; }
+  // Sideways when the two are side by side, up or down when one is over the other. A conversation
+  // reads across, so those lines go sideways whenever they can; the run ends in its checks, which
+  // are drawn under it, so those go down whenever they can.
+  const link = (a, b, down, dashed) => {
+    const A = at(a), B = at(b), beside = B.l >= A.r - 8 || B.r <= A.l + 8, over = B.t >= A.b - 8 || B.b <= A.t + 8;
+    let d;
+    if (beside && !(down && over)) {
+      if (B.l >= A.r - 8) { const m = (A.r + B.l) / 2; d = `M${A.r},${A.cy} C${m},${A.cy} ${m},${B.cy} ${B.l - 2},${B.cy}`; }
+      else { const m = (A.l + B.r) / 2; d = `M${A.l},${A.cy} C${m},${A.cy} ${m},${B.cy} ${B.r + 2},${B.cy}`; }
+    }
+    else if (B.cy >= A.cy) { const m = (A.b + B.t) / 2; d = `M${A.cx},${A.b} C${A.cx},${m} ${B.cx},${m} ${B.cx},${B.t - 2}`; }
+    else { const m = (A.t + B.b) / 2; d = `M${A.cx},${A.t} C${A.cx},${m} ${B.cx},${m} ${B.cx},${B.b + 2}`; }
+    paths += `<path d="${d}"${dashed ? ' stroke-dasharray="4 4"' : ""} marker-end="url(#cv-arrow)"/>`;
+  };
+  for (const a of agents) { for (const u of users) link(u, a); for (const w of world) link(a, w, false, w.dataset.role === "peers"); }
+  // The agent's conversation is the run, and the run is what the checks judge.
+  const from = run || agents[agents.length - 1];
+  if (run && agents.length) link(agents[agents.length - 1], run, true);
+  if (from) {
+    // The checks under the run hang from one line: down from the run, along above them, and
+    // down to each. Drawn separately they cross everything between. One that was dragged
+    // somewhere else — beside the run, above it — gets a line of its own.
+    const F = at(from), under = checks.filter((c) => at(c).t > F.b + 70);
+    for (const c of checks) if (!under.includes(c)) link(from, c, true);
+    if (under.length) {
+      const y = Math.min(...under.map((c) => at(c).t)) - 46;
+      paths += `<path d="M${F.cx},${F.b} L${F.cx},${y}"/>`;
+      for (const c of under) {
+        const B = at(c), dir = Math.sign(B.cx - F.cx), r = Math.min(10, Math.abs(B.cx - F.cx) / 2);
+        paths += `<path d="M${F.cx},${y} L${B.cx - dir * r},${y} Q${B.cx},${y} ${B.cx},${y + r} L${B.cx},${B.t - 2}" marker-end="url(#cv-arrow)"/>`;
+      }
+    }
+  }
   svg.setAttribute("viewBox", `0 0 ${box.width} ${box.height}`);
   svg.innerHTML = `<defs><marker id="cv-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b8b1a6"/></marker></defs><g fill="none" stroke="#b8b1a6" stroke-width="1.5">${paths}</g>`;
 }

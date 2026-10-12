@@ -33,6 +33,24 @@ TASKS = {}                        # (kind, id, task id) -> task bookkeeping
 _LOCK = threading.RLock()
 _CALLS = {}                       # (run, id) -> number of messages received
 _POS = {}                         # (run, proxy, key) -> how many times a recorded answer has been served
+_RUN_DEFS = {}                    # (area, run, id) -> a stub or proxy a scenario brought for that run only
+
+
+def definition(area, name, run=None):
+    """The stub or proxy of that name: the one a scenario brought for this run, else the saved one.
+
+    The run's own comes first, so a scenario can stand a different billing agent in for the shared
+    one without touching it."""
+    with _LOCK:
+        if run and (area, run, name) in _RUN_DEFS:
+            return _RUN_DEFS[(area, run, name)]
+    return store().get(area, name)
+
+
+def install_for_run(run, area, defn):
+    with _LOCK:
+        _RUN_DEFS[(area, run, defn["id"])] = defn
+    return lambda: _RUN_DEFS.pop((area, run, defn["id"]), None)
 
 
 def validate_stub(defn):
@@ -248,9 +266,7 @@ def stub_stream(defn, message, handler, run, caller):
 def _stub_endpoint(handler, method, path, rest, raw):
     name, _, tail = rest.partition("/")
     run, caller = _identity(handler)
-    with _LOCK:
-        pass
-    defn = store().get("a2a", name)
+    defn = definition("a2a", name, run)
     if defn is None:
         return core.reply_json(handler, 404, {"error": "There is no stub agent called %s." % name})
     tail = tail.strip("/")
@@ -316,7 +332,7 @@ def _sse_events(text):
 def _proxy_endpoint(handler, method, path, rest, raw):
     name, _, tail = rest.partition("/")
     run, caller = _identity(handler)
-    defn = store().get("a2aproxy", name)
+    defn = definition("a2aproxy", name, run)
     if defn is None:
         return core.reply_json(handler, 404, {"error": "There is no proxy called %s." % name})
     tail = tail.strip("/")

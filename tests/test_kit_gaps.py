@@ -158,7 +158,7 @@ def case_the_console_page_is_valid_javascript_and_names_every_area(sim):
     assert 'data-view="lab"' in page and 'id="v-lab"' in page and "PAGES.lab" in page
     served = sim.call("GET", "/ui")[2]
     assert 'id="v-lab"' in served, "the server does not serve the page"
-    for area in ("scenarios", "results", "datasets", "experiments", "mcp", "mocks", "a2a", "a2aproxies", "kitfaults", "judges", "reviews", "variations", "credentials"):
+    for area in ("agents", "scenarios", "testruns", "results", "datasets", "experiments", "mcp", "mocks", "a2a", "a2aproxies", "kitfaults", "judges", "reviews", "variations", "credentials"):
         assert re.search(r"\n  %s: \{ title:" % area, page), "the console has no tab for %s" % area
         assert sim.api("GET", "/api/%s" % area)[0] == 200 or area == "results", area
     node = shutil.which("node")
@@ -201,7 +201,8 @@ def case_every_console_screen_can_be_reached_and_none_is_a_dead_end(sim):
     # Every area of the agent-tests page is in a group that is drawn.
     groups = re.findall(r'\n  \["(\w+)", "[^"]+", "[^"]+"\],', page.split("const LAB_GROUPS = [")[1].split("];")[0])
     areas = re.findall(r'\n  (\w+): \{ title: "[^"]+", group: "(\w+)",', page)
-    assert len(areas) == 13, "an agent-tests area has no group: %d of 13 have one" % len(areas)
+    assert len(areas) == 15, "an agent-tests area has no group: %d of 15 have one" % len(areas)
+    assert areas[0] == ("agents", "agents"), "the agent-tests page does not open on the agents: %s" % (areas[0],)
     assert all(g in groups for _a, g in areas) and all(any(g == h for _a, h in areas) for g in groups), (groups, areas)
 
     # The addresses on the overview are the ones the server answers on.
@@ -219,7 +220,7 @@ def case_every_agent_test_area_has_a_form_or_a_view_and_they_keep_up_with_the_ap
     page = open(os.path.join(ROOT, "ui.html")).read()
     lab = page.split("const LAB = {")[1].split("\n};")[0]
     areas = re.split(r"\n  (?=\w+: \{ title:)", "\n" + lab)[1:]
-    assert len(areas) == 13, len(areas)
+    assert len(areas) == 15, len(areas)
     for area in areas:
         name = area.split(":")[0]
         readonly = "readonly: true" in area
@@ -234,6 +235,12 @@ def case_every_agent_test_area_has_a_form_or_a_view_and_they_keep_up_with_the_ap
     assert drivers <= fields, "no fields for the driver(s) %s" % sorted(drivers - fields)
     declared = set(re.findall(r"(\w+): \[", page.split("const DRIVER_KEYS = {")[1].split("};")[0]))
     assert drivers <= declared, "DRIVER_KEYS does not list %s, so changing driver would leave its fields behind" % sorted(drivers - declared)
+    # An agent is added by choosing its platform from the server's list; a platform the page has no mark for
+    # is drawn as a question mark, and a connection it has no fields for cannot be filled in.
+    systems = sim.api("GET", "/api/agents")[1]["systems"]
+    marks = set(re.findall(r'"?([\w-]+)"?: "', page.split("const SYS_MARK = {")[1].split("};")[0]))
+    assert {x["id"] for x in systems} <= marks, "no mark for the platform(s) %s" % sorted({x["id"] for x in systems} - marks)
+    assert {c["driver"] for x in systems for c in x["connections"]} <= fields
     checks = set(sim.api("GET", "/api/checks")[1]["types"])
     described = set(re.findall(r"(\w+): \"", block("CHECK_HELP")))
     assert checks <= described, "the console cannot say what the check(s) %s do" % sorted(checks - described)

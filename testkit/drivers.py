@@ -7,6 +7,7 @@ end the conversation.
 
   http         any endpoint that takes a message and returns a reply, described by a template
   openai       an OpenAI-compatible chat endpoint
+  responses    an endpoint that speaks the Responses API, which is also how an Azure AI Foundry agent is called
   a2a          an agent that speaks Agent2Agent (message/send, tasks, push or polling)
   agentforce   Salesforce's Agent API (session, messages, end)
   process      a local program (off unless the operator turns it on: see below)
@@ -145,6 +146,11 @@ class Driver:
     def end(self):
         pass
 
+    def describe(self):
+        """(status, what was found) once start() has run: "ok", "warn" when nothing can be known
+        without sending a message, or "fail". What a connection test shows before it says anything."""
+        return "warn", "Nothing is sent to this kind of agent until the first message, so only a message can show it is there."
+
     def timeout(self):
         return float(self.cfg.get("timeoutS") or self.ctx.timeout)
 
@@ -207,6 +213,18 @@ class OpenAIDriver(Driver):
 
     def start(self):
         self.messages = [{"role": "system", "content": self.cfg["system"]}] if self.cfg.get("system") else []
+
+    def describe(self):
+        url = self.cfg["url"].rstrip("/") + "/models"
+        status, _, out = http("GET", url, dict(_auth_headers(self.cfg, self.ctx), **self.ident(url)), None, 15)
+        if status in (401, 403):
+            return "fail", "The endpoint refused the credential: HTTP %d %s" % (status, str(out)[:200])
+        if status == 200:
+            try:
+                return "ok", "The endpoint answers, and lists %d model(s)." % len(json.loads(out).get("data") or [])
+            except (ValueError, AttributeError):
+                pass
+        return "warn", "The endpoint is there but does not list its models (HTTP %d), so only a message can show it works." % status
 
     def send(self, text):
         self.turn += 1
@@ -301,33 +319,71 @@ class A2ADriver(Driver):
 
         {"driver": "a2a", "url": "https://agent.example", "credential": "agent-token",
          "wait": "poll" | "push" | "stream", "pollMs": 500}
+
+    The agent card is looked for at the two addresses the specification names. A platform that keeps
+    it somewhere else says where with `card`, a path under `url` or a whole address: Azure AI Foundry's
+    is at agentCard/v0.3, and is not public. `headers` are sent with every request, for a platform
+    that wants its own, such as A2A-Version.
     """
     name, required = "a2a", ("url",)
 
+    @classmethod
+    def validate(cls, cfg):
+        problems = super().validate(cfg)
+        if cfg.get("card") is not None and not (isinstance(cfg["card"], str) and cfg["card"]):
+            problems.append("card is where the agent card is: a path under url, or an address")
+        if cfg.get("headers") is not None and not (isinstance(cfg["headers"], dict) and all(isinstance(v, str) for v in cfg["headers"].values())):
+            problems.append("headers is {name: value}")
+        return problems
+
     def start(self):
         self.context_id, self.task_id, self.rpc_id = None, None, 0
+        self.card, self.card_tried = None, []
         self.endpoint = self.cfg.get("rpcUrl") or self._endpoint()
+
+    def _headers(self, url):
+        return dict(self.cfg.get("headers") or {}, **dict(_auth_headers(self.cfg, self.ctx), **self.ident(url)))
 
     def _endpoint(self):
         base = self.cfg["url"].rstrip("/")
-        for suffix in ("/.well-known/agent-card.json", "/.well-known/agent.json"):
+        named = self.cfg.get("card")
+        places = [named if named.startswith("http") else base + "/" + named.lstrip("/")] if named else \
+            [base + "/.well-known/agent-card.json", base + "/.well-known/agent.json"]
+        for place in places:
             try:
-                status, _, text = http("GET", base + suffix, dict(_auth_headers(self.cfg, self.ctx), **self.ident(base)), None, 15)
-            except DriverError:
+                status, _, text = http("GET", place, self._headers(base), None, 15)
+            except DriverError as exc:
+                self.card_tried.append("%s: %s" % (place, exc))
                 break
+            self.card_tried.append("%s: HTTP %d" % (place, status))
             if status == 200:
                 try:
                     card = json.loads(text)
                 except ValueError:
                     continue
-                self.card = card
-                return card.get("url") or base
+                if isinstance(card, dict):
+                    self.card = card
+                    return card.get("url") or base
         return base
+
+    def describe(self):
+        if self.card is not None:
+            skills = [s.get("name") or s.get("id") for s in self.card.get("skills") or [] if isinstance(s, dict)]
+            return "ok", "Its agent card names it %s (A2A %s)%s. Messages go to %s." % (
+                self.card.get("name") or "an agent", self.card.get("protocolVersion") or self.card.get("version") or "version not given",
+                ", with %d skill(s): %s" % (len(skills), ", ".join(str(s) for s in skills[:5])) if skills else "", self.endpoint)
+        tried = "; ".join(self.card_tried) or "nowhere was tried"
+        if any(": HTTP 401" in t or ": HTTP 403" in t for t in self.card_tried):
+            return "fail", "The agent card was refused, so the credential is not accepted (%s)." % tried
+        if self.cfg.get("rpcUrl"):
+            return "warn", "No agent card was read; messages go to the address given, %s." % self.endpoint
+        return "fail" if self.card_tried and "could not reach" in self.card_tried[-1] else "warn", \
+            "No agent card was found (%s). Messages would go to %s." % (tried, self.endpoint)
 
     def _rpc(self, method, params, stream=False):
         self.rpc_id += 1
         body = {"jsonrpc": "2.0", "id": self.rpc_id, "method": method, "params": params}
-        headers = dict(_auth_headers(self.cfg, self.ctx), **self.ident(self.endpoint))
+        headers = self._headers(self.endpoint)
         if stream:
             headers["Accept"] = "text/event-stream"
         status, _, out = http("POST", self.endpoint, headers, body, self.timeout(), stream_to=sse_events if stream else None)
@@ -469,6 +525,9 @@ class AgentforceDriver(Driver):
             raise DriverError("the session answer had no sessionId: %s" % str(out)[:200])
         self.greeting = " ".join(m.get("message", "") for m in data.get("messages") or [] if isinstance(m, dict)).strip()
 
+    def describe(self):
+        return "ok", "A session was opened with the agent%s." % (', which greeted with "%s"' % self.greeting[:160] if self.greeting else "")
+
     def send(self, text):
         self.turn += 1
         self.sequence += 1
@@ -519,7 +578,103 @@ class AgentforceDriver(Driver):
             pass
 
 
-DRIVERS = {d.name: d for d in (HttpDriver, OpenAIDriver, A2ADriver, AgentforceDriver, ProcessDriver)}
+# -- the Responses API ---------------------------------------------------------
+
+class ResponsesDriver(Driver):
+    """An endpoint that speaks the Responses API: POST <url>/responses with the input, read the output text.
+
+        {"driver": "responses", "url": "https://agent.example/v1", "model": "gpt-5",
+         "instructions": "…", "extra": {…}, "chain": "previous" | "conversation" | "none", "query": {…}}
+
+    A conversation is kept on the server's side, not resent: each turn names the response before it
+    (`previous_response_id`), or the conversation it belongs to when `chain` is "conversation", which
+    is made first with POST <url>/conversations. "none" sends every turn on its own.
+
+    This is also how an agent in Azure AI Foundry is called: `url` is the project's
+    …/api/projects/<project>/openai/v1 and `extra` names the agent,
+    {"agent_reference": {"type": "agent_reference", "name": "<agent>"}}. `query` is added to every
+    address, for a service that wants an api-version.
+    """
+    name, required = "responses", ("url",)
+
+    @classmethod
+    def validate(cls, cfg):
+        problems = super().validate(cfg)
+        if cfg.get("chain", "previous") not in ("previous", "conversation", "none"):
+            problems.append("chain is previous, conversation or none")
+        for key in ("extra", "query"):
+            if cfg.get(key) is not None and not isinstance(cfg[key], dict):
+                problems.append("%s is an object" % key)
+        return problems
+
+    def _url(self, path):
+        url = self.cfg["url"].rstrip("/") + path
+        query = self.cfg.get("query") or {}
+        return url + ("?" + urllib.parse.urlencode(query) if query else "")
+
+    def _post(self, path, body):
+        url = self._url(path)
+        status, _, out = http("POST", url, dict(_auth_headers(self.cfg, self.ctx), **self.ident(url)), body, self.timeout())
+        if status >= 400:
+            raise DriverError("the endpoint answered HTTP %d to %s: %s" % (status, path, str(out)[:300]))
+        try:
+            data = json.loads(out)
+        except ValueError:
+            raise DriverError("the answer to %s is not JSON: %s" % (path, out[:200]))
+        if not isinstance(data, dict):
+            raise DriverError("the answer to %s is not an object: %s" % (path, out[:200]))
+        return data
+
+    def start(self):
+        self.previous, self.conversation = None, None
+        if self.cfg.get("chain") == "conversation":
+            self.conversation = self._post("/conversations", {}).get("id")
+            if not self.conversation:
+                raise DriverError("the endpoint made a conversation and gave it no id")
+
+    def describe(self):
+        if self.conversation:
+            return "ok", "The endpoint made a conversation, %s." % self.conversation
+        return super().describe()
+
+    @staticmethod
+    def text_of(data):
+        if isinstance(data.get("output_text"), str):
+            return data["output_text"]
+        parts = []
+        for item in data.get("output") or []:
+            if isinstance(item, dict) and item.get("type", "message") == "message":
+                for c in item.get("content") or []:
+                    if isinstance(c, dict) and c.get("type") in ("output_text", "text") and isinstance(c.get("text"), str):
+                        parts.append(c["text"])
+        return "".join(parts)
+
+    def send(self, text):
+        self.turn += 1
+        body = {"input": [{"role": "user", "content": text}]}
+        if self.cfg.get("model"):
+            body["model"] = self.cfg["model"]
+        if self.cfg.get("instructions"):
+            body["instructions"] = self.cfg["instructions"]
+        body.update(self.cfg.get("extra") or {})
+        if self.conversation:
+            body["conversation"] = self.conversation
+        elif self.previous and self.cfg.get("chain", "previous") == "previous":
+            body["previous_response_id"] = self.previous
+        started = time.time()
+        data = self._post("/responses", body)
+        ms = int((time.time() - started) * 1000)
+        if data.get("error"):
+            err = data["error"]
+            raise DriverError("the agent reported an error: %s" % (err.get("message") if isinstance(err, dict) else err))
+        if data.get("status") in ("failed", "incomplete", "cancelled"):
+            why = (data.get("incomplete_details") or {}).get("reason") if isinstance(data.get("incomplete_details"), dict) else ""
+            raise DriverError("the response was %s%s" % (data["status"], ": " + why if why else ""))
+        self.previous = data.get("id") or self.previous
+        return Reply(self.text_of(data), raw=data, ms=ms, state={"response": data.get("id"), "status": data.get("status", "")})
+
+
+DRIVERS = {d.name: d for d in (HttpDriver, OpenAIDriver, ResponsesDriver, A2ADriver, AgentforceDriver, ProcessDriver)}
 
 
 def validate(cfg):

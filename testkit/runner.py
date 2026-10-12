@@ -21,7 +21,7 @@ import threading
 import time
 import traceback
 
-from . import checks, core, drivers, fakes, ordering, runtime, scenario as scn, timeline
+from . import agents, checks, core, drivers, fakes, ordering, runtime, scenario as scn, timeline
 from .store import store
 
 JOBS = {}                       # run -> result, while it is running
@@ -97,11 +97,14 @@ def run_scenario(scenario, options=None, base_host="localhost:8099"):
     options = options or {}
     tier = options.get("tier", "simulated")
     run = options.get("run") or new_run_id(scenario["id"])
+    # A scenario may name a saved agent, and a run may be pointed at one. Who that is is settled
+    # here, once, so every way of running a scenario — one run, an experiment, a test run — agrees.
+    scenario, unresolved, refs = agents.resolve(scenario, options.get("agent"))
     ctx = RunCtx(run, scenario, tier, base_host, options)
     started = time.time()
     result = {"run": run, "scenario": scenario["id"], "tier": tier, "status": "running", "startedAt": started, "turns": [],
               "checks": [], "model": {}, "agents": [{"name": p["name"], "driver": p.get("driver")} for p in ctx.participants],
-              "label": options.get("label", "")}
+              "agentRefs": refs, "testrun": options.get("testrun", ""), "label": options.get("label", "")}
     with _LOCK:
         JOBS[run] = result
     store().touch_run(run, label=scenario["id"], meta={"scenario": scenario["id"], "tier": tier, "label": options.get("label", "")})
@@ -110,8 +113,8 @@ def run_scenario(scenario, options=None, base_host="localhost:8099"):
     if options.get("seed") is not None:
         fakes.reseed(options["seed"])
     try:
-        problems = _start_model(ctx, result)
-        for action in scenario.get("setup") or []:
+        problems = list(unresolved) or _start_model(ctx, result)
+        for action in ([] if unresolved else scenario.get("setup") or []):
             problems += scn.SETUP_TYPES[action["type"]][0](action, ctx) or []
         if problems:
             result["error"] = "; ".join(problems)

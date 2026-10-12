@@ -5,7 +5,7 @@ whatever a person can do on a page a harness can do over HTTP.
 """
 
 from . import core, rest_area, run_route
-from . import checks, credentials, drivers, fakes, runner, scenario as scn, store, timeline
+from . import agents, checks, credentials, drivers, fakes, runner, scenario as scn, store, testruns, timeline  # noqa: F401
 from . import a2a_peer, codeeval, datasets, experiments, http_mock, judges, mcp_mock, multi_checks, ordering, otlp, review, setup_actions, state_checks, users  # noqa: F401 — registering routes, checks and setup actions
 from .core import ok, fail
 
@@ -145,13 +145,14 @@ def _checks(method, rest, body, query, host):
 
 def _scenario_listing():
     return [{"id": i, "description": b.get("description", ""), "tags": b.get("tags", []), "driver": (b.get("agent") or {}).get("driver"),
-             "agent": (b.get("agent") or {}).get("name", "agent"), "checks": len(b.get("checks") or []), "updated": u}
+             "agent": (b.get("agent") or {}).get("name", "agent"), "uses": agents.uses(b), "several": isinstance(b.get("agents"), list),
+             "checks": len(b.get("checks") or []), "updated": u}
             for i, b, u in store.store().docs("scenarios")]
 
 
 def _options(body, query):
     options = {}
-    for key in ("run", "tier", "label", "seed", "keepState"):
+    for key in ("run", "tier", "label", "seed", "keepState", "agent"):
         if (body or {}).get(key) is not None:
             options[key] = body[key]
     return options
@@ -164,6 +165,9 @@ def _check_options(options):
         return "tier is simulated or real"
     if "keepState" in options and not isinstance(options["keepState"], bool):
         return "keepState is true or false"
+    agent = options.get("agent")
+    if agent is not None and not (core.valid_id(agent) or (isinstance(agent, dict) and agent and all(core.valid_id(v) for v in agent.values()))):
+        return "agent is the id of a saved agent, or {name: id} for a scenario that drives several"
     return None
 
 
@@ -231,9 +235,10 @@ def _results(method, rest, body, query, host):
         for run, doc, updated in reversed(st.docs("results")):
             rows.append({"run": run, "scenario": doc.get("scenario"), "verdict": doc.get("verdict"), "status": doc.get("status"),
                          "tier": doc.get("tier"), "summary": doc.get("summary"), "durationS": doc.get("durationS"),
-                         "finishedAt": doc.get("finishedAt"), "label": doc.get("label", "")})
-        want = (query.get("scenario") or [None])[0]
-        return ok({"results": [r for r in rows if not want or r["scenario"] == want][:_int(query, "limit", 100)]})
+                         "finishedAt": doc.get("finishedAt"), "label": doc.get("label", ""), "agents": doc.get("agentRefs") or [],
+                         "testrun": doc.get("testrun", "")})
+        want, on = (query.get("scenario") or [None])[0], (query.get("agent") or [None])[0]
+        return ok({"results": [r for r in rows if (not want or r["scenario"] == want) and (not on or on in r["agents"])][:_int(query, "limit", 100)]})
     if method == "GET" and len(rest) >= 1:
         result = runner.result_of(rest[0])
         if not result:

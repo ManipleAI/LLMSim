@@ -30,6 +30,16 @@ def setup_action(kind, validate=None):
     return wrap
 
 
+def _agent_problems(agent, where):
+    """An agent is described where it is used, or is a saved one named with `use`. Whether a saved
+    agent of that name exists is found out when the scenario runs: a scenario is a file, and it may
+    be written before the agent is added, or on another machine."""
+    if "use" in agent:
+        from . import agents
+        return agents.validate_reference(agent, where)
+    return ["%s: %s" % (where, p) for p in drivers.validate(agent)]
+
+
 def validate(scenario):
     """Every problem with a scenario, so a person fixes them in one go."""
     if not isinstance(scenario, dict):
@@ -51,7 +61,7 @@ def validate(scenario):
         else:
             if "name" in agent and not core.valid_id(agent["name"]):
                 problems.append("agent.name is letters, digits, dot, dash, underscore or colon")
-            problems += ["agent: " + p for p in drivers.validate(agent)]
+            problems += _agent_problems(agent, "agent")
     else:
         if not isinstance(agents, list) or not 2 <= len(agents) <= 20:
             problems.append("agents is a list of 2 to 20 agents")
@@ -64,7 +74,7 @@ def validate(scenario):
                 names.append(a.get("name"))
                 if not core.valid_id(a.get("name")):
                     problems.append("agents[%d].name is required: letters, digits, dot, dash, underscore or colon" % i)
-                problems += ["agents[%d]: %s" % (i, p) for p in drivers.validate(a)]
+                problems += _agent_problems(a, "agents[%d]" % i)
                 if not (isinstance(a.get("turns"), list) and a["turns"]) and a.get("user") is None:
                     problems.append("agents[%d] needs turns (what is said to it)" % i)
                 for j, t in enumerate(a.get("turns") or []):

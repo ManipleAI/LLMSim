@@ -31,7 +31,7 @@ STATUS_RANK = {"pass": 0, "flaky": 1, "no-data": 2, "fail": 3, "error": 3}
 def merge_agent(scenario, override):
     """The scenario with its agent configuration overridden: how a NEW VERSION of the agent is tried
     against the same cases. {"url": …} for a single agent, or {"<name>": {…}} for several."""
-    if not override:
+    if not override or isinstance(override, str):      # a saved agent's id is resolved when the case runs
         return scenario
     sc = copy.deepcopy(scenario)
     if "agents" in sc:
@@ -83,8 +83,8 @@ def validate_spec(spec):
         problems += datasets.validate_repeat(spec["repeat"] if isinstance(spec["repeat"], dict) else {"n": spec["repeat"]})
     if spec.get("concurrency", 1) not in range(1, 9):
         problems.append("concurrency is 1 to 8")
-    if spec.get("agent") is not None and not isinstance(spec["agent"], dict):
-        problems.append("agent is the fields to override in each scenario's agent")
+    if spec.get("agent") is not None and not (isinstance(spec["agent"], dict) or core.valid_id(spec["agent"])):
+        problems.append("agent is the id of a saved agent, or the fields to override in each scenario's agent")
     for k in spec:
         if k not in {"dataset", "label", "tier", "repeat", "seed", "split", "tags", "items", "agent", "concurrency", "wait", "keepForBaseline"}:
             problems.append("unknown field %r" % k)
@@ -106,7 +106,10 @@ def run_experiment(spec, base_host, exp_id=None):
         sc = merge_agent(item["scenario"], spec.get("agent"))
         r = rep or item.get("repeat") or sc.get("repeat") or {"n": 1}       # an experiment's own repeat wins over the case's
         n = r.get("n", 1)
-        row = run_case(sc, n, min(r.get("required", n), n), {"tier": exp["tier"], "label": exp_id}, base_host, spec.get("seed"), item["id"])
+        options = {"tier": exp["tier"], "label": exp_id}
+        if isinstance(spec.get("agent"), str):
+            options["agent"] = spec["agent"]
+        row = run_case(sc, n, min(r.get("required", n), n), options, base_host, spec.get("seed"), item["id"])
         row.update(id=item["id"], tags=item.get("tags", []), split=item.get("split"))
         return row
 

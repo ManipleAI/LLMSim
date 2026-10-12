@@ -174,6 +174,18 @@ curl -X POST localhost:8099/api/rules/test -d '{"ask": "please reconcile the led
 
 To make a single model answer the same thing every time, or fail, set it on that model's page under **Models**: fixed text, a status such as 429 or 529, or a delay in milliseconds. It overrides the rules for that model alone.
 
+### When the default route is a real model
+
+A rule answers on the scripted route. If this LLMSim's default route is a ChatGPT plan, an upstream or the Anthropic API, a test's rule never fires: the request goes to the real model. A test that needs the script does not change the setting. It **holds** the default route for as long as it needs, and releases it:
+
+```bash
+curl -X POST localhost:8099/api/routing/hold -d '{"default": "scripted", "seconds": 600, "by": "my test suite"}'
+# … run what needs the script; the answer above carries the hold's id …
+curl -X DELETE localhost:8099/api/routing/hold/h-3f9a2c41d0
+```
+
+What was chosen is never touched, so there is nothing to put back wrong. The hold ends when it is released, when its `seconds` run out, or when LLMSim restarts, whichever comes first, and a test that was killed half way leaves nothing behind. One caller holds it at a time: a second one is refused and told who has it. A model with a route of its own keeps it unless the hold says `"everyModel": true`. While a hold is in force the console says who holds the route and until when, and **Release it now** lets go of it.
+
 ## Make things go wrong
 
 *Console: Faults*
@@ -729,6 +741,16 @@ These are what a client calls. Prefix any of them with `/run/<run>` or `/run/<ru
 | `GET /api/sessions/<name>` | Download a recording |
 | `PUT /api/sessions/<name>` | Upload one. Query `overwrite=1` to replace. |
 | `DELETE /api/sessions/<name>` | Remove one |
+
+### Routing
+
+| Method and path | Does |
+|---|---|
+| `GET /api/routing` | `default` and `models` as they are kept, `effective` (the default route in force now), `routes`, and the `hold` if there is one |
+| `PUT /api/routing` | Change what is kept. Body `{default?, models?}`; a route is `scripted`, `relay`, `chatgpt` or `anthropic`. |
+| `POST /api/routing/hold` | Hold the default route for a while without changing what is kept. Body `{default, by, seconds?, everyModel?}`; `seconds` is 1 to 3600 and 300 if left out. Answers `409` if someone else holds it. |
+| `DELETE /api/routing/hold/<id>` | Release that hold. Releasing one that already ended is not an error. |
+| `DELETE /api/routing/hold` | Release whatever hold is in force |
 
 ### Settings
 

@@ -439,6 +439,7 @@
           <button id="def-chatgpt" onclick="setDefault('chatgpt')" aria-pressed="false">ChatGPT plan</button>
           <button id="def-anthropic" onclick="setDefault('anthropic')" aria-pressed="false">Anthropic API</button>
         </div>
+        <div id="held" class="note warn" hidden></div>
         <div id="nourl" class="note warn" hidden>
           Nothing is configured to relay to, so relay routes answer here instead. Set an upstream below.
         </div>
@@ -940,6 +941,8 @@
 
 <script>
 let CFG = null, MODELS = {}, ALL = [], REQS = [], SINCE = 0, VIEW = "overview", PICKED = null, RULES = [];
+// The default route may be held on something else for a while, by a test that needs it. What was chosen is not changed.
+let HOLD = null;
 let CG = { signedIn: false }, CG_URL = null, CG_LISTED = false;
 let CHAT = { turns: [], busy: false, abort: null };
 let SESS = { mode: "off", cassettes: [], settings: {} };
@@ -979,6 +982,7 @@ async function load() {
   document.getElementById("dot").className = "dot";
   document.getElementById("conn").textContent = "connected";
   CFG = s.config; MODELS = s.models; ALL = s.allModels; CG = s.chatgpt || CG; SESS = s.session || SESS; RULES = s.rules || RULES;
+  HOLD = s.hold || null;
   for (const row of s.requests) { REQS.unshift(row); SINCE = Math.max(SINCE, row.n); }
   if (REQS.length > 300) REQS.length = 300;
   if (!PICKED) PICKED = ALL[0];
@@ -999,11 +1003,11 @@ function renderChrome() {
   const routed = Object.keys(CFG.routing.models).length;
   const answers = Object.keys(CFG.responses || {}).length;
   document.getElementById("n-models").textContent = ALL.length;
-  document.getElementById("n-routing").textContent = routed ? routed + " set" : CFG.routing.default === "scripted" ? "local" : CFG.routing.default;
+  document.getElementById("n-routing").textContent = HOLD ? "held" : routed ? routed + " set" : CFG.routing.default === "scripted" ? "local" : CFG.routing.default;
   document.getElementById("n-logs").textContent = REQS.length;
   document.getElementById("n-tests").textContent = (CFG.tests || []).length;
   document.getElementById("footmode").textContent =
-    CFG.routing.default + (routed ? " · " + routed + " routed" : "") + (answers ? " · " + answers + " answered" : "")
+    (HOLD ? HOLD.default + " (held)" : CFG.routing.default) + (routed ? " · " + routed + " routed" : "") + (answers ? " · " + answers + " answered" : "")
     + (SESS.mode === "record" ? " · recording " + SESS.name : SESS.mode === "replay" ? " · replaying " + SESS.name : "");
 }
 
@@ -1035,12 +1039,13 @@ const TASKS = [
 function copyBtn(text) { return `<button class="copy" onclick="copyText('${esc(text)}'); this.textContent='Copied'; setTimeout(() => this.textContent='Copy', 1200)">Copy</button>`; }
 function renderOverview() {
   if (!CFG || !document.getElementById("ov-stats")) return;
-  const d = CFG.routing.default, [mode, means] = ROUTE_MEANS[d] || [d, ""];
+  const d = HOLD ? HOLD.default : CFG.routing.default, [mode, means] = ROUTE_MEANS[d] || [d, ""];
   const routed = Object.keys(CFG.routing.models).length;
   // From the state every screen shares, so it is right before Faults has been opened.
   const faults = (CFG.chaos && CFG.chaos.paused) ? 0 : (CFG.faults || []).filter((f) => f.enabled !== false).length;
   const stats = [];
-  stats.push({ k: "Answers come from", v: mode, d: means + (routed ? ` ${routed} model${routed === 1 ? " is" : "s are"} set differently.` : ""), go: "routing" });
+  stats.push({ k: "Answers come from", v: mode, d: means + (routed ? ` ${routed} model${routed === 1 ? " is" : "s are"} set differently.` : "")
+    + (HOLD ? ` Held there by ${HOLD.by} for now; your own choice, ${routeName(CFG.routing.default)}, comes back by itself.` : ""), go: "routing", warn: !!HOLD });
   if (d === "chatgpt" || Object.values(CFG.routing.models).includes("chatgpt")) {
     stats.push(CG.signedIn
       ? { k: "ChatGPT plan", v: "Signed in", d: "Requests on this route spend the plan.", go: "routing" }
@@ -1181,6 +1186,10 @@ function renderRouting() {
   document.getElementById("def-chatgpt").setAttribute("aria-pressed", d === "chatgpt");
   document.getElementById("def-anthropic").setAttribute("aria-pressed", d === "anthropic");
   renderAnthropic();
+  const held = document.getElementById("held");
+  held.hidden = !HOLD;
+  if (HOLD) held.innerHTML = `<b>${esc(HOLD.by)}</b> is holding the default route on <b>${esc(routeName(HOLD.default))}</b>${HOLD.everyModel ? ", for every model," : ""} until ${esc(when_(HOLD.until))}. `
+    + `Your choice above is kept and comes back by itself then, or sooner when it lets go. <button class="mini" style="margin-left:6px" onclick="releaseHold()">Release it now</button>`;
   document.getElementById("nourl").hidden = !!up.url || d !== "relay";
   const r = document.getElementById("routed");
   r.hidden = !routed;
@@ -1229,6 +1238,7 @@ async function post(body, flash) {
 }
 
 const setDefault = (d) => post({ routing: { default: d } });
+async function releaseHold() { await REST("DELETE", "/api/routing/hold"); await load(); }
 function setRoute(model, choice) {
   const models = { ...CFG.routing.models };
   if (choice) models[model] = choice; else delete models[model];

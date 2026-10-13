@@ -545,10 +545,138 @@ def route_for(model):
     to would fail every request for a reason the table does not show.
     """
     routing = CONFIG["routing"]
-    choice = routing["models"].get(model) or routing["default"]
+    hold = route_hold()
+    if hold and hold["everyModel"]:
+        choice = hold["default"]
+    else:
+        choice = routing["models"].get(model) or (hold["default"] if hold else routing["default"])
     if choice == "relay" and not CONFIG["upstream"]["url"]:
         return "scripted"
     return choice
+
+
+# ── A route held for a while ──────────────────────────────────────────────
+#
+# The default route is somebody's standing choice: this LLMSim answers with a
+# ChatGPT plan, say. A test that scripts the model needs the script to answer
+# while it runs, and nothing else about that choice to change. Rewriting the
+# setting and writing it back afterwards is how that was done, by hand, and it
+# has one way to go wrong that matters: a run that is killed between the two
+# leaves a person's LLMSim answering from a script, and nothing on screen says
+# why their agent has started saying "ok.".
+#
+# So a caller does not change the setting. It HOLDS the default route on what it
+# needs, for a number of seconds it names, and releases it when it is done. The
+# hold is in memory only and is never written to the configuration: releasing it,
+# its time running out, and restarting LLMSim all give back exactly what was
+# chosen, because what was chosen was never touched.
+ROUTE_HOLD = None                 # {"id", "default", "everyModel", "by", "since", "until"}
+ROUTE_HOLD_LOCK = threading.Lock()
+ROUTE_HOLD_MAX_S = 3600
+
+
+def route_hold():
+    """The hold on the default route, if one is in force. One whose time has run out is let go here."""
+    global ROUTE_HOLD
+    with ROUTE_HOLD_LOCK:
+        if ROUTE_HOLD and ROUTE_HOLD["until"] <= time.time():
+            log("routing: the hold on %s by %s ran out; the default route is %s again"
+                % (ROUTE_HOLD["default"], ROUTE_HOLD["by"], CONFIG["routing"]["default"]))
+            ROUTE_HOLD = None
+        return dict(ROUTE_HOLD) if ROUTE_HOLD else None
+
+
+def default_route():
+    """The route a model with none of its own takes right now."""
+    hold = route_hold()
+    return hold["default"] if hold else CONFIG["routing"]["default"]
+
+
+def set_routing(routing):
+    """Change the routing that is kept. Returns what is wrong with it, or None.
+
+    Validated rather than merged blindly: a routing table is the one thing here
+    that can send traffic to a paid endpoint, and a typo that silently becomes a
+    new key would be discovered on an invoice.
+    """
+    if not isinstance(routing, dict):
+        return "routing is {default?, models?}"
+    default = routing.get("default")
+    if default is not None and default not in ROUTES:
+        return "routing.default must be one of %s" % ", ".join(ROUTES)
+    table = None
+    if "models" in routing:
+        if not isinstance(routing["models"] or {}, dict):
+            return "routing.models is {model: route}"
+        for model, choice in (routing["models"] or {}).items():
+            if choice not in ROUTES:
+                return "%s: must be one of %s" % (model, ", ".join(ROUTES))
+        # "same as the default" is not an override; storing it would
+        # pin the model the next time the default changes.
+        table = {m: c for m, c in (routing["models"] or {}).items() if c != (default or CONFIG["routing"]["default"])}
+    if default is not None:
+        CONFIG["routing"]["default"] = default
+    if table is not None:
+        CONFIG["routing"]["models"] = table
+    return None
+
+
+def routing_view():
+    return {"default": CONFIG["routing"]["default"], "models": dict(CONFIG["routing"]["models"]), "effective": default_route(),
+            "routes": list(ROUTES), "hold": route_hold()}
+
+
+def _rest_routing(method, rest, body, query, host):
+    """GET/PUT /api/routing; POST /api/routing/hold; DELETE /api/routing/hold[/<id>]."""
+    global ROUTE_HOLD
+    body = body if isinstance(body, dict) else {}
+    if method == "GET" and not rest:
+        return _ok(routing_view())
+    if method == "PUT" and not rest:
+        extra = sorted(set(body) - {"default", "models"})
+        if extra:
+            return _fail(400, "Routing is default and models. Not understood: %s." % ", ".join(extra))
+        problem = set_routing(body)
+        if problem:
+            return _fail(400, problem)
+        save_config()
+        return _ok(routing_view())
+    if method == "POST" and rest == ["hold"]:
+        extra = sorted(set(body) - {"default", "seconds", "by", "everyModel"})
+        if extra:
+            return _fail(400, "A hold is default, seconds, by and everyModel. Not understood: %s." % ", ".join(extra))
+        default, seconds, by = body.get("default"), body.get("seconds", 300), body.get("by")
+        if default not in ROUTES:
+            return _fail(400, "default must be one of %s." % ", ".join(ROUTES))
+        if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or not 1 <= seconds <= ROUTE_HOLD_MAX_S:
+            return _fail(400, "seconds is how long the hold may last at most: 1 to %d." % ROUTE_HOLD_MAX_S)
+        if not isinstance(by, str) or not 0 < len(by.strip()) <= 80:
+            return _fail(400, "by says who is holding it, in up to 80 characters. It is shown to whoever looks at the console meanwhile.")
+        if not isinstance(body.get("everyModel", False), bool):
+            return _fail(400, "everyModel is true or false.")
+        current = route_hold()
+        if current and current["by"] != by.strip():
+            return _fail(409, "The default route is already held on %s by %s, for another %d second(s). Two callers that each need "
+                         "their own route cannot both have it." % (current["default"], current["by"], max(1, int(current["until"] - time.time()))),
+                         hold=current)
+        now = time.time()
+        with ROUTE_HOLD_LOCK:
+            ROUTE_HOLD = {"id": "h-" + uuid.uuid4().hex[:10], "default": default, "everyModel": bool(body.get("everyModel", False)),
+                          "by": by.strip(), "since": now, "until": now + float(seconds)}
+            held = dict(ROUTE_HOLD)
+        log("routing: %s holds the default route on %s for up to %ds (it is kept as %s)" % (held["by"], default, seconds, CONFIG["routing"]["default"]))
+        return _ok(routing_view(), message="Held on %s. It goes back to %s when released, or by itself in %d second(s)."
+                   % (default, CONFIG["routing"]["default"], seconds))
+    if method == "DELETE" and rest[:1] == ["hold"] and len(rest) <= 2:
+        current = route_hold()
+        if current and len(rest) == 2 and rest[1] != current["id"]:
+            return _fail(409, "That is not the hold in force: %s holds the default route now." % current["by"], hold=current)
+        with ROUTE_HOLD_LOCK:
+            ROUTE_HOLD = None
+        if current:
+            log("routing: %s released the default route; it is %s again" % (current["by"], CONFIG["routing"]["default"]))
+        return _ok(routing_view(), released=bool(current))
+    return _fail(404, "No such route: %s /api/routing/%s" % (method, "/".join(rest)))
 
 
 def relaying():
@@ -4455,7 +4583,7 @@ def run_base_urls(host, run, agents=None):
 #   faults       /api/faults …
 #   assertions   /api/assertions/evaluate · /api/assertion-sets …
 
-REST_PREFIXES = ("/api/settings", "/api/captures", "/api/runs", "/api/rules", "/api/faults", "/api/assertions",
+REST_PREFIXES = ("/api/settings", "/api/captures", "/api/runs", "/api/rules", "/api/routing", "/api/faults", "/api/assertions",
                  "/api/assertion-sets")
 
 
@@ -4937,6 +5065,7 @@ def _rest_rules(method, rest, body, query, host):
 
 
 REST_AREAS["rules"] = _rest_rules
+REST_AREAS["routing"] = _rest_routing
 
 
 # ── Faults ────────────────────────────────────────────────────────────────
@@ -5628,6 +5757,7 @@ class Handler(BaseHTTPRequestHandler):
             "runs": RESULTS["runs"][:5],
             "chatgpt": chatgpt_status(),
             "session": session_status(),
+            "hold": route_hold(),
             "requests": rows,
             "seq": REQUEST_SEQ_PEEK(),
         }
@@ -5724,22 +5854,9 @@ class Handler(BaseHTTPRequestHandler):
         routing = body.get("routing") or {}
         upstream = body.get("upstream") or {}
 
-        default = routing.get("default")
-        if default is not None:
-            if default not in ROUTES:
-                return self.send_json(400, {"error": "routing.default must be one of %s" % ", ".join(ROUTES)})
-            CONFIG["routing"]["default"] = default
-
-        if "models" in routing:
-            table = {}
-            for model, choice in (routing["models"] or {}).items():
-                if choice not in ROUTES:
-                    return self.send_json(400, {"error": "%s: must be one of %s" % (model, ", ".join(ROUTES))})
-                # "same as the default" is not an override; storing it would
-                # pin the model the next time the default changes.
-                if choice != CONFIG["routing"]["default"]:
-                    table[model] = choice
-            CONFIG["routing"]["models"] = table
+        problem = set_routing(routing)
+        if problem:
+            return self.send_json(400, {"error": problem})
 
         if "responses" in body:
             table = {}
@@ -6045,7 +6162,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(200, {
                 "ok": True, "service": "llmsim",
                 "providers": sorted(API_KEYS),
-                "mode": CONFIG["routing"]["default"],
+                "mode": default_route(),
+                "hold": route_hold(),
                 "routed": len(CONFIG["routing"]["models"]),
                 "upstream": ({"model": CONFIG["upstream"]["model"],
                               "format": CONFIG["upstream"]["format"],

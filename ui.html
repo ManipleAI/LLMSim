@@ -79,6 +79,8 @@
   .head .btn, .head .seg button { white-space:nowrap; flex:0 0 auto; }
   .head > div:first-child { min-width:0; }
   .body { padding:22px 28px 40px; max-width:1240px; }
+  /* Agent tests draws a picture of a run: it gets the whole width, however wide the screen. */
+  #v-lab > .body { max-width:none; }
 
   /* ── overview ───────────────────────────────────────────────────── */
   .ov-stats { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:12px; }
@@ -157,11 +159,29 @@
   .fgen summary { cursor:pointer; color:var(--muted); font-size:12.5px; }
 
   /* ── agent tests: a scenario drawn as the run it describes ───────── */
-  .cv-wrap { display:grid; grid-template-columns:minmax(0, 1fr) 390px; gap:16px; align-items:start; }
-  @media (max-width:1100px) { .cv-wrap { grid-template-columns:1fr; } }
+  /* The settings panel takes room only while a block is open: the picture has the rest. */
+  .cv-wrap { display:grid; grid-template-columns:minmax(0, 1fr); gap:16px; align-items:start; }
+  .cv-wrap.open { grid-template-columns:minmax(0, 1fr) 390px; }
+  .cv-wrap:not(.open) > .cv-panel { display:none; }
+  @media (max-width:1100px) { .cv-wrap.open { grid-template-columns:1fr; } }
+  /* Full screen: the editor takes everything right of the menu, and gives it back. */
+  #lab-editor.full { position:fixed; top:0; right:0; bottom:0; left:var(--nav); z-index:30; margin:0; border:0; border-radius:0; overflow:auto; padding:18px 22px 22px; }
+  #lab-editor.full .cv-panel { top:0; max-height:calc(100vh - 150px); }
   .cv { position:relative; background:var(--subtle); border:1px solid var(--border-soft); border-radius:10px; padding:16px 18px 18px; min-height:420px; }
   .cv > svg { position:absolute; left:0; top:0; width:100%; height:100%; pointer-events:none; overflow:visible; }
-  .cv-grid { position:relative; display:grid; grid-template-columns:minmax(150px, 1fr) minmax(190px, 1.25fr) minmax(190px, 1.25fr); gap:22px 40px; }
+  .cv-top { position:relative; z-index:2; display:flex; align-items:center; gap:14px; margin-bottom:20px; }
+  .cv-top > .cvb { flex:0 1 520px; }
+  .cv-top .cv-tools { margin-left:auto; }
+  /* Who speaks, the agent, and what it reaches, which has the most in it and gets the most room. */
+  .cv-grid { position:relative; display:grid; grid-template-columns:minmax(160px, 1fr) minmax(200px, 1.15fr) minmax(320px, 3fr); gap:26px clamp(40px, 3.2vw, 64px); }
+  .cv-rows { display:flex; flex-direction:column; gap:18px; }
+  .cv-row > h5 { margin:0; display:flex; align-items:center; flex-wrap:wrap; gap:6px; font:600 9px/1 var(--mono); letter-spacing:.12em; text-transform:uppercase; color:var(--faint); }
+  .cv-row > h5 > span { margin-right:6px; }
+  .cv-row > h5 .cv-add { font:500 11.5px/1.2 var(--font, inherit); letter-spacing:0; text-transform:none; padding:4px 8px; }
+  /* Room above the blocks for the line they hang from. */
+  .cv-rowblocks { display:flex; flex-wrap:wrap; gap:30px 14px; padding-top:24px; }
+  .cv-rowblocks > .cvb { flex:1 1 190px; max-width:440px; }
+  .cv-rowblocks .none { color:var(--faint); font-size:11.5px; padding:2px 0 4px; }
   .cv-lane { display:flex; flex-direction:column; gap:10px; min-width:0; }
   .cv-lane > h4 { margin:0; font:600 9.5px/1 var(--mono); letter-spacing:.14em; text-transform:uppercase; color:var(--faint); }
   .cv-lane > h4 > span { position:relative; background:var(--subtle); padding:3px 8px 3px 0; }
@@ -170,11 +190,14 @@
   .cv-lane.row > h4 { flex-basis:100%; }
   .cv-lane .cv-gap { height:14px; }
   .cvb { position:relative; text-align:left; background:#fff; border:1px solid var(--border); border-radius:9px; padding:9px 12px 10px; font:inherit; color:inherit; cursor:pointer; min-width:0; }
-  .cv-lane.row .cvb { flex:1 1 170px; max-width:250px; }
+  .cv-lane.row .cvb { flex:1 1 190px; max-width:440px; }
   .cvb { cursor:grab; touch-action:none; user-select:none; -webkit-user-select:none; }
   .cvb:hover { border-color:#c9c2b6; }
   .cvb.drag { cursor:grabbing; z-index:3; box-shadow:0 6px 18px rgba(20, 24, 31, .16); }
-  .cv-tidy { position:absolute; right:12px; top:10px; z-index:2; border:1px solid var(--border); background:#fff; border-radius:6px; font:500 11px/1 inherit; padding:5px 8px; cursor:pointer; color:var(--muted); }
+  .cv-tools { display:flex; align-items:center; gap:6px; flex-wrap:wrap; justify-content:flex-end; }
+  .cv-tools .hint { color:var(--faint); font-size:11px; margin-right:4px; }
+  .cv-tools .tag { margin:0; }
+  .cv-tidy { border:1px solid var(--border); background:#fff; border-radius:6px; font:500 11px/1 inherit; padding:5px 8px; cursor:pointer; color:var(--muted); white-space:nowrap; }
   .cv-tidy:hover { color:var(--ink); border-color:#c9c2b6; }
   .cvb[aria-current=true] { border-color:var(--primary); box-shadow:0 0 0 2px var(--primary-tint); }
   .cvb.agent { border-width:2px; border-color:#d8cfc2; }
@@ -197,8 +220,6 @@
   .cv-panel .frow { grid-template-columns:1fr; }
   .cv-panel .f > label.tog { margin-top:10px; }
   .cv-panel .cv-foot { display:flex; gap:8px; flex-wrap:wrap; margin-top:14px; border-top:1px solid var(--border-soft); padding-top:12px; }
-  .cv-empty { color:var(--muted); font-size:12.5px; }
-  .cv-empty ul { padding-left:18px; margin:8px 0 0; }
 
   /* ── agent tests: a run, an experiment, a review ────────────────── */
   .rhead { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; font-size:15px; }
@@ -2001,7 +2022,7 @@ function labTabs() {
     + Object.entries(LAB).filter(([, a]) => a.group === g).map(([k, a]) => `<button aria-current="${k === LABK}" onclick="labSelect('${k}')">${esc(a.title)}</button>`).join("")
     + `</div>`).join("");
 }
-function labClose() { LABID = null; LABNEW = false; LABDOC = null; LABRAW = {}; document.getElementById("lab-editor").hidden = true; document.getElementById("lab-out-card").hidden = true; }
+function labClose() { LABID = null; LABNEW = false; LABDOC = null; LABRAW = {}; document.getElementById("lab-editor").hidden = true; document.getElementById("lab-editor").classList.remove("full"); document.getElementById("lab-out-card").hidden = true; }
 // The list is emptied at once: until the new area's rows arrive, the old area's would be shown under the new heading.
 function labSelect(k) { LABK = k; labClose(); labTabs(); document.getElementById("lab-list").innerHTML = ""; document.getElementById("lab-extra").innerHTML = ""; labLoad(); }
 
@@ -2073,8 +2094,9 @@ function labDraw() {
   const a = LAB[LABK], form = document.getElementById("lab-form"), json = document.getElementById("lab-json"), cv = document.getElementById("lab-canvas");
   for (const m of ["canvas", "form", "json"]) document.getElementById("lab-mode-" + m).setAttribute("aria-pressed", LABMODE === m);
   document.getElementById("lab-mode-canvas").hidden = !a.canvas;
-  if (a.readonly) { form.hidden = false; json.hidden = true; cv.hidden = true; form.innerHTML = a.view ? a.view(LABDOC) : `<pre>${esc(pretty(LABDOC))}</pre>`; return; }
+  if (a.readonly) { form.hidden = false; json.hidden = true; cv.hidden = true; document.getElementById("lab-editor").classList.remove("full"); form.innerHTML = a.view ? a.view(LABDOC) : `<pre>${esc(pretty(LABDOC))}</pre>`; return; }
   form.hidden = LABMODE !== "form"; json.hidden = LABMODE !== "json"; cv.hidden = LABMODE !== "canvas";
+  cvFullApply();
   if (LABMODE === "form") labForm(); else if (LABMODE === "canvas") cvDraw(); else json.value = pretty(LABDOC);
 }
 // Whatever a field changed is redrawn where it is being edited: the form, or the canvas and its panel.
@@ -2808,7 +2830,20 @@ function testrunView(t) {
 // A block can be dragged. Where it was put is how one person likes to read one
 // test, not part of the test, so it is kept in this browser under the scenario's
 // name and never written into the document a CI job runs.
-let CVSEL = null, CVPROBLEMS = null, CVPREF = "canvas";
+let CVSEL = null, CVPROBLEMS = null, CVPREF = "canvas", CVFULL = false;
+// Full screen is a way of looking, kept per browser like a dragged block, never in the test.
+try { CVFULL = localStorage.getItem("llmsim.canvas.full") === "1"; } catch { CVFULL = false; }
+function cvFull(on) {
+  CVFULL = on === undefined ? !CVFULL : !!on;
+  try { if (CVFULL) localStorage.setItem("llmsim.canvas.full", "1"); else localStorage.removeItem("llmsim.canvas.full"); } catch { /* it only forgets */ }
+  cvFullApply(); if (LABMODE === "canvas") cvDraw();
+}
+// Only the canvas goes full screen: the form and the JSON read best at the page's width.
+function cvFullApply() {
+  const ed = document.getElementById("lab-editor");
+  ed.classList.toggle("full", CVFULL && LABMODE === "canvas" && !ed.hidden && !document.getElementById("lab-canvas").hidden);
+}
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && document.getElementById("lab-editor").classList.contains("full")) { e.preventDefault(); cvFull(false); } });
 let CVPOS = {}, CVDRAG = null, CVDRAGGED = false, CVKEYS = null;
 // Every top-level field a scenario may have is a block, or inside one. Held to the validator's list by a test.
 const CV_COVERS = ["id", "description", "tags", "notes", "agent", "agents", "turns", "user", "model", "setup", "teardown", "checks", "stop", "timeoutS", "repeat", "ordering"];
@@ -2885,25 +2920,39 @@ function cvDraw() {
   const block = (b) => { const bad = b.key === "test" ? orphans : cvProblemsOf(b); return `<button class="cvb ${b.cls || ""} ${bad.length ? "bad" : ""}" data-key="${esc(b.key)}" data-role="${b.role}" aria-current="${CVSEL === b.key}"${moved(b)} onpointerdown="cvGrab(event, this)" onclick="cvSelect(this.dataset.key)" title="${esc(bad.join("\n"))}"><span class="k">${esc(b.kind)}</span><b>${esc(b.title)}</b>${b.sub ? `<span class="s">${esc(b.sub)}</span>` : ""}${bad.length ? `<span class="n">${bad.length}</span>` : ""}</button>`; };
   const add = (label, fn) => `<button class="cv-add" onclick="${fn}">+ ${esc(label)}</button>`;
   const lane = (title, cls, keys, adds, role) => `<div class="cv-lane ${cls}"><h4 data-lane-head="${role || ""}"><span>${esc(title)}</span></h4>${blocks.filter((b) => keys.includes(b.lane)).map(block).join("")}${adds ? `<div class="cv-adds">${adds}</div>` : ""}</div>`;
-  document.getElementById("cv").innerHTML = `<svg id="cv-wires"></svg><button class="cv-tidy" id="cv-tidy" onclick="cvTidy()" title="Put every block back where the layout draws it" ${Object.keys(CVPOS).length ? "" : "hidden"}>Reset layout</button><div class="cv-grid">`
-    + lane("The test", "wide", ["head"])
+  // What it reaches, in rows that spread across the width: what it talks to, what it calls,
+  // and what the run puts in place around it. Each row hangs from one line from the agent.
+  const rowOf = (b) => (b.key === "model" || b.role === "peers" || /^(Stub agent|Agent proxy)/.test(b.kind) ? "talks" : /^Mock/.test(b.kind) ? "calls" : "data");
+  const world = blocks.filter((b) => b.lane === "world");
+  const row = (id, title, adds) => { const mine = world.filter((b) => rowOf(b) === id);
+    return `<div class="cv-row" data-row="${id}"><h5><span>${esc(title)}</span>${adds}</h5><div class="cv-rowblocks">${mine.length ? mine.map(block).join("") : `<span class="none">Nothing yet.</span>`}</div></div>`; };
+  document.getElementById("cv").innerHTML = `<svg id="cv-wires"></svg><div class="cv-top">${blocks.filter((b) => b.lane === "head").map(block).join("")}<div class="cv-tools">${cvTools()}</div></div><div class="cv-grid">`
     + lane("Who speaks", "", ["user"], d.user || d.agents ? "" : add("turn", "cvAddTurn()"))
     + lane("The agent", "", ["agent"], add(d.agents ? "another agent" : "a second agent", "cvAddAgent()"))
-    + lane("What it reaches", "", ["world"], add("mock tool server", "cvAddSetup('mcp')") + add("mock backend", "cvAddSetup('http')") + add("stub agent", "cvAddSetup('stub')") + add("agent proxy", "cvAddSetup('proxy')") + add("seeded records", "cvAddSetup('state')") + add("fault", "cvAddSetup('fault')"))
+    + `<div class="cv-lane world"><h4><span>What it reaches</span></h4><div class="cv-rows">`
+    + row("talks", "The model and other agents", add("stub agent", "cvAddSetup('stub')") + add("agent proxy", "cvAddSetup('proxy')"))
+    + row("calls", "Tools it calls", add("mock tool server", "cvAddSetup('mcp')") + add("mock backend", "cvAddSetup('http')"))
+    + row("data", "Records and faults", add("seeded records", "cvAddSetup('state')") + add("fault", "cvAddSetup('fault')"))
+    + `</div></div>`
     + lane("What must hold at the end", "wide row", ["check"], add("check", "cvAddCheck()"), "check")
     + `</div>`;
   cvPanel(blocks);
   requestAnimationFrame(() => { cvFit(); cvWire(); });
 }
+// What the canvas says about itself, beside the picture rather than in a panel of its own:
+// whether the last check found problems, putting dragged blocks back, and full screen.
+function cvTools() {
+  const n = (CVPROBLEMS || []).length;
+  return (CVSEL ? "" : `<span class="hint">Click a block to set it up; drag it to move it.</span>`)
+    + (CVPROBLEMS ? (n ? `${statusTag("fail")}<span class="hint">${n} problem(s), marked on the blocks</span>` : statusTag("pass")) : "")
+    + (Object.keys(CVPOS).length ? `<button class="cv-tidy" id="cv-tidy" onclick="cvTidy()" title="Put every block back where the layout draws it">Reset layout</button>` : "")
+    + `<button class="cv-tidy" id="cv-full" onclick="cvFull()" title="${CVFULL ? "Back to the page (Esc)" : "Use the whole screen right of the menu"}">${CVFULL ? "Exit full screen" : "Full screen"}</button>`;
+}
 function cvPanel(blocks) {
   const el = document.getElementById("cv-panel"), b = blocks.find((x) => x.key === CVSEL);
+  el.parentNode.classList.toggle("open", !!b);
   if (!b) {
-    const n = (CVPROBLEMS || []).length;
-    el.innerHTML = `<div class="cv-empty"><b style="color:var(--ink)">Click a block to set it up.</b><p style="margin:8px 0 0">Each block is one part of the test; its settings open here and are saved with it.</p>
-      ${CVPROBLEMS ? `<p style="margin:8px 0 0">${n ? `${statusTag("fail")} ${n} problem(s), marked on the blocks.` : `${statusTag("pass")} It is valid.`}</p>` : ""}
-      <ul><li><b>Who speaks</b>: the user's turns, or a simulated user.</li><li><b>The agent</b>: how LLMSim reaches it.</li><li><b>What it reaches</b>: the model, and the tools, other agents, records and faults this run installs.</li><li><b>What must hold</b>: the checks that decide the verdict.</li></ul>
-      <p style="margin:10px 0 0"><b>Drag a block</b> to put it where it reads best; the lines follow. Its place is remembered in this browser and is not part of the test.</p>
-      <p style="margin:10px 0 0">Press <b>Check it is valid</b> below to mark what is still wrong, <b>Form</b> for the same test as one long form, or <b>JSON</b> for exactly what is sent.</p></div>`;
+    el.innerHTML = "";
     return;
   }
   const bad = b.key === "test" ? (CVPROBLEMS || []).filter((p) => !blocks.some((x) => cvProblemsOf(x).includes(p))) : cvProblemsOf(b);
@@ -2954,7 +3003,7 @@ function cvDrop() {
   cvPosKeep();
   // The click that ends a drag is not a request to open the block.
   CVDRAGGED = true; setTimeout(() => { CVDRAGGED = false; }, 0);
-  document.getElementById("cv-tidy").hidden = !Object.keys(CVPOS).length;
+  const tools = document.querySelector("#cv .cv-tools"); if (tools) tools.innerHTML = cvTools();
   cvFit(); cvWire();
 }
 window.addEventListener("pointerup", cvDrop);
@@ -3026,7 +3075,26 @@ function cvWire() {
     else { const m = (A.t + B.b) / 2; d = `M${A.cx},${A.t} C${A.cx},${m} ${B.cx},${m} ${B.cx},${B.b + 2}`; }
     paths += `<path d="${d}"${dashed ? ' stroke-dasharray="4 4"' : ""} marker-end="url(#cv-arrow)"/>`;
   };
-  for (const a of agents) { for (const u of users) link(u, a); for (const w of world) link(a, w, false, w.dataset.role === "peers"); }
+  for (const a of agents) for (const u of users) link(u, a);
+  // What it reaches is drawn in rows that spread across the width. A line from the agent to each
+  // block would cross the blocks before it, so they hang like the checks do: the agent to a spine
+  // on the left of them, the spine to a line above each row, down to each block. A block somebody
+  // dragged elsewhere gets a line of its own.
+  const lane = cv.querySelector(".cv-lane.world"), moved = (el) => !!CVPOS[el.dataset.key];
+  const hung = world.filter((w) => !moved(w));
+  for (const a of agents) for (const w of world.filter(moved)) link(a, w, false, w.dataset.role === "peers");
+  if (agents.length && hung.length && lane) {
+    const x = at(lane).l - 24, lines = [];
+    for (const w of hung) { const B = at(w), line = lines.find((l) => Math.abs(l.t - B.t) < 8); if (line) line.blocks.push(w); else lines.push({ t: B.t, blocks: [w] }); }
+    const ys = lines.map((l) => Math.min(...l.blocks.map((w) => at(w).t)) - 12), ay = agents.map((a) => at(a).cy);
+    paths += `<path d="M${x},${Math.min(...ys, ...ay)} L${x},${Math.max(...ys, ...ay)}"/>`;
+    for (const a of agents) { const A = at(a); paths += `<path d="M${A.r},${A.cy} L${x},${A.cy}"/>`; }
+    lines.forEach((l, i) => {
+      const y = ys[i], last = Math.max(...l.blocks.map((w) => at(w).cx));
+      paths += `<path d="M${x},${y} L${last},${y}"/>`;
+      for (const w of l.blocks) { const B = at(w); paths += `<path d="M${B.cx},${y} L${B.cx},${B.t - 2}"${w.dataset.role === "peers" ? ' stroke-dasharray="4 4"' : ""} marker-end="url(#cv-arrow)"/>`; }
+    });
+  }
   // The agent's conversation is the run, and the run is what the checks judge.
   const from = run || agents[agents.length - 1];
   if (run && agents.length) link(agents[agents.length - 1], run, true);

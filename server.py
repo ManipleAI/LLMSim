@@ -84,6 +84,13 @@ except ImportError:  # pragma: no cover — the server must run without its kit
             def trace_run(_header): return None
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+# Everything LLMSim writes for itself goes in one directory: the ChatGPT
+# sign-in, the keys and routing the console saves, your rules, the suite, the
+# runs, the recordings. Beside the code by default, so a checkout keeps working
+# exactly as it always has. LLMSIM_DATA moves the lot, which is what a
+# container wants: point it at a volume and a pod that is replaced or restarted
+# comes back signed in. A file's own variable (LLMSIM_CONFIG, ...) still wins.
+DATA_DIR = os.path.abspath(os.environ.get("LLMSIM_DATA") or HERE)
 PORT = int(os.environ.get("LLMSIM_PORT", "8099"))
 SCRIPT_PATH = os.environ.get("LLMSIM_SCRIPT", os.path.join(HERE, "responses.json"))
 
@@ -177,7 +184,7 @@ MODELS = {
 # Env seeds the settings; the file wins once written. So a container starts
 # configured the way its environment says, and anything changed in the UI
 # afterwards survives a restart without the environment having to change.
-CONFIG_PATH = os.environ.get("LLMSIM_CONFIG", os.path.join(HERE, "llmsim.config.json"))
+CONFIG_PATH = os.environ.get("LLMSIM_CONFIG", os.path.join(DATA_DIR, "llmsim.config.json"))
 
 # Test cases and plans are kept apart from the rest of the settings, in a
 # file that is NOT gitignored.
@@ -186,7 +193,7 @@ CONFIG_PATH = os.environ.get("LLMSIM_CONFIG", os.path.join(HERE, "llmsim.config.
 # and a suite that lives in it cannot be committed, reviewed or handed to
 # anybody, which undoes most of the reason for writing one. A suite is source:
 # it belongs beside the code it tests, in a diff, on a branch.
-SUITE_PATH = os.environ.get("LLMSIM_SUITE", os.path.join(HERE, "llmsim.tests.json"))
+SUITE_PATH = os.environ.get("LLMSIM_SUITE", os.path.join(DATA_DIR, "llmsim.tests.json"))
 SUITE_KEYS = ("tests", "plans")
 
 # The console has no sign-in.
@@ -1903,7 +1910,7 @@ CHATGPT_CLIENT_ID = os.environ.get("LLMSIM_CHATGPT_CLIENT_ID", "REMOVED_CLIENT_I
 CHATGPT_ORIGINATOR = os.environ.get("LLMSIM_CHATGPT_ORIGINATOR", "removed_originator")
 CHATGPT_SCOPE = "openid profile email offline_access api.connectors.read api.connectors.invoke"
 CHATGPT_PORTS = tuple(int(p) for p in os.environ.get("LLMSIM_CHATGPT_PORTS", "1455,1457").split(","))
-CHATGPT_AUTH_PATH = os.environ.get("LLMSIM_CHATGPT_AUTH", os.path.join(HERE, "llmsim.chatgpt-auth.json"))
+CHATGPT_AUTH_PATH = os.environ.get("LLMSIM_CHATGPT_AUTH", os.path.join(DATA_DIR, "llmsim.chatgpt-auth.json"))
 CHATGPT_CLIENT_VERSION = os.environ.get("LLMSIM_CHATGPT_CLIENT_VERSION", "1.0.0")
 CHATGPT_USER_AGENT = "LLMSim/0.1 (+https://github.com/ManipleAI/LLMSim)"
 CHATGPT_SESSION = str(uuid.uuid4())
@@ -2270,6 +2277,18 @@ def chatgpt_logout():
             log("chatgpt: revoke did not go through: %s" % exc)
     log("chatgpt: signed out (revoked at OpenAI: %s)" % revoked)
     return {"ok": True, "revoked": revoked}
+
+
+def state_store():
+    """Where LLMSim keeps what it writes, and whether that outlives it.
+
+    On a machine it does. In a container it does only if the directory is a
+    volume: otherwise the next restart starts from nothing, signed out of the
+    ChatGPT plan, with no keys, no routing and none of your rules. Said out
+    loud, because the first anybody hears of it otherwise is the sign-in
+    screen again."""
+    contained = os.path.exists("/.dockerenv") or bool(os.environ.get("KUBERNETES_SERVICE_HOST"))
+    return {"dir": DATA_DIR, "kept": not contained or os.path.ismount(DATA_DIR)}
 
 
 def chatgpt_status():
@@ -3287,7 +3306,7 @@ def anthropic_events(resp):
 # difference is counted and shown rather than swallowed, and a strict setting
 # makes it a miss for the cases where it matters.
 
-CASSETTE_DIR = os.environ.get("LLMSIM_CASSETTES", os.path.join(HERE, "cassettes"))
+CASSETTE_DIR = os.environ.get("LLMSIM_CASSETTES", os.path.join(DATA_DIR, "cassettes"))
 SESSION_LOCK = threading.RLock()
 _STATE_TEMPLATE = {
     "mode": "off",          # off | record | replay
@@ -4782,7 +4801,7 @@ def rest_dispatch(method, path, body, query, host):
 # which is also meant to be committed, and are tried FIRST so one can override a
 # shipped rule without editing it.
 
-RULES_PATH = os.environ.get("LLMSIM_RULES", os.path.join(HERE, "llmsim.rules.json"))
+RULES_PATH = os.environ.get("LLMSIM_RULES", os.path.join(DATA_DIR, "llmsim.rules.json"))
 RULES_LOCK = threading.RLock()
 USER_RULES = {"rules": [], "default": None}
 TURN_KEYS = {"text", "tool_calls", "stop_reason", "input_tokens", "output_tokens", "cached_tokens", "reasoning_tokens",
@@ -5397,7 +5416,7 @@ REST_AREAS["faults"] = _rest_faults
 #   in part. An assertion that passed over one says so, because "none" passing on
 #   half a request is weaker than it looks.
 
-ASSERTIONS_PATH = os.environ.get("LLMSIM_ASSERTIONS", os.path.join(HERE, "llmsim.assertions.json"))
+ASSERTIONS_PATH = os.environ.get("LLMSIM_ASSERTIONS", os.path.join(DATA_DIR, "llmsim.assertions.json"))
 ASSERTION_SETS = {"sets": []}
 ASSERTION_LOCK = threading.RLock()
 ASSERTION_KINDS = ("each", "none", "count", "sequence")
@@ -5758,6 +5777,7 @@ class Handler(BaseHTTPRequestHandler):
             "chatgpt": chatgpt_status(),
             "session": session_status(),
             "hold": route_hold(),
+            "state": state_store(),
             "requests": rows,
             "seq": REQUEST_SEQ_PEEK(),
         }
@@ -6164,6 +6184,7 @@ class Handler(BaseHTTPRequestHandler):
                 "providers": sorted(API_KEYS),
                 "mode": default_route(),
                 "hold": route_hold(),
+                "state": state_store(),
                 "routed": len(CONFIG["routing"]["models"]),
                 "upstream": ({"model": CONFIG["upstream"]["model"],
                               "format": CONFIG["upstream"]["format"],
@@ -7107,9 +7128,15 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
+    os.makedirs(DATA_DIR, exist_ok=True)
     testkit.attach(sys.modules[__name__])
     CHATGPT["auth"] = _load_chatgpt_auth()
     log("listening on http://localhost:%d" % PORT)
+    if state_store()["kept"]:
+        log("state:  %s" % DATA_DIR)
+    else:
+        log("state:  %s is inside this container — a restart signs out and forgets keys, routing and rules;"
+            " mount a volume there (LLMSIM_DATA)" % DATA_DIR)
     USER_RULES.update(load_user_rules())
     ASSERTION_SETS.update(load_assertion_sets())
     log("script: %s (%d rules%s)" % (SCRIPT_PATH, len(SCRIPT.get("rules", [])),

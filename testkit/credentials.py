@@ -38,7 +38,7 @@ _CACHE = {}                         # label -> (token, expires)
 
 
 def path():
-    return os.environ.get(PATH_ENV) or os.path.join(core.HERE, "llmsim.credentials.json")
+    return os.environ.get(PATH_ENV) or os.path.join(core.DATA, "llmsim.credentials.json")
 
 
 def _load():

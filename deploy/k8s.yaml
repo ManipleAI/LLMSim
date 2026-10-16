@@ -2,7 +2,11 @@
 # by name. Namespace is passed in; nothing here is Maniple-specific.
 #
 #   docker build -t llmsim:dev . && docker save llmsim:dev | k3s ctr images import -
+#   kubectl -n <ns> apply -f deploy/k8s-data.yaml     # once: the volume for its state
 #   kubectl -n <ns> apply -f deploy/k8s.yaml
+#
+# deploy/install.sh does all of it, and carries over what an older LLMSim
+# without a volume was holding, so nobody has to sign in again.
 #
 # Then point a gateway at http://llmsim.<ns>.svc:8099/<provider>
 apiVersion: v1
@@ -19,6 +23,9 @@ metadata:
   name: llmsim
 spec:
   replicas: 1
+  # One LLMSim at a time on its volume: two would write the same files and
+  # the same SQLite database. A rollout stops the old pod before the new one.
+  strategy: { type: Recreate, rollingUpdate: null }   # null: an older install had RollingUpdate
   selector:
     matchLabels: { app: llmsim }
   template:
@@ -32,6 +39,9 @@ spec:
           env:
             - { name: LLMSIM_PORT, value: "8099" }
             - { name: LLMSIM_SCRIPT, value: /script/responses.json }
+            # The ChatGPT sign-in, keys, routing, rules and runs: on the
+            # volume, so a restart or a new image does not sign it out.
+            - { name: LLMSIM_DATA, value: /data }
           ports:
             - { name: http, containerPort: 8099 }
           readinessProbe:
@@ -43,9 +53,12 @@ spec:
             limits: { memory: 128Mi }
           volumeMounts:
             - { name: script, mountPath: /script }
+            - { name: data, mountPath: /data }
       volumes:
         - name: script
           configMap: { name: llmsim-script }
+        - name: data
+          persistentVolumeClaim: { claimName: llmsim-data }
 ---
 apiVersion: v1
 kind: Service

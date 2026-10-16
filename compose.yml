@@ -6,8 +6,13 @@ services:
     volumes:
       # Bind-mounted so a script edit needs a restart, not a rebuild.
       - ./responses.json:/app/responses.json:ro
+      # Sign-ins, keys, routing and rules: kept across `down` and `up`.
+      - llmsim-data:/data
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8099/healthz')"]
       interval: 10s
       timeout: 3s
       retries: 5
+
+volumes:
+  llmsim-data:

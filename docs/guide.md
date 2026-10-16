@@ -885,6 +885,7 @@ Set these in the environment before starting `server.py`.
 |---|---|---|
 | `LLMSIM_PORT` | `8099` | The port |
 | `LLMSIM_SCRIPT` | `responses.json` | The shipped rules |
+| `LLMSIM_DATA` | Beside `server.py` | The one directory everything below is kept in, unless its own variable names another place: the ChatGPT sign-in, keys, routing, your rules, the suite, runs, credentials and recordings |
 | `LLMSIM_RULES` | `llmsim.rules.json` | Your rules |
 | `LLMSIM_CONFIG` | `llmsim.config.json` | Routing, fixed answers and settings, as the console saves them |
 | `LLMSIM_SUITE` | `llmsim.tests.json` | The functional test cases |
@@ -910,7 +911,17 @@ Commit `llmsim.rules.json`, `llmsim.tests.json`, `llmsim.assertions.json` and th
 
 ### In a container
 
-`Dockerfile` builds an image and `deploy/install.sh` installs it in a Kubernetes namespace as `http://llmsim.<namespace>.svc:8099`. The manifest mounts the rule script and nothing else, so routing, a ChatGPT sign-in and recordings made in the pod are lost when it restarts. Mount a volume and point the variables above at it to keep them.
+Everything LLMSim writes for itself goes in one directory, `LLMSIM_DATA`: the ChatGPT sign-in, the Anthropic and upstream keys, routing, your rules, the suite, runs, credentials and recordings. Beside `server.py` by default, so a checkout keeps all of it where it always has. A file's own variable, such as `LLMSIM_CONFIG`, still wins over the directory.
+
+In a container that directory is `/data`, and it needs a volume, or a restart signs out of the ChatGPT plan and forgets the rest. Every way LLMSim ships gives it one:
+
+- `Dockerfile` sets `LLMSIM_DATA=/data` and declares it a volume. `docker run -v llmsim-data:/data …` keeps it across new containers.
+- `compose.yml` mounts the named volume `llmsim-data`, so `docker compose down` and `up` keep it.
+- `deploy/install.sh` installs LLMSim in a Kubernetes namespace as `http://llmsim.<namespace>.svc:8099`, with its state on the claim `llmsim-data` (`deploy/k8s-data.yaml`). The claim is created once and never re-applied, and the deployment is `Recreate`, so one LLMSim at a time writes to it. An LLMSim installed before the claim existed held everything inside its container: the installer copies that onto the claim once, unless the claim already holds state, so nobody has to sign in again.
+
+If LLMSim runs in a container whose directory is not a volume, it says so: in its log when it starts, in `/healthz` (`"state": {"dir": "/data", "kept": false}`), and on the console's overview and ChatGPT plan card.
+
+The sign-in is read when LLMSim starts. Copying a sign-in file into a running LLMSim does nothing until it restarts.
 
 ## Limits
 

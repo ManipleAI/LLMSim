@@ -479,6 +479,7 @@
         <h2>ChatGPT plan</h2>
         <p class="help">Answer with a ChatGPT subscription instead of an API key. Sign in with OpenAI once; every model routed to the plan is then answered by it, in whichever format the client asked in.</p>
         <div id="cg-status" style="font-size:13px; margin-bottom:10px"></div>
+        <div id="cg-kept" class="note warn" hidden style="margin-bottom:10px"></div>
         <div style="display:flex; gap:9px; align-items:center; flex-wrap:wrap">
           <button class="btn" id="cg-signin" onclick="chatgptSignIn()">Sign in with ChatGPT</button>
           <button class="btn ghost" id="cg-signout" onclick="chatgptSignOut()" hidden>Sign out</button>
@@ -942,7 +943,7 @@
 <script>
 let CFG = null, MODELS = {}, ALL = [], REQS = [], SINCE = 0, VIEW = "overview", PICKED = null, RULES = [];
 // The default route may be held on something else for a while, by a test that needs it. What was chosen is not changed.
-let HOLD = null;
+let HOLD = null, STATE = null;
 let CG = { signedIn: false }, CG_URL = null, CG_LISTED = false;
 let CHAT = { turns: [], busy: false, abort: null };
 let SESS = { mode: "off", cassettes: [], settings: {} };
@@ -983,6 +984,7 @@ async function load() {
   document.getElementById("conn").textContent = "connected";
   CFG = s.config; MODELS = s.models; ALL = s.allModels; CG = s.chatgpt || CG; SESS = s.session || SESS; RULES = s.rules || RULES;
   HOLD = s.hold || null;
+  STATE = s.state || null;
   for (const row of s.requests) { REQS.unshift(row); SINCE = Math.max(SINCE, row.n); }
   if (REQS.length > 300) REQS.length = 300;
   if (!PICKED) PICKED = ALL[0];
@@ -1046,6 +1048,7 @@ function renderOverview() {
   const stats = [];
   stats.push({ k: "Answers come from", v: mode, d: means + (routed ? ` ${routed} model${routed === 1 ? " is" : "s are"} set differently.` : "")
     + (HOLD ? ` Held there by ${HOLD.by} for now; your own choice, ${routeName(CFG.routing.default)}, comes back by itself.` : ""), go: "routing", warn: !!HOLD });
+  if (STATE && !STATE.kept) stats.push({ k: "Settings kept", v: "Until a restart", d: `Sign-ins, keys, routing and rules are in ${STATE.dir}, inside this container. Mount a volume there.`, go: "routing", warn: true });
   if (d === "chatgpt" || Object.values(CFG.routing.models).includes("chatgpt")) {
     stats.push(CG.signedIn
       ? { k: "ChatGPT plan", v: "Signed in", d: "Requests on this route spend the plan.", go: "routing" }
@@ -3348,6 +3351,9 @@ function renderChatGPT() {
   const plan = CFG.chatgpt, st = CG, live = document.activeElement ? document.activeElement.id : "";
   placeCards();
   if (document.getElementById("chatgptcard").parentNode.id === "cfg-park") return;
+  const kept = document.getElementById("cg-kept");
+  kept.hidden = !STATE || STATE.kept;
+  if (!kept.hidden) kept.innerHTML = `This LLMSim keeps the sign-in in <code>${esc(STATE.dir)}</code>, inside its container. A restart signs it out again and forgets keys, routing and rules. Give it a volume there (<code>LLMSIM_DATA</code>) and a sign-in lasts.`;
   const line = document.getElementById("cg-status");
   if (st.signedIn) {
     line.innerHTML = `<span class="tag plan">signed in</span> ${esc(st.email || "ChatGPT account")}${st.plan ? " · " + esc(st.plan) : ""}`;

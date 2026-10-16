@@ -21,6 +21,7 @@ import time
 host = None                                     # the server module, bound by attach()
 ID_RE = re.compile(r"[A-Za-z0-9._:-]{1,64}")
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA = os.path.abspath(os.environ.get("LLMSIM_DATA") or HERE)   # see DATA_DIR in server.py
 
 
 def attach(module):

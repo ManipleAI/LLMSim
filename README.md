@@ -117,6 +117,13 @@ LLMSim has no login. Anyone who can reach the port can use all of it, and once a
 ChatGPT plan is signed in or an Anthropic key is saved, can spend it. Keep it on your own machine or a
 network you trust.
 
+## Where it keeps things
+
+A ChatGPT sign-in, saved keys, routing, your rules and runs are kept in one
+directory: beside `server.py`, or wherever `LLMSIM_DATA` says. The Docker image,
+`compose.yml` and `deploy/install.sh` put it on a volume, so a restart or a new
+image does not sign anybody out.
+
 ## Tests
 
 ```bash

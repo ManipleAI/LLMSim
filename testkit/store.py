@@ -194,6 +194,6 @@ def store():
     global _STORE
     with _STORE_LOCK:
         if _STORE is None:
-            path = os.environ.get("LLMSIM_RUNS_DB") or os.path.join(core.HERE, "llmsim.runs.db")
+            path = os.environ.get("LLMSIM_RUNS_DB") or os.path.join(core.DATA, "llmsim.runs.db")
             _STORE = Store(path)
         return _STORE

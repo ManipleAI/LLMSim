@@ -30,7 +30,7 @@ NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,60}\.py")
 
 
 def directory():
-    return os.environ.get("LLMSIM_EVALUATORS") or os.path.join(core.HERE, "evaluators")
+    return os.environ.get("LLMSIM_EVALUATORS") or os.path.join(core.DATA, "evaluators")
 
 
 def available():

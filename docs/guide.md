@@ -45,7 +45,7 @@ curl localhost:8099/openai/v1/chat/completions \
   -d '{"model": "gpt-5", "messages": [{"role": "user", "content": "hello"}]}'
 ```
 
-The answer comes from a rule called `hello`. Open **Requests** in the console and the request is there, with the rule that answered it.
+The answer comes from a rule called `hello`. Open **Traffic** in the console and the request is there, with the rule that answered it.
 
 ### What to read next
 
@@ -72,7 +72,7 @@ Every request takes one **route**. The default applies to every model, and one m
 | Anthropic API | A real Claude model, by API key | That model's price, billed to the key |
 | Replay | A recording of an earlier run | Nothing |
 
-Scripted is the default. Routes are set under **Routing** and, for one model, under **Models**.
+Scripted is the default. Routes are set under **Settings → Where answers come from** and, for one model, under **Models**.
 
 ### Rules and turns
 
@@ -89,7 +89,7 @@ http://localhost:8099/run/r1/agent/planner/openai/v1
 http://localhost:8099/run/r1/agent/worker/anthropic
 ```
 
-The headers `X-LLMSim-Run`, `X-LLMSim-Agent` and `X-LLMSim-App` do the same without changing the URL, and so does a W3C `traceparent`, whose trace id becomes the run. For a gateway that carries an identity in its own header or body field, set that up under **Requests → Capture settings**.
+The headers `X-LLMSim-Run`, `X-LLMSim-Agent` and `X-LLMSim-App` do the same without changing the URL, and so does a W3C `traceparent`, whose trace id becomes the run. For a gateway that carries an identity in its own header or body field, set that up under **Settings → Capture and identity**.
 
 ### What LLMSim sees, and what it cannot
 
@@ -102,24 +102,46 @@ LLMSim sees what crosses the model boundary: the system prompt, the declared too
 
 ## The console
 
-One page at `/ui`, with a screen for each job. Every screen has an address, such as `/ui#routing`.
+One page at `/ui`, in three spaces, by what you came to do. Every page has an address, such as `/ui#routing` or `/ui#lab/scenarios`, and a bar at the top of every page says where answers come from right now, whether a test is holding that, and whether a recording is on.
 
-| Screen | What it is for |
+**Home** offers the three spaces, and says what answers now.
+
+**Simulate a model**
+
+| Page | What it is for |
 |---|---|
-| **Overview** | What answers right now, each vendor's address and key, and which screen does which job |
-| **Routing** | The default route, the upstream, ChatGPT plan or Anthropic key it uses, and how strictly the vendors are imitated |
-| **Models** | One model's own route, a fixed answer, a failure status or a delay |
+| **Playground** | Talk to a model by hand, the way a client would |
 | **Answer rules** | What the simulated model says, and when. Includes a dry run that says which rule would answer, and why the others would not. |
+| **Models** | One model's own route, a fixed answer, a failure status or a delay |
 | **Faults** | Failures on purpose |
-| **Requests** | *Live*: every request as it arrives. *Captured*: each one in full. *Assertions*: checks over them. *Capture settings*: what is kept, redaction, and who may send requests. |
-| **Chat** | Talk to a model by hand, the way a client would |
-| **Record & replay** | Record a run, and replay a recording |
-| **Functional tests** | Cases that send a prompt and say what must come back |
-| **Agent tests** | Add the agents under test, run scenarios on them, and keep how each went. Also what an agent talks to while it runs, and how its work is judged. A scenario is built on a canvas, as a form, or as JSON. |
+| **Record and replay** | Record a run, and replay a recording |
+| **Traffic** | *Live*: every request as it arrives. *Captured*: each one in full. *Assertions*: checks over them. |
+| **Model checks** | Cases that send a model a prompt and say what must come back |
+
+**Test agents**
+
+| Page | What it is for |
+|---|---|
+| **Dashboard** | Every scenario's last run: what passes, what fails and the first check that did not hold, what answered it, and the test runs. Run every scenario on an agent from here. |
+| **Agents**, **Scenarios**, **Datasets** | The agents under test, the tests, and versioned sets of cases. A scenario is built on a canvas, as a form, or as JSON, and the list shows how each last ran. |
+| **Test runs**, **Results**, **Experiments** | How it went: sets of scenarios on one agent, each run in full, and a dataset against an agent |
+| **Mock tool servers**, **Mock REST backends**, **Stub agents**, **Agent proxies**, **Tool and peer faults** | What an agent talks to while it runs |
+| **Judges**, **Review queue**, **Variations** | How its work is judged |
+
+**Settings**
+
+| Page | What it is for |
+|---|---|
+| **Where answers come from** | The default route, the models set differently, a hold, and how strictly the vendors are imitated |
+| **ChatGPT plan**, **Anthropic API**, **Upstream** | Each real model LLMSim can answer with, set up on its own page |
+| **Connect a client** | Each vendor's address and key, and how a test keeps its requests apart |
+| **Capture and identity** | What is kept of each request, redaction, how callers are told apart, and who may send requests |
+| **Credentials** | What the test kit signs in to agents with |
+| **Storage and status** | Where this LLMSim keeps what it is told, and what it is serving |
 
 ## Script the model
 
-*Console: Answer rules*
+*Console: Simulate a model, Answer rules*
 
 ```bash
 curl -X POST localhost:8099/api/rules -d '{"rule": {
@@ -189,7 +211,7 @@ What was chosen is never touched, so there is nothing to put back wrong. The hol
 
 ## Make things go wrong
 
-*Console: Faults*
+*Console: Simulate a model, Faults*
 
 A real vendor will not fail on demand. A fault rule makes LLMSim fail for the requests you choose.
 
@@ -217,7 +239,7 @@ A `status` or `drop` fault is applied before anything is sent to a real model, s
 
 ## See what was sent
 
-*Console: Requests → Captured*
+*Console: Simulate a model, Traffic → Captured*
 
 Every request is kept: the system prompt, declared tools, messages, who sent it, which credential it used, and what answered it.
 
@@ -241,7 +263,7 @@ Each captured request then shows its credential's label, and an assertion can te
 
 ## Check it
 
-*Console: Requests → Assertions*
+*Console: Simulate a model, Traffic → Assertions*
 
 An assertion is a claim about the requests an agent made. Each one has a scope and exactly one check.
 
@@ -290,7 +312,7 @@ LLMSim does not see messages that pass between agents. It does see what each age
 
 ## Record once, replay
 
-*Console: Record & replay*
+*Console: Simulate a model, Record and replay*
 
 Run a session once and keep every answer. Later runs get the same answers back, offline and for free.
 
@@ -318,12 +340,12 @@ curl -X POST localhost:8099/api/sessions/stop   -d '{"run": "r1"}'     # hits, m
 
 ## Answer with a real model
 
-*Console: Routing*
+*Console: Settings, Where answers come from*
 
 | Route | Answers come from | Set it up |
 |---|---|---|
 | Upstream | One model behind an API key | Routing → Upstream: URL, model and key |
-| ChatGPT plan | Your ChatGPT subscription | Routing → ChatGPT plan → Sign in |
+| ChatGPT plan | Your ChatGPT subscription | Settings → ChatGPT plan → Sign in |
 | Anthropic API | A real Claude model | Routing → Anthropic API: key and model |
 
 The usual pattern: record a session through a real model once, then replay it for every later test run.
@@ -356,9 +378,11 @@ The ChatGPT sign-in is OpenAI's OAuth flow, and its redirect lands on `127.0.0.1
 
 The sign-in is kept in `llmsim.chatgpt-auth.json` beside the server. A container with no volume loses it on restart and goes back to scripted answers.
 
-## Functional tests
+## Model checks
 
-*Console: Functional tests*
+The console calls these **Model checks**; the API and the files still call them tests (`/api/ui/run`, `llmsim.tests.json`).
+
+*Console: Simulate a model, Model checks*
 
 A case sends a model a prompt and says what must come back. It goes down whatever route that model is on, so the same cases check a script, a recording or a real model. A case is a sequence of steps, run in one conversation and stopped at the first failure.
 
@@ -408,13 +432,13 @@ curl -X POST localhost:8099/api/assertions/evaluate -d '{
   ]}'
 ```
 
-**6. Read the verdict.** A `fail` lists the request numbers. Open one under Requests → Captured to see exactly what the agent sent.
+**6. Read the verdict.** A `fail` lists the request numbers. Open one under Traffic → Captured to see exactly what the agent sent.
 
 **7. Clean up.** `curl -X DELETE localhost:8099/api/runs/t1` forgets the run's requests and stops its session.
 
 ## Test an agent
 
-*Console: Agent tests*
+*Console: Test agents*
 
 Everything above puts LLMSim on one side of an agent: the model. The **test kit** puts it on the other sides as well. It drives the agent, stands in for the tools it calls and the agents it hands work to, keeps the whole run as one timeline, and gives a verdict a CI job can act on.
 
@@ -430,7 +454,7 @@ Nothing in it is specific to one product. A platform enters in two places: a **d
 
 ### Connect an agent
 
-*Console: Agent tests, Agents*
+*Console: Test agents, Agents*
 
 An agent under test is saved once, and scenarios are run on it. Adding one starts with where it lives, because the platform decides how it is reached.
 

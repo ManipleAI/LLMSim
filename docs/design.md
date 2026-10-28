@@ -127,23 +127,17 @@ The last turn repeats if a conversation runs longer than the script.
 python3 server.py            # then open http://localhost:8099/ui
 ```
 
-One page, served by the same process, no build step and no dependency, laid
-out as a control plane:
+One page, served by the same process, no build step and no dependency. It is three spaces, by what somebody came to do, and each shows only its own pages:
 
-| | |
+| Space | Pages |
 |---|---|
-| **Overview** | What it is doing right now, the address and key for each vendor, and which screen does which job. |
-| **Routing** | The default route, and the upstream or ChatGPT plan everything on it goes to. |
-| **Models** | Every model the simulator advertises. Pick one to set what it answers — fixed text, a failure status, a delay — and where its traffic goes. |
-| **Answer rules** | What the simulated model says, and when. |
-| **Faults** | Things that go wrong on purpose. |
-| **Requests** | Every request as it arrives (*Live*), each one in full (*Captured*), checks over them (*Assertions*), and what is kept (*Capture settings*). |
-| **Chat** | Talk to a model by hand, the way a client would. |
-| **Record & replay** | Record a real run once and replay it exactly. |
-| **Functional tests** | Cases that send a prompt and say what must come back. |
-| **Agent tests** | Drive an agent, simulate what it talks to, judge the result. |
+| **Simulate a model** | Playground, Answer rules, Models, Faults, Record and replay, Traffic (*Live*, *Captured*, *Assertions*), Model checks |
+| **Test agents** | Dashboard; Agents, Scenarios, Datasets; Test runs, Results, Experiments; the stand-ins an agent talks to; Judges, Review queue, Variations |
+| **Settings** | Where answers come from; ChatGPT plan, Anthropic API, Upstream; Connect a client; Capture and identity; Credentials; Storage and status |
 
-Every screen has an address (`/ui#routing`, `/ui#lab`), so a page can be linked to.
+Where answers come from is shown on every page, because it decides what every other page does. It used to be one screen among nine, and the first thing anybody testing against a real-model default had to discover was that their script was not what answered.
+
+Every page has an address (`/ui#routing`, `/ui#lab/scenarios`), so a page can be linked to, and the old addresses still open where their page went.
 
 ### Functional tests
 

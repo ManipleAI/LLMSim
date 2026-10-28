@@ -72,6 +72,12 @@ except ImportError:  # pragma: no cover — the server must run without its kit
         @staticmethod
         def run_rules(): return []
         @staticmethod
+        def run_faults(): return []
+        @staticmethod
+        def run_script(_view): return None
+        @staticmethod
+        def claim_for(*_args): return None
+        @staticmethod
         def model_guard(*_args):
             import contextlib
             return contextlib.nullcontext()
@@ -4040,6 +4046,13 @@ def identity_of(handler, body):
         run = testkit.timeline.trace_run(handler.headers.get("traceparent"))
         if run:
             found["run"] = run
+    if "run" not in found and body is not None:
+        claimed = testkit.claim_for(handler, body)
+        if claimed:
+            found["run"] = claimed["run"]
+            if claimed.get("agent") and "agent" not in found:
+                found["agent"] = claimed["agent"]
+            found["claimed"] = "yes"
     return found
 
 
@@ -4281,6 +4294,13 @@ def _one_cond(key, want, view):
         return False, "no tool output satisfied %s" % json.dumps(want)[:60]
     if key == "lastMessage":
         return _text_ok(want, view.get("lastText"), "the last message")
+    if key == "anyMessage":
+        # Anything said earlier in the conversation, by the user or the model: what an agent
+        # that remembers carries forward, and one that forgets does not.
+        for part in view.get("messages") or []:
+            if not part.get("tool") and _text_ok(want, part.get("text"), "")[0]:
+                return True, ""
+        return False, "no message in the conversation satisfied %s" % json.dumps(want)[:60]
     if key == "system":
         return _text_ok(want, view.get("system"), "the system prompt")
     if key == "identity":
@@ -4316,7 +4336,7 @@ def _one_cond(key, want, view):
 
 
 COND_KEYS = {"not", "all", "any", "provider", "shape", "route", "path", "stream", "model", "tool", "tools", "contains",
-             "regex", "turn", "toolOutput", "anyToolOutput", "lastMessage", "system", "identity", "header", "credential",
+             "regex", "turn", "toolOutput", "anyToolOutput", "lastMessage", "anyMessage", "system", "identity", "header", "credential",
              "status", "fault", "field", "op", "value", "case"}
 
 
@@ -4345,7 +4365,7 @@ def validate_cond(cond, where="when", depth=0):
             else:
                 for i, sub in enumerate(want):
                     problems += validate_cond(sub, "%s.%s[%d]" % (where, key, i), depth + 1)
-        if key in ("toolOutput", "anyToolOutput", "lastMessage", "system") and isinstance(want, dict):
+        if key in ("toolOutput", "anyToolOutput", "lastMessage", "anyMessage", "system") and isinstance(want, dict):
             for sk, sv in want.items():
                 if sk in ("regex", "not_regex") and isinstance(sv, str):
                     try:
@@ -5256,7 +5276,7 @@ def pick_fault(view, consume=True):
     if CONFIG["chaos"]["paused"]:
         return None, None
     with FAULT_LOCK:
-        for rule in CONFIG["faults"]:
+        for rule in testkit.run_faults() + CONFIG["faults"]:
             if rule.get("enabled") is False or not cond_result(rule.get("match", {}), view)[0]:
                 continue
             st = _fault_state(rule)
@@ -6875,6 +6895,28 @@ class Handler(BaseHTTPRequestHandler):
             route = "replay"
         self.trace = {"Route": route}
         view = self._view(body, shape, model, stream, route)
+
+        # A scenario that brought its own script is answered by it wherever it has a rule for
+        # the request, whatever this LLMSim's default route is: a test that scripts the model
+        # must not quietly get a real one because somebody's default is a ChatGPT plan. What
+        # its script does not cover still goes where Routing says, so a run can script the
+        # steps that matter and let a real model do the rest, unless it asked to be refused.
+        if not internal and not replayed:
+            own = testkit.run_script(view)
+            if own == "scripted" and route != "scripted":
+                route = view["route"] = self.trace["Route"] = "scripted"
+            elif own == "refuse":
+                message = ("This run's script has no rule for this request, and the scenario says such requests are refused "
+                           "(model.unmatched). Asked %r, turn %d." % (subject(messages)[:80], view.get("turn", 0)))
+                log("   refused: " + message)
+                record({"provider": self.provider, "shape": shape, "model": model, "route": "refused", "rule": None, "stream": stream,
+                        "status": 400, "ms": 0, "prompt": subject(messages)[:400], "reply": None, "tools": [], "error": message})
+                self.trace["Route"] = "refused"
+                capture_note(self, route="refused", rule="")
+                return self.refuse(400, "invalid_request_error", message)
+        # Noted now, not only once an answer is made: a request whose route fails — a plan nobody
+        # is signed in to, an upstream that is down — still went there, and a run counts it there.
+        capture_note(self, route=route)
 
         # A fault rule picks its request before anything is spent on an answer, so
         # a status or a hang-up never costs an upstream call. The runner's own

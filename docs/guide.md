@@ -144,6 +144,7 @@ The second turn **branches on what the tool printed**. That is how you test that
 |---|---|
 | `contains`, `regex` | The ask: the last thing a person said that was not tool output |
 | `toolOutput`, `anyToolOutput` | What the last tool printed, or any tool so far |
+| `anyMessage` | Anything said earlier in the conversation, by the user or the model: what an agent that remembers carries forward |
 | `turn` | Which turn this is: `2` or `{"min": 1}` |
 | `identity` | `{"agent": "worker"}`, so two agents get different answers |
 | `system`, `header` | The system prompt, or a request header |
@@ -519,6 +520,30 @@ A scenario is checked when it is saved, not when it first fails in the middle of
 
 In the console, a scenario is a form: the agent and its driver's own fields, the turns, the model's script, the checks. The **JSON** switch beside it shows exactly what is sent.
 
+### Test an agent built on a framework
+
+An agent built with LangGraph, LangChain or a framework like them calls its model through an OpenAI-compatible client, runs its tools inside itself, and is often tested on an LLMSim whose default route is somebody's real model. Five things make such an agent testable.
+
+**Its model calls are the run's.** Point the agent's model base URL at LLMSim. Then either have it pass on the run it is told about (the HTTP driver fills `{{run}}` and `{{agent}}` into its body; the agent sends them on as `X-LLMSim-Run` and `X-LLMSim-Agent`, as it would a trace id), or, for an agent nobody can change, let the run adopt its calls:
+
+```json
+"model": {"rules": [ … ], "claim": {"model": "gpt-5-nano"}}
+```
+
+`claim` is a condition, in the language rules use. While the run lasts, a model call that names no run and satisfies it is the run's. One run claims at a time. On a shared LLMSim the condition is what keeps other people's calls out of your test.
+
+**The script answers what it covers.** A run's own rules answer its requests whatever the default route is. What they do not cover goes where Routing says, so a scenario can script the steps that matter and let a real model write the rest. `"unmatched": "refuse"` refuses those requests instead, so a simulated run can never quietly reach a real model. Every result says what answered, as `model.answered`, `{"routes": {"scripted": 2, "chatgpt": 1}, "by": "the script and a real model"}`, and warns when a simulated run was answered by a real one.
+
+**Its own tools are seen.** A tool that runs inside the agent is seen when its result comes back to the model: LLMSim puts it on the timeline once, after the model call that asked for it, with what it returned. `path` with `"source": "agent"` judges those calls. `"source": "tools"` is still only what LLMSim's own mocks received, a separate layer: an agent's `fetch_url` that reaches a mock backend is one call of each.
+
+**The model fails for this run only.** `model.faults` takes the rules `/api/faults` takes, and they match only this run's requests and go with it. The gates work as they do there, so `"limit": 1` fails one call and lets the retry through:
+
+```json
+"model": {"rules": [ … ], "faults": [{"fault": {"type": "status", "status": 429}, "limit": 1}]}
+```
+
+**Checks name what the run made.** `{{run}}`, and `{{agent}}` when there is one agent, are filled in in checks as they are in the script, so a check can find the file a scripted step wrote under the run's name.
+
 ### Build it on the canvas
 
 The **Canvas** switch shows the same scenario as a picture of the run it describes: who speaks on the left, the agent in the middle, what it reaches on the right — in three rows, the model and other agents, the tools it calls, and the records and faults this run installs — and the checks underneath. The picture takes the whole width of the page, and **Full screen** gives it everything right of the menu (**Exit full screen** or Esc gives it back; the browser remembers which you chose). A block is one part of the document. Clicking it opens that part's own fields in a panel beside the picture, which closes again with **Done**, the same fields the form has, writing to the same place; the **+** buttons add a turn, a check, a mock, another agent or a fault where it belongs, and a block's **Remove** takes it out. **Check it is valid** marks each block the validator has something to say about, with its words on the block.
@@ -534,7 +559,7 @@ A block can be dragged to where it reads best, and the lines follow it. Where a 
 | `agents` | Two to twenty agents, each with its own `turns`, driven at the same time |
 | `turns` | What the user says, in order: `say`, and an optional `expect` on the reply |
 | `user` | A simulated user instead of fixed turns: `{persona, goal}` |
-| `model` | For this run only: `rules`, or a `cassette` with `mode` `replay`, `record` or `auto` |
+| `model` | For this run only: `rules`, or a `cassette` with `mode` `replay`, `record` or `auto`; `faults`, `unmatched` and `claim`, below |
 | `setup`, `teardown` | Actions before and after: see [What a scenario brings with it](#what-a-scenario-brings-with-it) |
 | `checks` | What must hold when the conversation ends |
 | `stop` | `maxTurns`, and `when`: a condition on a reply that ends it early |
@@ -576,8 +601,8 @@ Credentials are kept apart from scenarios, in an owner-only file. A scenario nam
 
 | Check | Says |
 |---|---|
-| `answer` | The reply contains, equals or matches something, has a JSON shape, or holds a number within a tolerance |
-| `path` | The tool calls made, against a reference: `strict`, `unordered`, `subset` or `superset` |
+| `answer` | The reply contains, equals or matches something, has a JSON shape, or holds a number within a tolerance. `number.pick` is `first`, `last` or `any`: which number in the reply is judged |
+| `path` | The tool calls made, against a reference: `strict`, `unordered`, `subset` or `superset`. `source` says which calls: `model` (what the model asked for, the default), `agent` (what the agent's own tools did) or `tools` (what LLMSim's mocks received). A reference call with no `arguments` takes any |
 | `budget` | Tokens, cost, latency and steps, per run or per agent, and which limit was passed |
 | `state` | A record has these fields, is untouched or is gone; only these records changed; nothing was deleted |
 | `leak` | A secret, or an injected instruction's marker, turned up in a reply, a tool call or a message to a peer |

@@ -85,9 +85,10 @@ class FakeAgent:
     def stop(self):
         self.httpd.shutdown()
 
-    def model(self, run, name, messages):
-        req = urllib.request.Request("%s/run/%s/agent/%s/openai/v1/chat/completions" % (self.sim_base, run, name),
-                                     json.dumps({"model": "gpt-5", "messages": messages, "tools": TOOLS}).encode(),
+    def model(self, run, name, messages, model="gpt-5"):
+        # Without a run it is an agent nobody changed for testing: it calls LLMSim's plain address.
+        where = "%s/run/%s/agent/%s/openai/v1/chat/completions" % (self.sim_base, run, name) if run else "%s/openai/v1/chat/completions" % self.sim_base
+        req = urllib.request.Request(where, json.dumps({"model": model, "messages": messages, "tools": TOOLS}).encode(),
                                      {"Content-Type": "application/json", "Authorization": "Bearer " + OPENAI_KEY})
         return json.loads(urllib.request.urlopen(req, timeout=30).read())["choices"][0]["message"]
 
@@ -185,11 +186,11 @@ class FakeAgent:
         return "I could not finish."
 
     def answer(self, body):
-        run, name = body["run"], body["agent"]
+        run, name = body.get("run"), body.get("agent")
         history = self.sessions.setdefault(body.get("session"), [])
         history.append({"role": "user", "content": body["input"]})
         for _ in range(5):
-            msg = self.model(run, name, history)
+            msg = self.model(run, name, history, body.get("model") or "gpt-5")
             history.append(msg)
             if not msg.get("tool_calls"):
                 return msg.get("content") or ""

@@ -116,8 +116,8 @@ def validate(scenario):
                 problems.append("stop.maxTurns is a whole number from 1 to 100")
     model = scenario.get("model")
     if model is not None:
-        if not isinstance(model, dict) or set(model) - {"rules", "cassette", "mode", "allowMisses"}:
-            problems.append("model is {rules?, cassette?, mode?}")
+        if not isinstance(model, dict) or set(model) - {"rules", "cassette", "mode", "allowMisses", "faults", "unmatched", "claim"}:
+            problems.append("model is {rules?, cassette?, mode?, faults?, unmatched?, claim?}")
         else:
             if "rules" in model:
                 if not isinstance(model["rules"], list):
@@ -129,6 +129,24 @@ def validate(scenario):
                 problems.append("model.cassette is a recording's name")
             if model.get("mode", "replay") not in ("replay", "record", "auto"):
                 problems.append("model.mode is replay, record or auto")
+            if model.get("unmatched", "route") not in ("route", "refuse"):
+                problems.append("model.unmatched is route (what this run's script does not answer goes where Routing says) or refuse")
+            if "unmatched" in model and not model.get("rules"):
+                problems.append("model.unmatched says what happens to requests this run's script does not answer: it needs model.rules")
+            if "claim" in model:
+                if not isinstance(model["claim"], dict) or not model["claim"]:
+                    problems.append("model.claim is a condition picking out the model calls that name no run this run adopts, "
+                                    "such as {\"model\": \"gpt-5-nano\"}")
+                else:
+                    problems += core.host.validate_cond(model["claim"], "model.claim")
+                if scenario.get("agents"):
+                    problems.append("model.claim adopts calls for one agent: it cannot be used with agents")
+            if "faults" in model:
+                if not isinstance(model["faults"], list) or len(model["faults"]) > 50:
+                    problems.append("model.faults is a list of up to 50 fault rules, as /api/faults takes them")
+                else:
+                    for i, f in enumerate(model["faults"]):
+                        problems += ["model.faults[%d]: %s" % (i, p) for p in core.host.validate_fault_rule(dict(f, id=f.get("id", "f%d" % i)) if isinstance(f, dict) else f)]
     for key in ("setup", "teardown"):
         for i, action in enumerate(scenario.get(key) or []):
             if not isinstance(action, dict) or action.get("type") not in SETUP_TYPES:

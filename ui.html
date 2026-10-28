@@ -26,7 +26,7 @@
     --green:#2a6f4e; --green-tint:#e4f0e9;
     --chrome:#14181f; --chrome-fg:#d6d0c6; --chrome-dim:#7d8590;
     --mono: ui-monospace, Menlo, monospace;
-    --nav: 216px;
+    --nav: 216px; --bar:36px;
   }
   * { box-sizing:border-box; }
   html, body { height:100%; }
@@ -60,6 +60,33 @@
     background:#242a34; padding:3px 6px; border-radius:4px;
   }
   nav button[aria-current=true] .n { color:#fff; }
+  /* Three spaces, by what somebody came to do. The menu below shows the pages of one. */
+  nav .spaces { display:flex; flex-direction:column; gap:2px; margin:4px 10px 6px; padding:4px; background:#14181f; border-radius:8px; }
+  nav .spaces button { padding:7px 10px; border-radius:6px; font-size:12.5px; gap:8px; }
+  nav .spaces button svg { flex:0 0 auto; opacity:.8; }
+  nav .spaces button[aria-pressed=true] { background:#2a313d; color:#fff; box-shadow:inset 2px 0 0 var(--primary); }
+  nav .navbody { flex:1; min-height:0; overflow-y:auto; padding-bottom:8px; }
+  nav .home { margin-top:2px; }
+  /* Where answers come from, on every page: it changes what every other page does. */
+  #statusbar { position:sticky; top:0; z-index:6; height:var(--bar); display:flex; align-items:center; gap:8px; padding:0 28px;
+    background:var(--surface); border-bottom:1px solid var(--border); font-size:12px; color:var(--muted); }
+  #statusbar .chip { border:1px solid var(--border); background:var(--page); color:var(--ink); border-radius:999px; padding:2px 10px; font:500 11.5px/1.5 inherit; cursor:pointer; }
+  #statusbar .chip.ok { border-color:#cfe3d2; background:#eef6ef; color:#25613a; }
+  #statusbar .chip.warn { border-color:#e6cf9f; background:var(--amber-tint); color:#7a5410; }
+  #statusbar .chip:hover { border-color:#c9c2b6; }
+  #statusbar .sb-host { font-family:var(--mono); font-size:11px; color:var(--faint); }
+  .home-spaces { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:14px; }
+  @media (max-width:1100px) { .home-spaces { grid-template-columns:1fr; } }
+  .home-space { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:16px 18px; display:flex; flex-direction:column; gap:6px; }
+  .home-space h2 { margin:0; font-size:16px; }
+  .home-space p { margin:0 0 6px; color:var(--muted); font-size:12.5px; }
+  .home-space button { text-align:left; background:var(--page); border:1px solid var(--border-soft); border-radius:7px; padding:8px 10px; cursor:pointer; font:inherit; color:inherit; }
+  .home-space button:hover { border-color:#c9c2b6; }
+  .home-space button b { display:block; font-size:13px; }
+  .home-space button span { display:block; color:var(--muted); font-size:11.5px; }
+  .home-space .open { margin-top:auto; align-self:flex-start; }
+  .dash-row td { vertical-align:top; }
+  .dash-row .why { color:var(--muted); font-size:12px; }
   nav .foot { margin-top:auto; padding:14px 18px 16px; border-top:1px solid #222833; font-size:11px; color:var(--chrome-dim); }
   nav .foot .status { display:flex; align-items:center; gap:7px; }
   .dot { width:7px; height:7px; border-radius:50%; background:var(--green); flex:0 0 7px; }
@@ -70,7 +97,7 @@
   .head {
     padding:22px 28px 16px; border-bottom:1px solid var(--border);
     display:flex; align-items:baseline; gap:12px; background:var(--page);
-    position:sticky; top:0; z-index:5;
+    position:sticky; top:var(--bar); z-index:5;
   }
   .head h1 { margin:0; font-size:20px; letter-spacing:-.02em; font-weight:700; }
   .head p { margin:0; color:var(--muted); font-size:12.5px; }
@@ -371,30 +398,64 @@
     <div><b>LLMSim</b><span>the vendors' APIs, simulated</span></div>
   </div>
 
-  <button data-view="overview" onclick="show('overview')" style="margin-top:4px"><span>Overview</span></button>
-
-  <!-- Grouped by what somebody came to do, in the order they usually do it:
-       decide what answers, watch what was asked, try it, then test with it. -->
-  <div class="group">Answers</div>
-  <button data-view="routing" onclick="show('routing')"><span>Routing</span><span class="n" id="n-routing">—</span></button>
-  <button data-view="models" onclick="show('models')"><span>Models</span><span class="n" id="n-models">0</span></button>
+  <button class="home" data-view="overview" onclick="show('overview')"><span>Home</span></button>
+  <!-- Three spaces, by what somebody came to do: simulate a model, test agents that use
+       one, or set up where answers come from. Each shows only its own pages. -->
+  <div class="spaces" role="group" aria-label="Space">
+    <button data-space="simulate" onclick="openSpace('simulate')" aria-pressed="false"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 5h16v11H8l-4 4z"/></svg><span>Simulate a model</span></button>
+    <button data-space="test" onclick="openSpace('test')" aria-pressed="false"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 7l3 3 5-6M4 17l3 3 5-6M14 8h6M14 18h6"/></svg><span>Test agents</span></button>
+    <button data-space="settings" onclick="openSpace('settings')" aria-pressed="false"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg><span>Settings</span></button>
+  </div>
+  <div class="navbody">
+  <div class="navspace" data-space="simulate">
+  <div class="group">Answer</div>
+  <button data-view="chat" onclick="show('chat')"><span>Playground</span></button>
   <button data-view="behaviors" onclick="show('behaviors')"><span>Answer rules</span></button>
+  <button data-view="models" onclick="show('models')"><span>Models</span><span class="n" id="n-models"></span></button>
   <button data-view="faults" onclick="show('faults')"><span>Faults</span><span class="n" id="n-faults"></span></button>
-
-  <div class="group">Traffic</div>
-  <button data-view="evidence" onclick="show('evidence')"><span>Requests</span><span class="n" id="n-logs">0</span></button>
-
-  <div class="group">Try it</div>
-  <button data-view="chat" onclick="show('chat')"><span>Chat</span></button>
-  <button data-view="sessions" onclick="show('sessions')"><span>Record &amp; replay</span><span class="n" id="n-sessions"></span></button>
-
-  <div class="group">Test</div>
-  <button data-view="tests" onclick="show('tests')"><span>Functional tests</span><span class="n" id="n-tests">0</span></button>
-  <button data-view="lab" onclick="show('lab')"><span>Agent tests</span></button>
-
-  <div class="group">Help</div>
+  <div class="group">Record</div>
+  <button data-view="sessions" onclick="show('sessions')"><span>Record and replay</span><span class="n" id="n-sessions"></span></button>
+  <div class="group">Look</div>
+  <button data-view="evidence" onclick="show('evidence')"><span>Traffic</span><span class="n" id="n-logs"></span></button>
+  <button data-view="tests" onclick="show('tests')"><span>Model checks</span><span class="n" id="n-tests"></span></button>
+  </div>
+  <div class="navspace" data-space="test" hidden>
+  <button data-view="dashboard" onclick="show('dashboard')"><span>Dashboard</span></button>
+  <div class="group">Define</div>
+  <button data-view="lab/agents" onclick="show('lab/agents')"><span>Agents</span></button>
+  <button data-view="lab/scenarios" onclick="show('lab/scenarios')"><span>Scenarios</span></button>
+  <button data-view="lab/datasets" onclick="show('lab/datasets')"><span>Datasets</span></button>
+  <div class="group">Run</div>
+  <button data-view="lab/testruns" onclick="show('lab/testruns')"><span>Test runs</span></button>
+  <button data-view="lab/results" onclick="show('lab/results')"><span>Results</span></button>
+  <button data-view="lab/experiments" onclick="show('lab/experiments')"><span>Experiments</span></button>
+  <div class="group">Stand-ins</div>
+  <button data-view="lab/mcp" onclick="show('lab/mcp')"><span>Mock tool servers</span></button>
+  <button data-view="lab/mocks" onclick="show('lab/mocks')"><span>Mock REST backends</span></button>
+  <button data-view="lab/a2a" onclick="show('lab/a2a')"><span>Stub agents</span></button>
+  <button data-view="lab/a2aproxies" onclick="show('lab/a2aproxies')"><span>Agent proxies</span></button>
+  <button data-view="lab/kitfaults" onclick="show('lab/kitfaults')"><span>Tool and peer faults</span></button>
+  <div class="group">Judge</div>
+  <button data-view="lab/judges" onclick="show('lab/judges')"><span>Judges</span></button>
+  <button data-view="lab/reviews" onclick="show('lab/reviews')"><span>Review queue</span></button>
+  <button data-view="lab/variations" onclick="show('lab/variations')"><span>Variations</span></button>
+  </div>
+  <div class="navspace" data-space="settings" hidden>
+  <div class="group">Models</div>
+  <button data-view="routing" onclick="show('routing')"><span>Where answers come from</span><span class="n" id="n-routing"></span></button>
+  <button data-view="chatgpt" onclick="show('chatgpt')"><span>ChatGPT plan</span></button>
+  <button data-view="anthropic" onclick="show('anthropic')"><span>Anthropic API</span></button>
+  <button data-view="upstream" onclick="show('upstream')"><span>Upstream</span></button>
+  <div class="group">Clients</div>
+  <button data-view="connect" onclick="show('connect')"><span>Connect a client</span></button>
+  <button data-view="capture" onclick="show('capture')"><span>Capture and identity</span></button>
+  <div class="group">Secrets</div>
+  <button data-view="lab/credentials" onclick="show('lab/credentials')"><span>Credentials</span></button>
+  <div class="group">This LLMSim</div>
+  <button data-view="about" onclick="show('about')"><span>Storage and status</span></button>
   <button onclick="window.open(api('/guide'), '_blank', 'noopener')"><span>Documentation</span><span class="n">↗</span></button>
-
+  </div>
+  </div>
   <div class="foot">
     <div class="status"><span id="dot" class="dot"></span><span id="conn">connected</span></div>
     <div style="margin-top:5px" id="footmode">scripted</div>
@@ -402,32 +463,30 @@
 </nav>
 
 <main>
+  <div id="statusbar" role="status" aria-label="Where answers come from">
+    <span>Answers come from</span>
+    <button class="chip" id="sb-route" onclick="show('routing')" title="Where answers come from: Settings"></button>
+    <span id="sb-more"></span>
+    <button class="chip" id="sb-rec" onclick="show('sessions')" title="Record and replay"></button>
+    <span style="flex:1"></span>
+    <span class="sb-host" id="sb-host"></span>
+  </div>
   <!-- ── Overview ───────────────────────────────────────────────────── -->
   <!-- What it is doing now, how to point a client at it, and where each job
        is done. The first screen, because every other one assumes you know
        these three things. -->
   <section class="view" id="v-overview">
     <div class="head">
-      <div><h1>Overview</h1><p>What LLMSim is doing right now, how to point a client at it, and where to go next.</p></div>
+      <div><h1>LLMSim</h1><p>Simulate a model, test the agents that use one, and set where answers come from.</p></div>
     </div>
     <div class="body">
+      <div class="home-spaces" id="home-spaces"></div>
+      <h2 style="margin:22px 0 10px; font-size:13px; color:var(--muted); font-weight:600">Right now</h2>
       <div class="ov-stats" id="ov-stats"></div>
 
-      <div class="card" style="margin-top:16px">
-        <h2>Connect a client</h2>
-        <p class="help">Set your client's base URL to one of these and use the key beside it. LLMSim answers in that vendor's own wire format, whichever model name is asked for.</p>
-        <table class="ov-connect">
-          <thead><tr><th style="width:110px">Vendor</th><th>Base URL</th><th style="width:210px">Request</th><th>Key</th></tr></thead>
-          <tbody id="ov-connect"></tbody>
-        </table>
-        <p class="help" style="margin:12px 0 0">These are the keys LLMSim publishes: fake by construction, they open nothing but a simulator. A server started with <code>LLMSIM_*_KEY</code> set uses its own instead.</p>
-      </div>
 
-      <div class="card">
-        <h2>What do you want to do?</h2>
-        <p class="help">Each job has one screen.</p>
-        <div class="ov-tasks" id="ov-tasks"></div>
-      </div>
+
+
     </div>
   </section>
 
@@ -448,7 +507,7 @@
   <!-- ── Routing ────────────────────────────────────────────────────── -->
   <section class="view" id="v-routing" hidden>
     <div class="head">
-      <div><h1>Routing</h1><p>Whether answers are made up here or come from a real model: an upstream, a ChatGPT plan, or Anthropic's API.</p></div>
+      <div><h1>Where answers come from</h1><p>Whether answers are made up here, from your rules, or come from a real model: an upstream, a ChatGPT plan, or Anthropic's API. Each of those is set up on its own page.</p></div>
     </div>
     <div class="body">
       <div class="card">
@@ -471,7 +530,7 @@
 
       <div class="card">
         <h2>Fidelity</h2>
-        <p class="help">How closely the vendors are imitated. Each makes the simulator stricter, and each is separate because they carry different risk to a working setup.</p>
+        <p class="help">How strictly LLMSim behaves like the real vendors. Off, it answers anything a client sends; on, it refuses what the vendor would refuse, so a client that works here works there. Each is separate, because each can break a setup that works today.</p>
         <label style="display:flex; align-items:center; gap:8px; color:var(--ink)">
           <input id="f-validate" type="checkbox" style="width:auto" onchange="saveFidelity()"> Refuse a malformed request, as the vendor would
         </label>
@@ -678,13 +737,12 @@
   <!-- ── Evidence ───────────────────────────────────────────────────── -->
   <section class="view" id="v-evidence" hidden>
     <div class="head">
-      <div><h1>Requests</h1><p>Everything that was asked and what answered it: a live tail, the full captured evidence, and checks over it.</p></div>
+      <div><h1>Traffic</h1><p>Every request clients sent and what answered it: a live tail, each request in full, and checks over them. What is kept is set under Settings, Capture and identity.</p></div>
       <span class="spacer"></span>
-      <div class="seg" role="group" aria-label="Requests view">
+      <div class="seg" role="group" aria-label="Traffic view">
         <button id="ev-tab-live" onclick="evTab('live')" aria-pressed="true" title="Every request as it arrives">Live</button>
         <button id="ev-tab-requests" onclick="evTab('requests')" aria-pressed="false" title="What was sent and what came back, in full, by run and agent">Captured</button>
         <button id="ev-tab-assertions" onclick="evTab('assertions')" aria-pressed="false" title="Checks over what was captured">Assertions</button>
-        <button id="ev-tab-settings" onclick="evTab('settings')" aria-pressed="false" title="What is captured, and who may send requests">Capture settings</button>
       </div>
     </div>
     <div class="body">
@@ -757,45 +815,7 @@
         </div>
       </div>
 
-      <div id="ev-settings" hidden>
-        <div class="card">
-          <h2>Capture</h2>
-          <p class="help">Requests are held in memory, bounded, and never written to disk. Assertions read what was held; redactions apply to what is shown, exported or returned.</p>
-          <label style="display:flex; align-items:center; gap:8px; margin:0; color:var(--ink)"><input id="st-cap-enabled" type="checkbox" style="width:auto"> Keep requests</label>
-          <div class="row">
-            <div><label for="st-cap-max">How many to keep</label><input id="st-cap-max" type="number" class="mono"></div>
-            <div><label for="st-cap-bytes">Most of one request to keep whole <span class="hint">· bytes</span></label><input id="st-cap-bytes" type="number" class="mono"></div>
-          </div>
-          <label for="st-cap-headers">Headers never shown <span class="hint">· comma separated</span></label>
-          <input id="st-cap-headers" class="mono" type="text">
-          <label for="st-cap-patterns">Redactions <span class="hint">· JSON: [{"pattern": "…", "replace": "[card]"}]</span></label>
-          <textarea id="st-cap-patterns" class="mono" style="min-height:80px" spellcheck="false"></textarea>
-        </div>
-        <div class="card">
-          <h2>Identity</h2>
-          <p class="help">Who sent a request is always read from the base URL — <span class="mono">/run/&lt;id&gt;/agent/&lt;name&gt;/openai/v1</span> — which needs nothing of an agent platform but a URL. These rules read it from elsewhere, for a gateway that carries one through.</p>
-          <textarea id="st-identity" class="mono" style="min-height:110px" spellcheck="false"></textarea>
-        </div>
-        <div class="card">
-          <h2>Credentials</h2>
-          <p class="help"><b>Published</b> accepts only the keys this file publishes. <b>Registered</b> adds credentials you register below. <b>Any</b> accepts anything and records which arrived — for witnessing what a gateway sends. A credential is kept as a fingerprint; the key itself is not stored.</p>
-          <div class="seg" role="group" aria-label="Credential mode">
-            <button id="st-auth-published" onclick="stAuth('published')" aria-pressed="false">Published</button>
-            <button id="st-auth-registered" onclick="stAuth('registered')" aria-pressed="false">Registered</button>
-            <button id="st-auth-any" onclick="stAuth('any')" aria-pressed="false">Any (witness)</button>
-          </div>
-          <div id="st-creds" style="margin-top:14px"></div>
-          <div class="row" style="align-items:flex-end; margin-top:10px">
-            <div><label for="st-cred-label" style="margin-top:0">Label</label><input id="st-cred-label" class="mono" type="text" placeholder="platform-token"></div>
-            <div><label for="st-cred-key" style="margin-top:0">Credential</label><input id="st-cred-key" type="password" autocomplete="off" placeholder="not stored; only its fingerprint is"></div>
-            <div style="flex:0 0 auto"><button class="btn" onclick="stRegister()">Register</button></div>
-          </div>
-        </div>
-        <div style="margin-top:14px; display:flex; gap:9px; align-items:center">
-          <button class="btn" onclick="stSave()">Save settings</button>
-          <span id="st-msg" style="font-size:12px"></span>
-        </div>
-      </div>
+
 
     </div>
   </section>
@@ -803,7 +823,7 @@
   <!-- ── Sessions ───────────────────────────────────────────────────── -->
   <section class="view" id="v-sessions" hidden>
     <div class="head">
-      <div><h1>Record &amp; replay</h1><p>Record a real run once — a Maniple session, say — and replay it exactly, offline and free.</p></div>
+      <div><h1>Record and replay</h1><p>Record a real run once — a Maniple session, say — and replay it exactly, offline and free.</p></div>
     </div>
     <div class="body">
       <div class="card">
@@ -860,7 +880,7 @@
   <!-- ── Chat ───────────────────────────────────────────────────────── -->
   <section class="view" id="v-chat" hidden>
     <div class="head">
-      <div><h1>Chat</h1><p>Talk to a model through LLMSim, on whatever route it is set to. It goes the same way a client's request does, and shows up under Requests.</p></div>
+      <div><h1>Playground</h1><p>Talk to a model through LLMSim, on whatever route it is set to. It goes the same way a client's request does, and shows up under Traffic.</p></div>
       <span class="spacer"></span>
       <button class="btn ghost" onclick="chatClear()">New conversation</button>
     </div>
@@ -899,7 +919,7 @@
 
   <section class="view" id="v-tests" hidden>
     <div class="head">
-      <div><h1>Functional tests</h1><p>Send a model a prompt and say what must come back: the answer, the tool it calls, the status, how fast. It goes down whatever route that model is on. A case is a sequence of steps, run in order.
+      <div><h1>Model checks</h1><p>Send a model a prompt and say what must come back: the answer, the tool it calls, the status, how fast. It goes down whatever route that model is on. A case is a sequence of steps, run in order.
         Cases and plans are saved to <span class="mono">llmsim.tests.json</span> — commit it, or hand it over with Export.</p></div>
       <span class="spacer"></span>
       <button class="btn ghost" onclick="exportSuite()">Export</button>
@@ -928,13 +948,13 @@
   <!-- ── Agent tests: scenarios, mocks, datasets, experiments, judges, reviews ───── -->
   <section class="view" id="v-lab" hidden>
     <div class="head">
-      <div><h1>Agent tests</h1><p>Drive an agent, simulate its tools and its peers, judge what it did, keep the cases and compare versions. Everything here is the same API a CI job uses; the guide lists the routes.</p></div>
+      <div><h1 id="lab-h1">Agent tests</h1><p id="lab-h1p">Drive an agent, simulate its tools and its peers, judge what it did, keep the cases and compare versions. Everything here is the same API a CI job uses; the guide lists the routes.</p></div>
     </div>
     <div class="body">
-      <div class="card"><div id="lab-tabs" class="lab-groups"></div></div>
+      <div class="card" hidden><div id="lab-tabs" class="lab-groups"></div></div>
       <div class="card">
-        <h2 id="lab-title"></h2>
-        <p class="help" id="lab-help"></p>
+        <h2 id="lab-title" hidden></h2>
+        <p class="help" id="lab-help" hidden></p>
         <div id="lab-list"></div>
         <div style="margin-top:12px; display:flex; gap:9px; align-items:center"><button class="btn" id="lab-new" onclick="labNew()">New</button><button class="btn ghost" onclick="labLoad()">Refresh</button><span id="lab-listnote"></span></div>
         <div id="lab-extra"></div>
@@ -959,6 +979,107 @@
     </div>
   </section>
 
+
+  <!-- ── Test agents: the dashboard ────────────────────────────────────── -->
+  <section class="view" id="v-dashboard" hidden>
+    <div class="head">
+      <div><h1>Dashboard</h1><p>How your agents' tests stand: what passes, what fails and why, and what answered them.</p></div>
+      <span class="spacer"></span>
+      <select id="dash-agent" style="width:auto; min-width:180px" aria-label="Agent to run every scenario on"></select>
+      <button class="btn" onclick="dashRunAll()">Run all on this agent</button>
+    </div>
+    <div class="body">
+      <div id="dash-note"></div>
+      <div class="ov-stats" id="dash-stats"></div>
+      <div class="card" style="margin-top:16px"><h2>Failing now</h2><p class="help">Each scenario whose last run did not pass, with the first check that did not hold.</p><div id="dash-failing"></div></div>
+      <div class="card"><h2>Every scenario</h2><p class="help">Its last run, on any agent. Open one to read it in full.</p><div id="dash-all"></div></div>
+      <div class="card"><h2>Test runs</h2><p class="help">Sets of scenarios run on one agent, kept together.</p><div id="dash-runs"></div></div>
+    </div>
+  </section>
+
+  <!-- ── Settings: one page per model connection ────────────────────────── -->
+  <section class="view" id="v-chatgpt" hidden>
+    <div class="head"><div><h1>ChatGPT plan</h1><p>Answer with a ChatGPT subscription. Whether it is used is set under Where answers come from.</p></div></div>
+    <div class="body"><div id="cfg-own-chatgpt"></div></div>
+  </section>
+  <section class="view" id="v-anthropic" hidden>
+    <div class="head"><div><h1>Anthropic API</h1><p>Answer with a real Claude model, billed to an API key. Whether it is used is set under Where answers come from.</p></div></div>
+    <div class="body"><div id="cfg-own-anthropic"></div></div>
+  </section>
+  <section class="view" id="v-upstream" hidden>
+    <div class="head"><div><h1>Upstream</h1><p>Relay to one real model that speaks a vendor's API: an OpenAI-compatible endpoint, a gateway, Azure. Whether it is used is set under Where answers come from.</p></div></div>
+    <div class="body"><div id="cfg-own-upstream"></div></div>
+  </section>
+
+  <!-- ── Settings: clients ──────────────────────────────────────────────── -->
+  <section class="view" id="v-connect" hidden>
+    <div class="head"><div><h1>Connect a client</h1><p>The addresses and keys a client, an agent or a gateway uses to reach LLMSim.</p></div></div>
+    <div class="body">
+      <div class="card">
+        <h2>Connect a client</h2>
+        <p class="help">Set your client's base URL to one of these and use the key beside it. LLMSim answers in that vendor's own wire format, whichever model name is asked for.</p>
+        <table class="ov-connect">
+          <thead><tr><th style="width:110px">Vendor</th><th>Base URL</th><th style="width:210px">Request</th><th>Key</th></tr></thead>
+          <tbody id="ov-connect"></tbody>
+        </table>
+        <p class="help" style="margin:12px 0 0">These are the keys LLMSim publishes: fake by construction, they open nothing but a simulator. A server started with <code>LLMSIM_*_KEY</code> set uses its own instead.</p>
+      </div>
+      <div class="card">
+        <h2>Keep a test's requests apart</h2>
+        <p class="help">Put a run and an agent in the base URL, <code>/run/&lt;run&gt;/agent/&lt;name&gt;/openai/v1</code>, or send them as the headers <code>X-LLMSim-Run</code> and <code>X-LLMSim-Agent</code>. Requests that say so are kept as that run's, and a test's own script answers them.</p>
+      </div>
+    </div>
+  </section>
+  <section class="view" id="v-capture" hidden>
+    <div class="head"><div><h1>Capture and identity</h1><p>What LLMSim keeps of each request, how it tells callers apart, and who may send requests at all.</p></div></div>
+    <div class="body">
+      <div id="ev-settings">
+        <div class="card">
+          <h2>Capture</h2>
+          <p class="help">Requests are held in memory, bounded, and never written to disk. Assertions read what was held; redactions apply to what is shown, exported or returned.</p>
+          <label style="display:flex; align-items:center; gap:8px; margin:0; color:var(--ink)"><input id="st-cap-enabled" type="checkbox" style="width:auto"> Keep requests</label>
+          <div class="row">
+            <div><label for="st-cap-max">How many to keep</label><input id="st-cap-max" type="number" class="mono"></div>
+            <div><label for="st-cap-bytes">Most of one request to keep whole <span class="hint">· bytes</span></label><input id="st-cap-bytes" type="number" class="mono"></div>
+          </div>
+          <label for="st-cap-headers">Headers never shown <span class="hint">· comma separated</span></label>
+          <input id="st-cap-headers" class="mono" type="text">
+          <label for="st-cap-patterns">Redactions <span class="hint">· JSON: [{"pattern": "…", "replace": "[card]"}]</span></label>
+          <textarea id="st-cap-patterns" class="mono" style="min-height:80px" spellcheck="false"></textarea>
+        </div>
+        <div class="card">
+          <h2>Identity</h2>
+          <p class="help">Who sent a request is always read from the base URL — <span class="mono">/run/&lt;id&gt;/agent/&lt;name&gt;/openai/v1</span> — which needs nothing of an agent platform but a URL. These rules read it from elsewhere, for a gateway that carries one through.</p>
+          <textarea id="st-identity" class="mono" style="min-height:110px" spellcheck="false"></textarea>
+        </div>
+        <div class="card">
+          <h2>Credentials</h2>
+          <p class="help"><b>Published</b> accepts only the keys this file publishes. <b>Registered</b> adds credentials you register below. <b>Any</b> accepts anything and records which arrived — for witnessing what a gateway sends. A credential is kept as a fingerprint; the key itself is not stored.</p>
+          <div class="seg" role="group" aria-label="Credential mode">
+            <button id="st-auth-published" onclick="stAuth('published')" aria-pressed="false">Published</button>
+            <button id="st-auth-registered" onclick="stAuth('registered')" aria-pressed="false">Registered</button>
+            <button id="st-auth-any" onclick="stAuth('any')" aria-pressed="false">Any (witness)</button>
+          </div>
+          <div id="st-creds" style="margin-top:14px"></div>
+          <div class="row" style="align-items:flex-end; margin-top:10px">
+            <div><label for="st-cred-label" style="margin-top:0">Label</label><input id="st-cred-label" class="mono" type="text" placeholder="platform-token"></div>
+            <div><label for="st-cred-key" style="margin-top:0">Credential</label><input id="st-cred-key" type="password" autocomplete="off" placeholder="not stored; only its fingerprint is"></div>
+            <div style="flex:0 0 auto"><button class="btn" onclick="stRegister()">Register</button></div>
+          </div>
+        </div>
+        <div style="margin-top:14px; display:flex; gap:9px; align-items:center">
+          <button class="btn" onclick="stSave()">Save settings</button>
+          <span id="st-msg" style="font-size:12px"></span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Settings: this LLMSim ──────────────────────────────────────────── -->
+  <section class="view" id="v-about" hidden>
+    <div class="head"><div><h1>Storage and status</h1><p>Where this LLMSim keeps what it is told, and what it is serving now.</p></div></div>
+    <div class="body"><div id="about-body"></div></div>
+  </section>
 </main>
 
 <script>
@@ -977,16 +1098,41 @@ const api = (p) => new URL(p, location.origin).toString();
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
 
 // Screens that were renamed or folded into another keep working as addresses.
-const VIEW_ALIAS = { logs: "evidence", integrations: "overview" };
+const VIEW_ALIAS = { logs: "evidence", integrations: "overview", home: "overview" };
+// The space a page belongs to is the menu section its button is in. Home belongs to none.
+let VIEWKEY = "overview", SPACE = "simulate";
+const LAST_IN = {};
+const SPACE_FIRST = { simulate: "chat", test: "dashboard", settings: "routing" };
+function spaceOf(key) {
+  const b = document.querySelector(`nav .navspace button[data-view="${key}"]`);
+  return b ? b.closest(".navspace").dataset.space : key.startsWith("lab/") ? "test" : null;
+}
+function openSpace(space) { show(LAST_IN[space] || SPACE_FIRST[space]); }
+function renderSpaces() {
+  for (const b of document.querySelectorAll("nav .spaces button")) b.setAttribute("aria-pressed", VIEWKEY !== "overview" && b.dataset.space === SPACE);
+  for (const n of document.querySelectorAll("nav .navspace")) n.hidden = n.dataset.space !== SPACE;
+}
 function show(v) {
   if (v === "logs") EV.tab = "live";
   v = VIEW_ALIAS[v] || v;
-  if (!document.getElementById("v-" + v)) v = "overview";
-  VIEW = v;
-  if (location.hash !== "#" + v) history.replaceState(null, "", "#" + v);
+  // Agent test areas are pages of their own, #lab/<area>, all drawn by the one view.
+  let key = v;
+  if (v === "lab" || v.startsWith("lab/")) {
+    // A bare #lab is Agent tests; Credentials lives under Settings, so it is not where that lands.
+    let area = v.slice(4) || (LABK === "credentials" ? "agents" : LABK);
+    if (!LAB[area]) area = LABK;
+    key = "lab/" + area; v = "lab";
+    if (area !== LABK) { LABK = area; labClose(); document.getElementById("lab-list").innerHTML = ""; document.getElementById("lab-extra").innerHTML = ""; }
+  }
+  if (!document.getElementById("v-" + v)) v = key = "overview";
+  VIEW = v; VIEWKEY = key;
+  const space = spaceOf(key);
+  if (space) { SPACE = space; LAST_IN[space] = key; }
+  if (location.hash !== "#" + key) history.replaceState(null, "", "#" + key);
   for (const s of document.querySelectorAll(".view")) s.hidden = s.id !== "v-" + v;
-  for (const b of document.querySelectorAll("nav button[data-view]")) b.setAttribute("aria-current", b.dataset.view === v);
-  if (CFG) { renderDetail(); placeCards(); renderChatGPT(); renderChat(); renderSessions(); }
+  for (const b of document.querySelectorAll("nav button[data-view]")) b.setAttribute("aria-current", b.dataset.view === key);
+  renderSpaces();
+  if (CFG) { renderDetail(); placeCards(); renderChatGPT(); renderChat(); renderSessions(); renderStatus(); }
   pageEntered(v);
 }
 
@@ -1023,6 +1169,7 @@ const editing = (sel) => {
 };
 
 function renderChrome() {
+  renderStatus();
   const routed = Object.keys(CFG.routing.models).length;
   const answers = Object.keys(CFG.responses || {}).length;
   document.getElementById("n-models").textContent = ALL.length;
@@ -1048,17 +1195,6 @@ const ROUTE_MEANS = {
   chatgpt: ["ChatGPT plan", "Requests are answered by a ChatGPT subscription."],
   anthropic: ["Anthropic API", "Requests are answered by a real Claude model, billed to an API key."],
 };
-const TASKS = [
-  ["routing", "Decide what answers", "Scripted here, an upstream, a ChatGPT plan or Anthropic's API"],
-  ["behaviors", "Write what the model says", "Rules: this ask gets this answer, or this tool call"],
-  ["models", "Treat one model differently", "Its own route, a fixed answer, a status or a delay"],
-  ["faults", "Make something go wrong", "A dead stream, a bad tool call, a 429, on purpose"],
-  ["evidence", "See what was asked", "A live tail, and every request in full"],
-  ["chat", "Try it by hand", "Talk to a model the way a client would"],
-  ["sessions", "Record a real run and replay it", "Exactly, offline and free"],
-  ["tests", "Check a model answers as intended", "Send a prompt, say what must come back, keep it as a case"],
-  ["lab", "Test an agent end to end", "Drive it, simulate its tools and peers, judge the result"],
-];
 function copyBtn(text) { return `<button class="copy" onclick="copyText('${esc(text)}'); this.textContent='Copied'; setTimeout(() => this.textContent='Copy', 1200)">Copy</button>`; }
 function renderOverview() {
   if (!CFG || !document.getElementById("ov-stats")) return;
@@ -1088,7 +1224,7 @@ function renderOverview() {
   stats.push(SESS.mode === "record" ? { k: "Recording", v: SESS.name, d: "Every answer is being kept.", go: "sessions", warn: true }
     : SESS.mode === "replay" ? { k: "Replaying", v: SESS.name, d: "Answers come from this recording, not from the route above.", go: "sessions", warn: true }
     : { k: "Record & replay", v: "Off", d: (SESS.cassettes || []).length + " recording(s) kept.", go: "sessions" });
-  stats.push({ k: "Requests seen", v: String(REQS.length >= 300 ? "300+" : REQS.length), d: faults ? `${faults} fault rule${faults === 1 ? "" : "s"} active.` : "No fault is active.", go: faults ? "faults" : "evidence", warn: faults > 0 });
+  stats.push({ k: "Traffic seen", v: String(REQS.length >= 300 ? "300+" : REQS.length), d: faults ? `${faults} fault rule${faults === 1 ? "" : "s"} active.` : "No fault is active.", go: faults ? "faults" : "evidence", warn: faults > 0 });
   document.getElementById("ov-stats").innerHTML = stats.map((x) => `<div class="ov-stat ${x.warn ? "warn" : ""}" style="cursor:pointer" onclick="show('${x.go}')">
     <div class="k">${esc(x.k)}</div><div class="v">${esc(x.v)}</div><div class="d">${esc(x.d)}</div></div>`).join("");
   document.getElementById("ov-connect").innerHTML = Object.keys(MODELS).map((p) => {
@@ -1099,9 +1235,116 @@ function renderOverview() {
       <td class="mono" style="color:var(--muted)">${esc(v.path)}</td>
       <td class="mono">${esc(v.key)} ${v.key ? copyBtn(v.key) : ""}<div style="color:var(--faint); font-size:11px">${esc(v.header)}</div></td></tr>`;
   }).join("");
-  document.getElementById("ov-tasks").innerHTML = TASKS.map(([v, title, what]) => `<button class="ov-task" onclick="show('${v}')">
-    <div><b>${esc(title)}</b><span>${esc(what)}</span></div><span class="go">${esc(document.querySelector(`nav button[data-view="${v}"] span`).textContent)} →</span></button>`).join("");
+  renderHome();
 }
+
+const HOME = [
+  ["simulate", "Simulate a model", "Stand in for OpenAI, Anthropic or DeepSeek: script what the model says, make it fail on purpose, record a real run and replay it.",
+    [["chat", "Try it by hand", "Talk to a model the way a client would"], ["behaviors", "Write what the model says", "This ask gets this answer, or this tool call"],
+     ["faults", "Make something go wrong", "A dead stream, a bad tool call, a 429"], ["sessions", "Record a real run and replay it", "Exactly, offline and free"]]],
+  ["test", "Test agents", "Drive an agent through scenarios, stand in for its tools and the agents it talks to, and see what passes and what fails.",
+    [["dashboard", "See what passes and fails", "Every scenario's last run, and why it failed"], ["lab/agents", "Add an agent to test", "Salesforce, SAP, ServiceNow, Azure Foundry or your own"],
+     ["lab/scenarios", "Write a test", "On a canvas, as a form or as JSON"], ["lab/results", "Read a run", "Every step it took, in order"]]],
+  ["settings", "Settings", "Where answers come from, the model connections, how clients reach LLMSim, and what it keeps.",
+    [["routing", "Decide where answers come from", "Your rules, an upstream, a ChatGPT plan or Anthropic"], ["chatgpt", "Sign in to a ChatGPT plan", "Answer with a subscription"],
+     ["connect", "Connect a client", "Base URLs and keys"], ["capture", "Decide what is kept", "Capture, identity and who may send requests"]]],
+];
+function renderHome() {
+  const el = document.getElementById("home-spaces");
+  if (!el) return;
+  el.innerHTML = HOME.map(([space, title, what, jobs]) => `<div class="home-space"><h2>${esc(title)}</h2><p>${esc(what)}</p>`
+    + jobs.map(([v, t, d]) => `<button onclick="show('${v}')"><b>${esc(t)}</b><span>${esc(d)}</span></button>`).join("")
+    + `<button class="btn ghost open" onclick="openSpace('${space}')">Open ${esc(title)} →</button></div>`).join("");
+}
+
+// Where answers come from, shown on every page: it decides what every other page does.
+function renderStatus() {
+  if (!CFG) return;
+  const d = HOLD ? HOLD.default : CFG.routing.default, [name] = ROUTE_MEANS[d] || [d];
+  const how = d === "chatgpt" ? (CG.signedIn ? ["signed in", "ok"] : ["not signed in", "warn"])
+    : d === "anthropic" ? (CFG.anthropic.keySet ? ["key stored", "ok"] : ["no key", "warn"])
+    : d === "relay" ? (CFG.upstream.url ? [CFG.upstream.model || "set", "ok"] : ["no address", "warn"])
+    : ["your rules", ""];
+  const r = document.getElementById("sb-route");
+  r.textContent = `${name} · ${how[0]}`; r.className = "chip " + how[1];
+  const routed = Object.keys(CFG.routing.models).length;
+  document.getElementById("sb-more").textContent = (HOLD ? `held by ${HOLD.by} for now` : "") + (routed ? `${HOLD ? " · " : ""}${routed} model${routed === 1 ? "" : "s"} set differently` : "");
+  const rec = document.getElementById("sb-rec");
+  rec.textContent = SESS.mode === "record" ? "Recording " + SESS.name : SESS.mode === "replay" ? "Replaying " + SESS.name : "Recording off";
+  rec.className = "chip " + (SESS.mode === "off" ? "" : "warn");
+  document.getElementById("sb-host").textContent = location.host;
+  if (VIEW === "about") renderAbout();
+}
+
+function renderAbout() {
+  const el = document.getElementById("about-body");
+  if (!el || !CFG) return;
+  const st = STATE || {}, kept = st.kept !== false;
+  el.innerHTML = `<div class="card"><h2>Where it keeps what it is told</h2>
+      <p class="help">Sign-ins, keys, routing, your rules, the suite, runs and recordings are kept in one folder.</p>
+      <p class="mono" style="margin:0 0 8px">${esc(st.dir || "beside server.py")}</p>
+      ${kept ? `<div class="note ok" style="margin:0">Kept across restarts.</div>` : `<div class="note warn" style="margin:0">This folder is inside a container and is not a volume: a restart signs out and forgets the rest. Mount a volume there (<code>LLMSIM_DATA</code>).</div>`}</div>
+    <div class="card"><h2>What it is serving</h2><table class="sess-table">
+      <tr><td style="width:220px">Vendors</td><td>${esc(Object.keys(MODELS).join(", "))}</td></tr>
+      <tr><td>Models it knows</td><td>${ALL.length}</td></tr>
+      <tr><td>Answer rules</td><td>${RULES.length}</td></tr>
+      <tr><td>Answers come from</td><td>${esc((ROUTE_MEANS[HOLD ? HOLD.default : CFG.routing.default] || [CFG.routing.default])[0])}${HOLD ? " (held by " + esc(HOLD.by) + ")" : ""}</td></tr>
+      <tr><td>Recording</td><td>${esc(SESS.mode === "off" ? "off" : SESS.mode + " " + SESS.name)}</td></tr>
+      <tr><td>Address</td><td class="mono">${esc(location.origin)}</td></tr></table></div>
+    <div class="card"><h2>Documentation</h2><p class="help">How to use every part, and the whole API.</p>
+      <button class="btn ghost" onclick="window.open(api('/guide'), '_blank', 'noopener')">Open the guide ↗</button></div>`;
+}
+
+// ── Test agents: the dashboard ───────────────────────────────────────────
+let DASH = { agents: [], answered: {} };
+const whenAgo = (t) => { if (!t) return ""; const s = Math.max(0, Date.now() / 1000 - t); return s < 90 ? Math.round(s) + "s ago" : s < 5400 ? Math.round(s / 60) + "m ago" : s < 129600 ? Math.round(s / 3600) + "h ago" : Math.round(s / 86400) + "d ago"; };
+async function dashLoad() {
+  const get = async (p) => { const r = await REST("GET", p); return r.ok ? r.body : {}; };
+  const [sc, rs, ag, tr] = await Promise.all(["/api/scenarios", "/api/results", "/api/agents", "/api/testruns"].map(get));
+  const scenarios = sc.scenarios || [], results = rs.results || [], runs = tr.testruns || [];
+  DASH.agents = ag.agents || [];
+  const pick = document.getElementById("dash-agent"), had = pick.value;
+  pick.innerHTML = DASH.agents.length ? DASH.agents.map((a) => `<option value="${esc(a.id)}">${esc(a.id)}${a.label ? " · " + esc(a.label) : ""}</option>`).join("") : `<option value="">No agents saved yet</option>`;
+  if (had && DASH.agents.some((a) => a.id === had)) pick.value = had;
+  const last = latestByScenario(results), byScenario = {};
+  for (const r of results) (byScenario[r.scenario] = byScenario[r.scenario] || []).push(r);
+  // What answered each last run is in the run itself, not in the list: read the ones not read yet.
+  await Promise.all(Object.values(last).filter((r) => !(r.run in DASH.answered)).slice(0, 80).map(async (r) => {
+    const one = await REST("GET", "/api/results/" + r.run);
+    DASH.answered[r.run] = one.ok ? { by: ((one.body.result || {}).model || {}).answered?.by || "", failed: ((one.body.result || {}).checks || []).find((c) => c.status !== "pass"), error: (one.body.result || {}).error } : {};
+  }));
+  const verdictOf = (id) => (last[id] || {}).verdict;
+  const failing = scenarios.filter((x) => ["fail", "error", "no-data"].includes(verdictOf(x.id)));
+  const passing = scenarios.filter((x) => verdictOf(x.id) === "pass");
+  const never = scenarios.filter((x) => !last[x.id]);
+  const flaky = scenarios.filter((x) => { const v = new Set((byScenario[x.id] || []).slice(0, 6).map((r) => r.verdict)); return v.has("pass") && v.has("fail"); });
+  const by = (want) => scenarios.filter((x) => last[x.id] && (DASH.answered[last[x.id].run] || {}).by === want).length;
+  const stats = [
+    { k: "Scenarios", v: scenarios.length, d: never.length ? never.length + " never run" : "every one has run", go: "lab/scenarios" },
+    { k: "Passing", v: passing.length, d: "at their last run", go: "lab/results" },
+    { k: "Failing", v: failing.length, d: failing.length ? "listed below" : "nothing is failing", go: "lab/results", warn: failing.length > 0 },
+    { k: "Answered by", v: `${by("the script")} / ${by("a real model") + by("the script and a real model")}`, d: "the script / a real model, at the last run" + (flaky.length ? ` · ${flaky.length} flaky` : ""), go: "lab/results", warn: flaky.length > 0 },
+  ];
+  document.getElementById("dash-stats").innerHTML = stats.map((x) => `<div class="ov-stat ${x.warn ? "warn" : ""}" style="cursor:pointer" onclick="show('${x.go}')"><div class="k">${esc(x.k)}</div><div class="v">${esc(String(x.v))}</div><div class="d">${esc(x.d)}</div></div>`).join("");
+  const why = (r) => { const a = DASH.answered[r.run] || {}; return a.error ? a.error : a.failed ? `${a.failed.name}: ${a.failed.detail || a.failed.status}` : ""; };
+  const row = (x) => { const r = last[x.id]; const a = r ? DASH.answered[r.run] || {} : {};
+    return `<tr class="dash-row" onclick="${r ? `openLab('results', '${esc(r.run)}')` : `openLab('scenarios', '${esc(x.id)}')`}" style="cursor:pointer"><td style="width:1%; white-space:nowrap"><b>${esc(x.id)}</b></td><td style="width:1%">${statusTag(r ? r.verdict : "not run")}</td>`
+      + `<td>${esc(x.description || "")}${r && r.verdict !== "pass" && why(r) ? `<div class="why">${esc(why(r))}</div>` : ""}</td><td style="width:1%; white-space:nowrap; color:var(--muted)">${esc(a.by || "")}</td><td style="width:1%; white-space:nowrap; color:var(--muted)">${r ? esc(whenAgo(r.finishedAt)) : ""}</td></tr>`; };
+  document.getElementById("dash-failing").innerHTML = failing.length ? `<table class="sess-table lab-rows">${failing.map(row).join("")}</table>` : `<p class="help" style="margin:0">Nothing is failing${scenarios.length ? "" : ": there are no scenarios yet"}.</p>`;
+  document.getElementById("dash-all").innerHTML = scenarios.length ? `<table class="sess-table lab-rows">${scenarios.map(row).join("")}</table>`
+    : `<p class="help" style="margin:0">No scenarios yet. <a href="#lab/scenarios">Write the first</a>.</p>`;
+  document.getElementById("dash-runs").innerHTML = runs.length ? `<table class="sess-table lab-rows">${runs.slice(0, 12).map((t) => `<tr onclick="openLab('testruns', '${esc(t.id)}')" style="cursor:pointer"><td style="width:1%; white-space:nowrap"><b>${esc(t.id)}</b></td><td style="width:1%">${statusTag(t.verdict || t.status)}</td><td>${esc(t.agent)} · ${(t.summary || {}).pass ?? 0} of ${(t.summary || {}).total ?? 0} passed${t.label ? " · " + esc(t.label) : ""}</td><td style="width:1%; white-space:nowrap; color:var(--muted)">${esc(whenAgo(t.startedAt))}</td></tr>`).join("")}</table>`
+    : `<p class="help" style="margin:0">None yet. Choose an agent above and press Run all on this agent.</p>`;
+}
+async function dashRunAll() {
+  const agent = document.getElementById("dash-agent").value;
+  if (!agent) return note("dash-note", "Save an agent first, under Agents.", true);
+  const r = await REST("POST", "/api/testruns", { agent, all: true, label: "from the dashboard" });
+  note("dash-note", r.ok ? `Running every scenario on ${agent}. It is listed under Test runs; this page fills in as results come.` : said(r.body), !r.ok);
+  // Filled in as results come, for as long as a run of every scenario could take; not otherwise.
+  if (r.ok) DASH.until = Date.now() + 10 * 60 * 1000;
+}
+
 
 // Where the two route cards belong right now, and which of them.
 //
@@ -1125,10 +1368,12 @@ function placeCards() {
   // plan or upstream form under every one of seventy models read as seventy
   // places to change one setting.
   const route = onModel ? (CFG.routing.models[PICKED] || "") : CFG.routing.default;
-  const home = document.getElementById(onModel ? "cfg-slot" : "cfg-home");
+  const own = { chatgpt: "chatgpt", anthropic: "anthropic", upstream: "relay" }[VIEW];
+  const home = document.getElementById(own ? "cfg-own-" + VIEW : onModel ? "cfg-slot" : "cfg-home");
   for (const [id, wants] of [["chatgptcard", "chatgpt"], ["anthropiccard", "anthropic"], ["upstreamcard", "relay"]]) {
     const card = document.getElementById(id);
-    const shown = !!home && route === wants && (onModel || VIEW === "routing");
+    // On its own Settings page a connection is always shown; elsewhere only for the route being looked at.
+    const shown = !!home && (own ? own === wants : route === wants && (onModel || VIEW === "routing"));
     if (shown && card.parentNode !== home) home.appendChild(card);
     if (!shown && card.parentNode !== document.getElementById("cfg-park")) document.getElementById("cfg-park").appendChild(card);
   }
@@ -1382,6 +1627,10 @@ const copyText = (t) => navigator.clipboard && navigator.clipboard.writeText(t);
 
 // A page that re-reads its data while it is on screen, and stops when it is not.
 const PAGES = {};
+PAGES.about = { enter: renderAbout };
+PAGES.capture = { enter: () => stLoad() };
+PAGES.connect = { enter: () => renderOverview() };
+PAGES.dashboard = { enter: dashLoad, poll: () => { if (DASH.until && Date.now() < DASH.until) dashLoad(); } };
 let POLL = null;
 function pageEntered(v) {
   if (POLL) { clearInterval(POLL); POLL = null; }
@@ -1705,14 +1954,15 @@ PAGES.faults = { enter: ftLoad, poll: ftLoad };
 let EV = { tab: "live", picked: null, last: "" };
 
 function evTab(t) {
+  // Capture settings are a setting: they live under Settings now. An old link still finds them.
+  if (t === "settings") return show("capture");
   EV.tab = t;
-  for (const name of ["live", "requests", "assertions", "settings"]) {
+  for (const name of ["live", "requests", "assertions"]) {
     document.getElementById("ev-" + name).hidden = name !== t;
     document.getElementById("ev-tab-" + name).setAttribute("aria-pressed", name === t);
   }
   if (t === "requests") evRefresh(true);
   if (t === "assertions") asLoad();
-  if (t === "settings") stLoad();
 }
 const evFilters = () => {
   const q = new URLSearchParams();
@@ -1943,6 +2193,7 @@ const LAB = {
     blank: { id: "", system: "", connection: {} }, newLabel: "Add agent", opened: () => agentLoad(),
     form: () => agentForm() },
   scenarios: { title: "Scenarios", group: "cases", help: "One test of an agent: which agent, what the user says, what the model says, and what must hold afterwards.", list: "/api/scenarios", key: "scenarios", id: "id",
+    status: (r) => (LASTRES[r.id] || {}).verdict || "not run",
     cols: (r) => `${(r.uses || []).length ? "on " + r.uses.join(", ") : r.several ? "several agents" : r.driver || ""} · ${r.checks} check(s)`, one: (id) => "/api/scenarios/" + id, oneKey: "scenario", put: (id) => "/api/scenarios/" + id, del: (id) => "/api/scenarios/" + id,
     actions: [["Run", (id) => ["POST", "/api/scenarios/" + id + "/run", RUNON ? { agent: RUNON } : {}], "primary"], ["Check it is valid", (id, doc) => ["POST", "/api/scenarios/validate", { scenario: doc }]]], runOn: true,
     blank: { id: "my-scenario", agent: { name: "agent", driver: "http", url: "http://localhost:9000/chat", body: { input: "{{message}}" }, reply: "reply" }, model: { rules: [] }, turns: [{ say: "hello", expect: { contains: "hi" } }], checks: [] },
@@ -2024,7 +2275,7 @@ function labTabs() {
 }
 function labClose() { LABID = null; LABNEW = false; LABDOC = null; LABRAW = {}; document.getElementById("lab-editor").hidden = true; document.getElementById("lab-editor").classList.remove("full"); document.getElementById("lab-out-card").hidden = true; }
 // The list is emptied at once: until the new area's rows arrive, the old area's would be shown under the new heading.
-function labSelect(k) { LABK = k; labClose(); labTabs(); document.getElementById("lab-list").innerHTML = ""; document.getElementById("lab-extra").innerHTML = ""; labLoad(); }
+function labSelect(k) { show("lab/" + k); }
 
 async function labRef() {
   const get = async (p) => { const r = await REST("GET", p); return r.ok ? r.body : {}; };
@@ -2045,6 +2296,10 @@ async function labLoad() {
   const a = LAB[LABK];
   document.getElementById("lab-title").textContent = a.title;
   document.getElementById("lab-help").textContent = a.help;
+  document.getElementById("lab-h1").textContent = a.title;
+  document.getElementById("lab-h1p").textContent = a.help;
+  // A scenario's last result is shown beside it, on any agent.
+  if (LABK === "scenarios") { const rr = await REST("GET", "/api/results"); LASTRES = rr.ok ? latestByScenario(rr.body.results || []) : {}; }
   document.getElementById("lab-new").hidden = !!a.readonly; document.getElementById("lab-new").textContent = a.newLabel || "New";
   document.getElementById("lab-extra").innerHTML = a.extra ? a.extra() : "";
   const r = await REST("GET", a.list);
@@ -2054,7 +2309,20 @@ async function labLoad() {
   el.innerHTML = LABROWS.length
     ? `<table class="sess-table lab-rows">${LABROWS.map((row, i) => `<tr class="${row[a.id] === LABID ? "on" : ""}" onclick="labOpen(${i})"><td style="width:1%; white-space:nowrap"><b>${esc(row[a.id])}</b></td><td style="width:1%">${a.status ? statusTag(a.status(row)) : ""}</td><td>${esc(a.cols(row))}</td></tr>`).join("")}</table>`
     : `<p class="help" style="margin:0">Nothing here yet.${a.readonly ? "" : " Press New to add the first."}</p>`;
+  // Opened from somewhere else — the dashboard, say — with one row in mind.
+  if (LABOPEN && LABOPEN.area === LABK) {
+    const i = LABROWS.findIndex((row) => row[a.id] === LABOPEN.id);
+    LABOPEN = null;
+    if (i >= 0) labOpen(i);
+  }
 }
+let LASTRES = {}, LABOPEN = null;
+function latestByScenario(rows) {
+  const out = {};
+  for (const r of rows) if (r.scenario && (!out[r.scenario] || (r.finishedAt || 0) > (out[r.scenario].finishedAt || 0))) out[r.scenario] = r;
+  return out;
+}
+function openLab(area, id) { LABOPEN = { area, id }; show("lab/" + area); }
 async function labOpen(i) {
   const a = LAB[LABK], row = LABROWS[i];
   LABID = row[a.id]; LABNEW = false;
@@ -3848,7 +4116,7 @@ const runOne = (id) => execute({ testIds: [id] });
 const runPlan = (id) => execute({ planId: id });
 
 show((location.hash || "").slice(1) || "overview");
-window.addEventListener("hashchange", () => { const v = (location.hash || "").slice(1); if (v && v !== VIEW) show(v); });
+window.addEventListener("hashchange", () => { const v = (location.hash || "").slice(1); if (v && v !== VIEWKEY) show(v); });
 load();
 setInterval(load, 1500);
 </script>

@@ -41,7 +41,7 @@ curl localhost:8099/openai/v1/chat/completions \
 ```
 
 Then open the console at `http://localhost:8099/ui`. The request is under
-**Requests**, with the rule that answered it.
+**Traffic**, with the rule that answered it.
 
 ## What you can do with it
 
@@ -98,9 +98,10 @@ bin/llmsim run scenario.json --junit out.xml       # exit 0 pass, 1 fail, 2 coul
 
 ## The console
 
-One page at `/ui`, with a screen per job: **Overview**, **Routing**, **Models**,
-**Answer rules**, **Faults**, **Requests**, **Chat**, **Record & replay**,
-**Functional tests** and **Agent tests**. Everything on it is the same HTTP API a
+One page at `/ui`, in three spaces: **Simulate a model** (playground, answer rules,
+models, faults, record and replay, traffic, model checks), **Test agents** (a dashboard
+of what passes and fails, agents, scenarios, runs, stand-ins and judging) and
+**Settings** (where answers come from, model connections, clients, capture and storage). Everything on it is the same HTTP API a
 script uses.
 
 ## Documentation

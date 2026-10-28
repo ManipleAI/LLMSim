@@ -180,7 +180,7 @@ def case_every_console_screen_can_be_reached_and_none_is_a_dead_end(sim):
     import re
     page = open(os.path.join(ROOT, "ui.html")).read()
     # The menu is three spaces; every page is a button in one of them, and Home is first.
-    nav = re.findall(r'<button (?:class="\w+" )?data-view="([a-z/]+)" onclick="show\(\'([a-z/]+)\'\)"', page)
+    nav = re.findall(r'<button (?:class="\w+" )?data-view="([a-z0-9/]+)" onclick="show\(\'([a-z0-9/]+)\'\)"', page)
     assert nav and all(a == b for a, b in nav), "a navigation entry opens a screen other than its own: %s" % nav
     linked = [a for a, _b in nav]
     assert len(linked) == len(set(linked)), "a screen is in the navigation twice: %s" % linked
@@ -190,7 +190,7 @@ def case_every_console_screen_can_be_reached_and_none_is_a_dead_end(sim):
     assert re.findall(r'<button data-space="(\w+)" onclick="openSpace', page) == spaces, "a space has no button, or a button no space"
     for space in spaces:
         body = page.split('<div class="navspace" data-space="%s"' % space)[1].split('<div class="navspace"')[0].split("</nav>")[0]
-        assert re.search(r'data-view="[a-z/]+"', body), "the %s space has no pages" % space
+        assert re.search(r'data-view="[a-z0-9/]+"', body), "the %s space has no pages" % space
     views = re.findall(r'<section class="view" id="v-([a-z]+)"', page)
     plain = [v for v in linked if "/" not in v]
     # The agent-tests view is reached through its areas, #lab/<area>; every other screen is a menu entry of its own.
@@ -200,7 +200,7 @@ def case_every_console_screen_can_be_reached_and_none_is_a_dead_end(sim):
 
     # Every job Home offers goes to a page in the menu, and every space is offered.
     home = page.split("const HOME = [")[1].split("\n];")[0]
-    jobs = re.findall(r'\["([a-z/]+)", "[^"]+", "[^"]+"\]', home)
+    jobs = re.findall(r'\["([a-z0-9/]+)", "[^"]+", "[^"]+"\]', home)
     assert jobs and all(j in linked for j in jobs), "Home offers a page the menu does not have: %s" % [j for j in jobs if j not in linked]
     assert re.findall(r'\n  \["(\w+)", "[^"]+", "[^"]+",\n', home) == spaces, "Home does not offer every space"
 

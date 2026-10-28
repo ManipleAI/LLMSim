@@ -26,7 +26,7 @@
     --green:#2a6f4e; --green-tint:#e4f0e9;
     --chrome:#14181f; --chrome-fg:#d6d0c6; --chrome-dim:#7d8590;
     --mono: ui-monospace, Menlo, monospace;
-    --nav: 216px; --bar:36px;
+    --nav: 264px; --bar:36px;
   }
   * { box-sizing:border-box; }
   html, body { height:100%; }
@@ -41,32 +41,33 @@
     width:var(--nav); flex:0 0 var(--nav); background:var(--chrome); color:var(--chrome-fg);
     display:flex; flex-direction:column; height:100vh; position:sticky; top:0;
   }
-  .brand { display:flex; align-items:center; gap:9px; padding:18px 18px 16px; }
-  .brand b { color:#fff; font-size:14.5px; letter-spacing:-.01em; }
-  .brand span { color:var(--chrome-dim); font-size:11px; display:block; margin-top:1px; }
+  .brand { display:flex; align-items:center; gap:11px; padding:20px 20px 16px; }
+  .brand b { color:#fff; font-size:16px; letter-spacing:-.01em; }
+  .brand span { color:var(--chrome-dim); font-size:12px; display:block; margin-top:1px; }
+  /* A roomy menu: full-size labels, an icon on every page, rounded rows. */
   nav .group {
-    font:600 9.5px/1 var(--mono); letter-spacing:.16em; text-transform:uppercase;
-    color:#5c646e; padding:14px 18px 7px;
+    font:600 12px/1 inherit; color:#7d8590; padding:18px 22px 8px;
   }
   nav button {
-    display:flex; align-items:center; gap:9px; width:100%; text-align:left;
-    background:none; border:0; color:var(--chrome-fg); cursor:pointer;
-    padding:8px 18px; font:500 13px/1.3 inherit;
+    display:flex; align-items:center; gap:11px; width:calc(100% - 20px); margin:1px 10px; text-align:left;
+    background:none; border:0; border-radius:8px; color:var(--chrome-fg); cursor:pointer;
+    padding:9px 12px; font:500 14.5px/1.3 inherit; min-height:38px;
   }
+  nav button > svg { flex:0 0 18px; width:18px; height:18px; opacity:.75; }
   nav button:hover { background:#1c212a; color:#fff; }
-  nav button[aria-current=true] { background:#222833; color:#fff; box-shadow:inset 2px 0 0 var(--primary); }
+  nav button:hover > svg, nav button[aria-current=true] > svg { opacity:1; }
+  nav button[aria-current=true] { background:#262d39; color:#fff; box-shadow:inset 3px 0 0 var(--primary); }
   nav button .n {
-    margin-left:auto; font:600 10px/1 var(--mono); color:var(--chrome-dim);
-    background:#242a34; padding:3px 6px; border-radius:4px;
+    margin-left:auto; font:600 11px/1 var(--mono); color:var(--chrome-dim);
+    background:#242a34; padding:4px 7px; border-radius:5px;
   }
   nav button[aria-current=true] .n { color:#fff; }
   /* Three spaces, by what somebody came to do. The menu below shows the pages of one. */
-  nav .spaces { display:flex; flex-direction:column; gap:2px; margin:4px 10px 6px; padding:4px; background:#14181f; border-radius:8px; }
-  nav .spaces button { padding:7px 10px; border-radius:6px; font-size:12.5px; gap:8px; }
-  nav .spaces button svg { flex:0 0 auto; opacity:.8; }
+  nav .spaces { display:flex; flex-direction:column; gap:3px; margin:6px 10px 4px; padding:5px; background:#0f1217; border:1px solid #222833; border-radius:10px; }
+  nav .spaces button { width:100%; margin:0; padding:10px 12px; border-radius:7px; font-size:15px; font-weight:600; }
   nav .spaces button[aria-pressed=true] { background:#2a313d; color:#fff; box-shadow:inset 2px 0 0 var(--primary); }
   nav .navbody { flex:1; min-height:0; overflow-y:auto; padding-bottom:8px; }
-  nav .home { margin-top:2px; }
+  nav .home { margin-top:2px; margin-bottom:4px; }
   /* Where answers come from, on every page: it changes what every other page does. */
   #statusbar { position:sticky; top:0; z-index:6; height:var(--bar); display:flex; align-items:center; gap:8px; padding:0 28px;
     background:var(--surface); border-bottom:1px solid var(--border); font-size:12px; color:var(--muted); }
@@ -87,7 +88,7 @@
   .home-space .open { margin-top:auto; align-self:flex-start; }
   .dash-row td { vertical-align:top; }
   .dash-row .why { color:var(--muted); font-size:12px; }
-  nav .foot { margin-top:auto; padding:14px 18px 16px; border-top:1px solid #222833; font-size:11px; color:var(--chrome-dim); }
+  nav .foot { margin-top:auto; padding:14px 22px 16px; border-top:1px solid #222833; font-size:12.5px; color:var(--chrome-dim); }
   nav .foot .status { display:flex; align-items:center; gap:7px; }
   .dot { width:7px; height:7px; border-radius:50%; background:var(--green); flex:0 0 7px; }
   .dot.off { background:#6b3b31; }
@@ -398,62 +399,62 @@
     <div><b>LLMSim</b><span>the vendors' APIs, simulated</span></div>
   </div>
 
-  <button class="home" data-view="overview" onclick="show('overview')"><span>Home</span></button>
+  <button class="home" data-view="overview" onclick="show('overview')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/></svg><span>Home</span></button>
   <!-- Three spaces, by what somebody came to do: simulate a model, test agents that use
        one, or set up where answers come from. Each shows only its own pages. -->
   <div class="spaces" role="group" aria-label="Space">
-    <button data-space="simulate" onclick="openSpace('simulate')" aria-pressed="false"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 5h16v11H8l-4 4z"/></svg><span>Simulate a model</span></button>
-    <button data-space="test" onclick="openSpace('test')" aria-pressed="false"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 7l3 3 5-6M4 17l3 3 5-6M14 8h6M14 18h6"/></svg><span>Test agents</span></button>
-    <button data-space="settings" onclick="openSpace('settings')" aria-pressed="false"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg><span>Settings</span></button>
+    <button data-space="simulate" onclick="openSpace('simulate')" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H8l-4 4z"/></svg><span>Simulate a model</span></button>
+    <button data-space="test" onclick="openSpace('test')" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7l3 3 5-6M4 17l3 3 5-6M14 8h6M14 18h6"/></svg><span>Test agents</span></button>
+    <button data-space="settings" onclick="openSpace('settings')" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg><span>Settings</span></button>
   </div>
   <div class="navbody">
   <div class="navspace" data-space="simulate">
   <div class="group">Answer</div>
-  <button data-view="chat" onclick="show('chat')"><span>Playground</span></button>
-  <button data-view="behaviors" onclick="show('behaviors')"><span>Answer rules</span></button>
-  <button data-view="models" onclick="show('models')"><span>Models</span><span class="n" id="n-models"></span></button>
-  <button data-view="faults" onclick="show('faults')"><span>Faults</span><span class="n" id="n-faults"></span></button>
+  <button data-view="chat" onclick="show('chat')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H8l-4 4z"/></svg><span>Playground</span></button>
+  <button data-view="behaviors" onclick="show('behaviors')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h7"/><path d="M17 15l2 2 3-4"/></svg><span>Answer rules</span></button>
+  <button data-view="models" onclick="show('models')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2"/><path d="M9 9h6v6H9zM9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg><span>Models</span><span class="n" id="n-models"></span></button>
+  <button data-view="faults" onclick="show('faults')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l10 18H2z"/><path d="M12 10v4M12 17.5v.5"/></svg><span>Faults</span><span class="n" id="n-faults"></span></button>
   <div class="group">Record</div>
-  <button data-view="sessions" onclick="show('sessions')"><span>Record and replay</span><span class="n" id="n-sessions"></span></button>
+  <button data-view="sessions" onclick="show('sessions')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5" fill="currentColor"/></svg><span>Record and replay</span><span class="n" id="n-sessions"></span></button>
   <div class="group">Look</div>
-  <button data-view="evidence" onclick="show('evidence')"><span>Traffic</span><span class="n" id="n-logs"></span></button>
-  <button data-view="tests" onclick="show('tests')"><span>Model checks</span><span class="n" id="n-tests"></span></button>
+  <button data-view="evidence" onclick="show('evidence')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-7 4 14 3-7h4"/></svg><span>Traffic</span><span class="n" id="n-logs"></span></button>
+  <button data-view="tests" onclick="show('tests')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3h6M10 3v6l-5 10a1.5 1.5 0 0 0 1.4 2h11.2A1.5 1.5 0 0 0 19 19l-5-10V3"/></svg><span>Model checks</span><span class="n" id="n-tests"></span></button>
   </div>
   <div class="navspace" data-space="test" hidden>
-  <button data-view="dashboard" onclick="show('dashboard')"><span>Dashboard</span></button>
+  <button data-view="dashboard" onclick="show('dashboard')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg><span>Dashboard</span></button>
   <div class="group">Define</div>
-  <button data-view="lab/agents" onclick="show('lab/agents')"><span>Agents</span></button>
-  <button data-view="lab/scenarios" onclick="show('lab/scenarios')"><span>Scenarios</span></button>
-  <button data-view="lab/datasets" onclick="show('lab/datasets')"><span>Datasets</span></button>
+  <button data-view="lab/agents" onclick="show('lab/agents')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="7" width="16" height="12" rx="3"/><path d="M12 3v4M9 12v1M15 12v1M9 16h6"/></svg><span>Agents</span></button>
+  <button data-view="lab/scenarios" onclick="show('lab/scenarios')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"/><path d="M9 11h7M9 15h7M9 7h3"/></svg><span>Scenarios</span></button>
+  <button data-view="lab/datasets" onclick="show('lab/datasets')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5.5" rx="7" ry="2.5"/><path d="M5 5.5v13c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5v-13M5 12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5"/></svg><span>Datasets</span></button>
   <div class="group">Run</div>
-  <button data-view="lab/testruns" onclick="show('lab/testruns')"><span>Test runs</span></button>
-  <button data-view="lab/results" onclick="show('lab/results')"><span>Results</span></button>
-  <button data-view="lab/experiments" onclick="show('lab/experiments')"><span>Experiments</span></button>
+  <button data-view="lab/testruns" onclick="show('lab/testruns')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4l12 8-12 8z"/></svg><span>Test runs</span></button>
+  <button data-view="lab/results" onclick="show('lab/results')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg><span>Results</span></button>
+  <button data-view="lab/experiments" onclick="show('lab/experiments')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3v6l-4 7a3 3 0 0 0 2.6 5h4M17 3v6l4 7a3 3 0 0 1-2.6 5h-4M5 3h4M15 3h4"/></svg><span>Experiments</span></button>
   <div class="group">Stand-ins</div>
-  <button data-view="lab/mcp" onclick="show('lab/mcp')"><span>Mock tool servers</span></button>
-  <button data-view="lab/mocks" onclick="show('lab/mocks')"><span>Mock REST backends</span></button>
-  <button data-view="lab/a2a" onclick="show('lab/a2a')"><span>Stub agents</span></button>
-  <button data-view="lab/a2aproxies" onclick="show('lab/a2aproxies')"><span>Agent proxies</span></button>
-  <button data-view="lab/kitfaults" onclick="show('lab/kitfaults')"><span>Tool and peer faults</span></button>
+  <button data-view="lab/mcp" onclick="show('lab/mcp')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.4-.6-.6-2.4z"/></svg><span>Mock tool servers</span></button>
+  <button data-view="lab/mocks" onclick="show('lab/mocks')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><path d="M7 7.5h.5M7 16.5h.5"/></svg><span>Mock REST backends</span></button>
+  <button data-view="lab/a2a" onclick="show('lab/a2a')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="12" r="3"/><circle cx="18" cy="12" r="3"/><path d="M9 12h6"/></svg><span>Stub agents</span></button>
+  <button data-view="lab/a2aproxies" onclick="show('lab/a2aproxies')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5" cy="12" r="2.5"/><circle cx="19" cy="12" r="2.5"/><rect x="9.5" y="9.5" width="5" height="5" rx="1"/><path d="M7.5 12h2M14.5 12h2"/></svg><span>Agent proxies</span></button>
+  <button data-view="lab/kitfaults" onclick="show('lab/kitfaults')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></svg><span>Tool and peer faults</span></button>
   <div class="group">Judge</div>
-  <button data-view="lab/judges" onclick="show('lab/judges')"><span>Judges</span></button>
-  <button data-view="lab/reviews" onclick="show('lab/reviews')"><span>Review queue</span></button>
-  <button data-view="lab/variations" onclick="show('lab/variations')"><span>Variations</span></button>
+  <button data-view="lab/judges" onclick="show('lab/judges')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v18M7 21h10M5 7h14M5 7l-3 7a3 3 0 0 0 6 0zM19 7l-3 7a3 3 0 0 0 6 0z"/></svg><span>Judges</span></button>
+  <button data-view="lab/reviews" onclick="show('lab/reviews')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg><span>Review queue</span></button>
+  <button data-view="lab/variations" onclick="show('lab/variations')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3v12M18 9v12M6 15a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM18 3a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM6 15c0-4 12-2 12-6"/></svg><span>Variations</span></button>
   </div>
   <div class="navspace" data-space="settings" hidden>
   <div class="group">Models</div>
-  <button data-view="routing" onclick="show('routing')"><span>Where answers come from</span><span class="n" id="n-routing"></span></button>
-  <button data-view="chatgpt" onclick="show('chatgpt')"><span>ChatGPT plan</span></button>
-  <button data-view="anthropic" onclick="show('anthropic')"><span>Anthropic API</span></button>
-  <button data-view="upstream" onclick="show('upstream')"><span>Upstream</span></button>
+  <button data-view="routing" onclick="show('routing')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3v6a6 6 0 0 0 6 6h6M15 12l3 3-3 3M6 21v-3"/></svg><span>Where answers come from</span><span class="n" id="n-routing"></span></button>
+  <button data-view="chatgpt" onclick="show('chatgpt')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span>ChatGPT plan</span></button>
+  <button data-view="anthropic" onclick="show('anthropic')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 7l-6 14M9 7l6 14M7 3h10"/></svg><span>Anthropic API</span></button>
+  <button data-view="upstream" onclick="show('upstream')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20V5M6 11l6-6 6 6"/></svg><span>Upstream</span></button>
   <div class="group">Clients</div>
-  <button data-view="connect" onclick="show('connect')"><span>Connect a client</span></button>
-  <button data-view="capture" onclick="show('capture')"><span>Capture and identity</span></button>
+  <button data-view="connect" onclick="show('connect')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 7V3M15 7V3M7 7h10v4a5 5 0 0 1-10 0zM12 16v5"/></svg><span>Connect a client</span></button>
+  <button data-view="capture" onclick="show('capture')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><circle cx="12" cy="12" r="3"/></svg><span>Capture and identity</span></button>
   <div class="group">Secrets</div>
-  <button data-view="lab/credentials" onclick="show('lab/credentials')"><span>Credentials</span></button>
+  <button data-view="lab/credentials" onclick="show('lab/credentials')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l3 3M15 8l2 2"/></svg><span>Credentials</span></button>
   <div class="group">This LLMSim</div>
-  <button data-view="about" onclick="show('about')"><span>Storage and status</span></button>
-  <button onclick="window.open(api('/guide'), '_blank', 'noopener')"><span>Documentation</span><span class="n">↗</span></button>
+  <button data-view="about" onclick="show('about')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg><span>Storage and status</span></button>
+  <button onclick="window.open(api('/guide'), '_blank', 'noopener')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h6a3 3 0 0 1 3 3v13a2 2 0 0 0-2-2H4zM20 4h-6a3 3 0 0 0-3 3"/><path d="M20 4v14h-7"/></svg><span>Documentation</span><span class="n">↗</span></button>
   </div>
   </div>
   <div class="foot">

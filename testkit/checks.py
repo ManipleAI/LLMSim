@@ -57,20 +57,28 @@ class RunCtx:
         return r[-1] if r else None
 
     def requested_calls(self, agent=None):
+        """The tool calls the model asked for. A model call known only from an OpenTelemetry span
+        does not say which tools it asked for; the tool spans of that agent, which say what was
+        run, stand in for them."""
         out = []
         for e in self.of("model_call", agent=agent):
             for c in (e["data"].get("response") or {}).get("toolCalls") or []:
                 out.append({"tool": c.get("name"), "arguments": c.get("input") or {}, "agent": e["agent"], "event": e["id"]})
-        return out
+        traced = {e["agent"] for e in self.of("model_call", agent=agent) if e["data"].get("via") == "otel"}
+        out += [c for c in self.tool_calls(agent, "agent") if c["via"] == "otel" and c["agent"] in traced]
+        return sorted(out, key=lambda c: c["event"])
 
     def tool_calls(self, agent=None, source="served"):
         """Tool calls on the timeline. "served": what LLMSim's mocks, peers and traces received.
         "agent": what an agent's own tools did, as it handed the results back to its model.
         Two layers of one thing — an agent's refund tool that calls a mock backend is both —
         so they are kept apart, and "all" is both."""
-        keep = {"served": lambda e: e["data"].get("source") != "agent", "agent": lambda e: e["data"].get("source") == "agent"}.get(source, lambda e: True)
+        # a tool span is the agent saying what its own tool did, as surely as a result handed back to its model
+        # is; it has always counted as received (source "tools") and counts as the agent's too
+        keep = {"served": lambda e: e["data"].get("source") != "agent",
+                "agent": lambda e: e["data"].get("source") == "agent" or e["data"].get("via") == "otel"}.get(source, lambda e: True)
         return [{"tool": e["data"].get("tool"), "arguments": e["data"].get("arguments") or {}, "agent": e["agent"], "event": e["id"],
-                 "error": e["data"].get("error")} for e in self.of("tool_call", agent=agent) if keep(e)]
+                 "error": e["data"].get("error"), "via": e["data"].get("via")} for e in self.of("tool_call", agent=agent) if keep(e)]
 
     def usage(self, agent=None):
         total = {"input": 0, "output": 0, "cacheRead": 0, "reasoning": 0}

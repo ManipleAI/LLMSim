@@ -68,6 +68,8 @@ except ImportError:  # pragma: no cover — the server must run without its kit
         @staticmethod
         def on_capture(_cap): pass
         @staticmethod
+        def capture_started(_cap): pass
+        @staticmethod
         def run_sub(*_args): return None
         @staticmethod
         def run_rules(): return []
@@ -6276,6 +6278,19 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(404, {"error": "No such route: PUT " + path})
         return self.session_api("PUT", path, body, urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query))
 
+    def do_PATCH(self):
+        # Only the test kit's own addresses take PATCH: a mock REST backend's routes can be PATCH
+        # routes, and an agent's call to one must reach it rather than the server's default 501.
+        self._begin()
+        prefix, path = self.split_path()
+        self.provider = self.resolve_provider(prefix, self.presented_key(), path) or "openai"
+        body = self._json_body()
+        if body is None:
+            return self.send_json(400, {"ok": False, "message": "The body is not valid JSON."})
+        if testkit.owns(path):
+            return self.kit_route("PATCH", path, json.dumps(body).encode())
+        return self.send_json(405, {"error": "PATCH is taken only by a mock backend: " + path})
+
     def do_DELETE(self):
         self._begin()
         prefix, path = self.split_path()
@@ -6843,6 +6858,7 @@ class Handler(BaseHTTPRequestHandler):
         """Answer one request, and keep what it was and what answered it."""
         model = body.get("model") or (MODELS[self.provider][0])
         self.cap = capture_begin(self, body, shape, model, bool(body.get("stream")))
+        testkit.capture_started(self.cap)
         try:
             with testkit.model_guard(self, body, shape):      # a test may have put this request in an order
                 return self._handle_chat(body, shape)

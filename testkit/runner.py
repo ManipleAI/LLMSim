@@ -158,8 +158,9 @@ def run_scenario(scenario, options=None, base_host="localhost:8099"):
                 d = drivers.make(part, dctx)
                 d.start()
                 driver.append((d, part))
-            if scenario.get("ordering") and options.get("order"):
-                bad = ordering.install(run, scenario["ordering"], options["order"])
+            sequence = options.get("order") or (scenario.get("ordering") or {}).get("order")
+            if scenario.get("ordering") and sequence:
+                bad = ordering.install(run, scenario["ordering"], sequence)
                 if bad:
                     raise ValueError("; ".join(bad))
                 ctx.cleanup.append(lambda: result.setdefault("model", {}).__setitem__("orderTimedOut", ordering.remove(run)))
@@ -175,6 +176,7 @@ def run_scenario(scenario, options=None, base_host="localhost:8099"):
                 d.end()
             except Exception:  # noqa: BLE001
                 pass
+        timeline.settle(run)              # the agent's last model call may still be on its way to the timeline
         _finish_model(ctx, result)
         for action in scenario.get("teardown") or []:
             try:

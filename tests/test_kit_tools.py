@@ -249,6 +249,7 @@ def case_a_rest_backend_is_mocked_with_a_contract(sim):
 def case_an_agent_whose_tools_are_rest_calls_is_tested_through_a_stateful_backend(sim):
     crm = {"id": "crm-run", "routes": [
         {"method": "GET", "path": "/orders/{id}", "state": {"op": "get", "collection": "orders", "key": "{{params.id}}"}},
+        {"method": "PATCH", "path": "/orders/{id}", "state": {"op": "update", "collection": "orders", "key": "{{params.id}}", "set": {"note": "{{body.note}}"}}},
         {"method": "POST", "path": "/orders/{id}/refund", "state": {"op": "update", "collection": "orders", "key": "{{params.id}}", "set": {"status": "refunded"}}}]}
     refund = {"name": "http-refund", "when": {"contains": "refund order 1182"}, "turns": [
         {"text": "On it.", "tool_calls": [{"name": "refund_order", "input": {"id": 1182}}]}, {"text": "Order 1182 is refunded."}]}
@@ -259,6 +260,15 @@ def case_an_agent_whose_tools_are_rest_calls_is_tested_through_a_stateful_backen
                      {"type": "path", "source": "tools", "mode": "strict", "args": "ignore", "expected": [{"tool": "POST /orders/{id}/refund"}]}]}
     out = run(sim, sc)
     assert out["verdict"] == "pass", out["checks"]
+    # a PATCH route is reached: the server answers PATCH for the kit's own addresses, and only those
+    sim.api("PUT", "/api/mocks/crm-run", crm)
+    sim.api("PUT", "/api/runs/patch1/state", {"orders": ORDERS})
+    s, _, t = sim.call("PATCH", "/run/patch1/agent/a/mock/crm-run/orders/7", {"note": "gift"})
+    assert s == 200 and json.loads(t)["note"] == "gift", (s, t)
+    assert sim.api("GET", "/api/runs/patch1/state")[1]["state"]["orders"]["7"]["note"] == "gift"
+    assert sim.call("PATCH", "/api/mocks/crm-run", {})[0] == 405
+    sim.api("DELETE", "/api/runs/patch1")
+    sim.api("DELETE", "/api/mocks/crm-run")
     assert "crm-run" not in [b["id"] for b in sim.api("GET", "/api/mocks")[1]["backends"]]
     assert sim.call("GET", "/run/%s/agent/support/mock/crm-run/orders/1182" % out["run"])[0] == 404, "the run's backend outlived it"
     # an agent that calls a route the backend does not have is told so, and the run says what it did

@@ -25,6 +25,7 @@ asked for it.
 
 import json
 import re
+import threading
 
 from . import core
 from .store import store
@@ -48,9 +49,52 @@ def emit(run, kind, agent="", parent=None, data=None, at=None):
         return None
 
 
+# A model call reaches the timeline after its answer has gone back to the agent, so an agent can
+# answer its user, and the run be judged, before its last model call is recorded. The runner
+# waits for the run's calls still being recorded before it judges.
+_IN_FLIGHT, _SETTLED = {}, threading.Condition()
+
+
+def _run_of(cap):
+    """The run a capture is part of; there is no capture at all when capturing is off."""
+    return ((cap.get("meta") or {}).get("identity") or {}).get("run") if isinstance(cap, dict) else None
+
+
+def started(cap):
+    run = _run_of(cap)
+    if run:
+        with _SETTLED:
+            _IN_FLIGHT[run] = _IN_FLIGHT.get(run, 0) + 1
+
+
+def _finished(cap):
+    run = _run_of(cap)
+    if run:
+        with _SETTLED:
+            left = _IN_FLIGHT.get(run, 0) - 1
+            if left > 0:
+                _IN_FLIGHT[run] = left
+            else:
+                _IN_FLIGHT.pop(run, None)
+            _SETTLED.notify_all()
+
+
+def settle(run, seconds=5.0):
+    """Wait, at most this long, until no model call of the run is still being recorded. True if none is."""
+    with _SETTLED:
+        return _SETTLED.wait_for(lambda: not _IN_FLIGHT.get(run), timeout=seconds)
+
+
 def on_capture(cap):
     """A model call, as the server captured it. Called for every capture; only a
     request that names a run is a part of one, unless recordAll says every request is."""
+    try:
+        _record(cap)
+    finally:
+        _finished(cap)
+
+
+def _record(cap):
     meta = cap["meta"]
     ident = meta.get("identity") or {}
     run = ident.get("run")

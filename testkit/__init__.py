@@ -82,6 +82,11 @@ def on_capture(cap):
     timeline.on_capture(cap)
 
 
+def capture_started(cap):
+    from . import timeline
+    timeline.started(cap)
+
+
 def store_runs():
     from . import store
     return store.store().runs()

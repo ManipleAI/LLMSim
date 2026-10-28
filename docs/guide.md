@@ -631,7 +631,7 @@ Credentials are kept apart from scenarios, in an owner-only file. A scenario nam
 | `state` | A record has these fields, is untouched or is gone; only these records changed; nothing was deleted |
 | `leak` | A secret, or an injected instruction's marker, turned up in a reply, a tool call or a message to a peer |
 | `routing`, `handoff` | The right agent got the task; what was passed on carried what it must and nothing it must not |
-| `authority` | An agent used only the tools and records it may, also when a peer asked it to |
+| `authority` | An agent used only the tools and records it may. `viaPeer` judges only what it did after a peer first said something to it, a request or an answer to its own question |
 | `termination` | No loop, no ping-pong, bounded depth and chatter |
 | `duplication` | No two agents did the same work, or wrote the same record differently |
 | `degradation` | When a peer or tool failed, the answer said so and did not claim success |
@@ -657,8 +657,8 @@ Credentials are kept apart from scenarios, in an owner-only file. A scenario nam
 - **For one test only.** A scenario can bring a stub or a proxy itself, with a `peer` setup action, instead of relying on one that was saved beforehand.
 - **Faults.** `down`, `delay`, `wrong_answer`, `refuse`, `never_complete`, `contradict`, `empty` and `drop`.
 - **Several agents at once.** `agents` in a scenario drives each with its own turns, at the same time.
-- **Who goes first.** `ordering.steps` names requests by agent, tool or text. `POST /api/interleavings` runs one scenario in several orders and says whether the order changed the outcome.
-- **OpenTelemetry.** `POST /otlp/v1/traces`, JSON encoding only, puts spans on the same timeline. Tool and model spans become tool calls and model calls with their token usage, so the budget, path and authority checks work on an agent whose model LLMSim cannot stand in front of.
+- **Who goes first.** `ordering.steps` names requests by agent, tool or text, and `ordering.order` is the sequence every run of the scenario keeps — from the console, a test run or CI — so a test of two agents does not pass or fail by which one the network let in first. A run can be given another with `"order": [...]`. `POST /api/interleavings` runs one scenario in several orders and says whether the order changed the outcome.
+- **OpenTelemetry.** `POST /otlp/v1/traces`, JSON encoding only, puts spans on the same timeline. Tool and model spans become tool calls and model calls with their token usage, so the budget, path and authority checks work on an agent whose model LLMSim cannot stand in front of. A model span does not say which tools the model asked for, so for such a model a `path` check of any `source` reads the tool spans: what the agent ran.
 
 ### Datasets, experiments and the gate
 

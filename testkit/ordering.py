@@ -42,8 +42,10 @@ class Order:
 
 
 def validate(ordering):
+    """`order`, when given, is the sequence every run of the scenario keeps; a run's own `order`, or
+    /api/interleavings, overrides it. Without one, only an explicit order holds anything."""
     if not isinstance(ordering, dict) or not isinstance(ordering.get("steps"), dict) or not ordering["steps"]:
-        return ["ordering is {steps: {name: {when: <condition>}}, timeoutS?}"]
+        return ["ordering is {steps: {name: {when: <condition>}}, order?, timeoutS?}"]
     problems = []
     for name, step in ordering["steps"].items():
         if not core.valid_id(name) or not isinstance(step, dict) or "when" not in step:
@@ -52,9 +54,18 @@ def validate(ordering):
             problems += core.check_cond(step["when"], "ordering.steps.%s.when" % name)
     if ordering.get("timeoutS") is not None and not (isinstance(ordering["timeoutS"], (int, float)) and 0 < ordering["timeoutS"] <= 600):
         problems.append("ordering.timeoutS is up to 600")
-    if set(ordering) - {"steps", "timeoutS"}:
-        problems.append("ordering has steps and timeoutS only")
+    if "order" in ordering:
+        problems += validate_order(ordering, ordering["order"], "ordering.order")
+    if set(ordering) - {"steps", "order", "timeoutS"}:
+        problems.append("ordering has steps, order and timeoutS only")
     return problems
+
+
+def validate_order(ordering, sequence, where="order"):
+    if not (isinstance(sequence, list) and sequence and all(isinstance(s, str) for s in sequence)):
+        return ["%s is a list of step names" % where]
+    unknown = [s for s in sequence if s not in (ordering.get("steps") or {})]
+    return ["%s names steps that do not exist: %s" % (where, ", ".join(unknown))] if unknown else []
 
 
 def install(run, ordering, sequence):

@@ -152,7 +152,7 @@ def _scenario_listing():
 
 def _options(body, query):
     options = {}
-    for key in ("run", "tier", "label", "seed", "keepState", "agent"):
+    for key in ("run", "tier", "label", "seed", "keepState", "agent", "order"):
         if (body or {}).get(key) is not None:
             options[key] = body[key]
     return options
@@ -165,6 +165,8 @@ def _check_options(options):
         return "tier is simulated or real"
     if "keepState" in options and not isinstance(options["keepState"], bool):
         return "keepState is true or false"
+    if "order" in options and not (isinstance(options["order"], list) and options["order"] and all(isinstance(s, str) for s in options["order"])):
+        return "order is a list of the scenario's ordering steps"
     agent = options.get("agent")
     if agent is not None and not (core.valid_id(agent) or (isinstance(agent, dict) and agent and all(core.valid_id(v) for v in agent.values()))):
         return "agent is the id of a saved agent, or {name: id} for a scenario that drives several"

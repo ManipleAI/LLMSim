@@ -59,7 +59,29 @@ class RunCtx:
         return out
 
 
+def _answered(ctx, result):
+    """What really answered this run's model calls, counted by route.
+
+    A run is "simulated" by what it asked for; what it got is a separate fact. On an LLMSim
+    whose default route is a real model, a scenario's model calls are answered by that model
+    wherever its script has no rule, and a result that only said "simulated" would hide it."""
+    routes = {}
+    for e in store().events(ctx.run, kinds=["model_call"]):
+        r = e["data"].get("route") or "?"
+        routes[r] = routes.get(r, 0) + 1
+    real = sum(n for r, n in routes.items() if r not in ("scripted", "replay", "refused"))
+    made = sum(n for r, n in routes.items() if r in ("scripted", "replay"))
+    result["model"]["answered"] = {"routes": routes, "by": ("nothing" if not real and not made else "the script" if not real else
+                                                           "a real model" if not made else "the script and a real model")}
+    if ctx.tier == "simulated" and real:
+        result.setdefault("warnings", []).append(
+            "%d of %d model call(s) were answered by a real model (%s), not the script: this run is not repeatable as it stands. "
+            "Give the scenario rules for them, or set model.unmatched to refuse." % (
+                real, sum(routes.values()), ", ".join(sorted(r for r in routes if r not in ("scripted", "replay", "refused")))))
+
+
 def _finish_model(ctx, result):
+    _answered(ctx, result)
     model = ctx.scenario.get("model") or {}
     if model.get("cassette") and ctx.tier == "simulated":
         try:
@@ -75,12 +97,20 @@ def _finish_model(ctx, result):
 def _start_model(ctx, result):
     model = ctx.scenario.get("model") or {}
     result["model"] = {"tier": ctx.tier}
+    if model.get("claim"):
+        problems = runtime.set_claim(ctx.run, ctx.participants[0]["name"], model["claim"])
+        if problems:
+            return problems
+        ctx.cleanup.append(lambda: runtime.clear_claim(ctx.run))
+        result["model"]["claim"] = model["claim"]
     if ctx.tier != "simulated":
         return []
-    problems = runtime.set_run_rules(ctx.run, model.get("rules") or [])
+    problems = runtime.set_run_rules(ctx.run, model.get("rules") or []) + runtime.set_run_faults(ctx.run, model.get("faults") or [])
+    ctx.cleanup.append(lambda: runtime.clear_run_rules(ctx.run))
+    ctx.cleanup.append(lambda: runtime.clear_run_faults(ctx.run))
     if problems:
         return problems
-    ctx.cleanup.append(lambda: runtime.clear_run_rules(ctx.run))
+    runtime.set_run_options(ctx.run, {"unmatched": model.get("unmatched", "route")})
     if model.get("cassette"):
         mode = model.get("mode", "replay")
         if mode == "auto":
@@ -128,8 +158,9 @@ def run_scenario(scenario, options=None, base_host="localhost:8099"):
                 d = drivers.make(part, dctx)
                 d.start()
                 driver.append((d, part))
-            if scenario.get("ordering") and options.get("order"):
-                bad = ordering.install(run, scenario["ordering"], options["order"])
+            sequence = options.get("order") or (scenario.get("ordering") or {}).get("order")
+            if scenario.get("ordering") and sequence:
+                bad = ordering.install(run, scenario["ordering"], sequence)
                 if bad:
                     raise ValueError("; ".join(bad))
                 ctx.cleanup.append(lambda: result.setdefault("model", {}).__setitem__("orderTimedOut", ordering.remove(run)))
@@ -145,6 +176,7 @@ def run_scenario(scenario, options=None, base_host="localhost:8099"):
                 d.end()
             except Exception:  # noqa: BLE001
                 pass
+        timeline.settle(run)              # the agent's last model call may still be on its way to the timeline
         _finish_model(ctx, result)
         for action in scenario.get("teardown") or []:
             try:
@@ -233,8 +265,24 @@ def _converse(driver, ctx, result, deadline, part):
             return
 
 
+def _fill_ids(value, values):
+    if isinstance(value, str):
+        for k, v in values.items():
+            value = value.replace(k, v)
+        return value
+    if isinstance(value, list):
+        return [_fill_ids(v, values) for v in value]
+    if isinstance(value, dict):
+        return {k: _fill_ids(v, values) for k, v in value.items()}
+    return value
+
+
 def _judge(ctx, result):
-    specs = list(ctx.scenario.get("_expect") or []) + list(ctx.scenario.get("checks") or [])
+    # A check can name what the run made under its own name — a file called after the run, the
+    # address of the run's mock — as the script that made it did: {{run}}, and {{agent}} when one.
+    names = [p["name"] for p in ctx.participants]
+    ids = {"{{run}}": ctx.run, **({"{{agent}}": names[0]} if len(names) == 1 else {})}
+    specs = _fill_ids(list(ctx.scenario.get("_expect") or []) + list(ctx.scenario.get("checks") or []), ids)
     ctx.scenario.pop("_expect", None)
     rctx = checks.RunCtx(ctx.run, ctx.scenario)
     result["checks"] = checks.evaluate(specs, rctx)

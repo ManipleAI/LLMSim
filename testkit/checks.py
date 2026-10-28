@@ -57,15 +57,28 @@ class RunCtx:
         return r[-1] if r else None
 
     def requested_calls(self, agent=None):
+        """The tool calls the model asked for. A model call known only from an OpenTelemetry span
+        does not say which tools it asked for; the tool spans of that agent, which say what was
+        run, stand in for them."""
         out = []
         for e in self.of("model_call", agent=agent):
             for c in (e["data"].get("response") or {}).get("toolCalls") or []:
                 out.append({"tool": c.get("name"), "arguments": c.get("input") or {}, "agent": e["agent"], "event": e["id"]})
-        return out
+        traced = {e["agent"] for e in self.of("model_call", agent=agent) if e["data"].get("via") == "otel"}
+        out += [c for c in self.tool_calls(agent, "agent") if c["via"] == "otel" and c["agent"] in traced]
+        return sorted(out, key=lambda c: c["event"])
 
-    def tool_calls(self, agent=None):
+    def tool_calls(self, agent=None, source="served"):
+        """Tool calls on the timeline. "served": what LLMSim's mocks, peers and traces received.
+        "agent": what an agent's own tools did, as it handed the results back to its model.
+        Two layers of one thing — an agent's refund tool that calls a mock backend is both —
+        so they are kept apart, and "all" is both."""
+        # a tool span is the agent saying what its own tool did, as surely as a result handed back to its model
+        # is; it has always counted as received (source "tools") and counts as the agent's too
+        keep = {"served": lambda e: e["data"].get("source") != "agent",
+                "agent": lambda e: e["data"].get("source") == "agent" or e["data"].get("via") == "otel"}.get(source, lambda e: True)
         return [{"tool": e["data"].get("tool"), "arguments": e["data"].get("arguments") or {}, "agent": e["agent"], "event": e["id"],
-                 "error": e["data"].get("error")} for e in self.of("tool_call", agent=agent)]
+                 "error": e["data"].get("error"), "via": e["data"].get("via")} for e in self.of("tool_call", agent=agent) if keep(e)]
 
     def usage(self, agent=None):
         total = {"input": 0, "output": 0, "cacheRead": 0, "reasoning": 0}
@@ -198,8 +211,10 @@ def validate_answer(spec):
                 problems.append("%s is not a valid pattern: %s" % (k, exc))
     if "number" in spec:
         n = spec["number"]
-        if not isinstance(n, dict) or not set(n) <= {"regex", "group", "equals", "tolerance", "min", "max"}:
-            problems.append("number is {regex?, group?, equals?, tolerance?, min?, max?}")
+        if not isinstance(n, dict) or not set(n) <= {"regex", "group", "equals", "tolerance", "min", "max", "pick"}:
+            problems.append("number is {regex?, group?, equals?, tolerance?, min?, max?, pick?}")
+        elif n.get("pick", "first") not in ("first", "last", "any"):
+            problems.append("number.pick is first, last or any: which number in the answer is judged")
     return problems
 
 
@@ -221,19 +236,37 @@ def _answer_one(spec, text):
     if "number" in spec:
         n = spec["number"]
         pattern = n.get("regex") or r"-?\d[\d,]*(?:\.\d+)?"
-        m = re.search(pattern, text)
-        if not m:
+        found = list(re.finditer(pattern, text))
+        if not found:
             return "no number matching %s in the answer" % pattern
-        try:
-            got = float(m.group(n.get("group", 1 if m.groups() else 0)).replace(",", ""))
-        except (ValueError, IndexError):
-            return "the match is not a number: %r" % m.group(0)
-        if "equals" in n and abs(got - n["equals"]) > n.get("tolerance", 0):
-            return "the number is %s, wanted %s ± %s" % (got, n["equals"], n.get("tolerance", 0))
-        if "min" in n and got < n["min"]:
-            return "the number is %s, below %s" % (got, n["min"])
-        if "max" in n and got > n["max"]:
-            return "the number is %s, above %s" % (got, n["max"])
+        # Which number is the answer. A real model says "the 20th Fibonacci number is 6,765":
+        # the first number in the reply is not always the one asked for. "any" passes when one
+        # of them is right; "last" takes the last, where a conclusion usually is.
+        pick = n.get("pick", "first")
+        chosen = found if pick == "any" else [found[-1] if pick == "last" else found[0]]
+        why = None
+        for m in chosen:
+            why = _number_problem(n, m)
+            if why is None:
+                return None
+        if pick == "any" and len(found) > 1:
+            return "none of the %d numbers in the answer (%s) is right: %s" % (
+                len(found), ", ".join(m.group(0) for m in found[:8]), why)
+        return why
+    return None
+
+
+def _number_problem(n, m):
+    try:
+        got = float(m.group(n.get("group", 1 if m.groups() else 0)).replace(",", ""))
+    except (ValueError, IndexError):
+        return "the match is not a number: %r" % m.group(0)
+    if "equals" in n and abs(got - n["equals"]) > n.get("tolerance", 0):
+        return "the number is %s, wanted %s ± %s" % (got, n["equals"], n.get("tolerance", 0))
+    if "min" in n and got < n["min"]:
+        return "the number is %s, below %s" % (got, n["min"])
+    if "max" in n and got > n["max"]:
+        return "the number is %s, above %s" % (got, n["max"])
     return None
 
 
@@ -294,11 +327,17 @@ def args_match(expected, actual, mode):
 def call_matches(exp, got, spec):
     if exp.get("tool") != got.get("tool"):
         return False
+    # A reference call that names only the tool says the tool was called, with whatever
+    # arguments: {"tool": "search"} is not a claim that it was called with none.
+    if "arguments" not in exp and not exp.get("match"):
+        return True
     mode = exp.get("match") or (spec.get("argsOverrides") or {}).get(exp["tool"]) or spec.get("args", "exact")
     return args_match(exp.get("arguments"), got.get("arguments"), mode)
 
 
 def describe_call(c):
+    if "arguments" not in c:
+        return "%s(…)" % c.get("tool")
     return "%s(%s)" % (c.get("tool"), json.dumps(c.get("arguments") or {}, sort_keys=True)[:80])
 
 
@@ -306,8 +345,9 @@ def validate_path(spec):
     problems = []
     if spec.get("mode", "strict") not in ("strict", "unordered", "subset", "superset"):
         problems.append("mode is strict, unordered, subset or superset")
-    if spec.get("source", "model") not in ("model", "tools"):
-        problems.append("source is model (calls the model asked for) or tools (calls a tool received)")
+    if spec.get("source", "model") not in ("model", "tools", "agent"):
+        problems.append("source is model (calls the model asked for), tools (calls LLMSim's mocks received) or agent "
+                        "(calls the agent's own tools made, as it reported them to its model)")
     exp = spec.get("expected")
     if not isinstance(exp, list) or not all(isinstance(c, dict) and isinstance(c.get("tool"), str) for c in exp):
         problems.append("expected is a list of {tool, arguments?, match?}")
@@ -352,7 +392,8 @@ def compare_paths(mode, expected, actual, spec):
 @check("path", validate_path)
 def check_path(spec, ctx):
     source = spec.get("source", "model")
-    actual = ctx.tool_calls(spec.get("agent")) if source == "tools" else ctx.requested_calls(spec.get("agent"))
+    actual = (ctx.tool_calls(spec.get("agent")) if source == "tools" else ctx.tool_calls(spec.get("agent"), "agent") if source == "agent"
+              else ctx.requested_calls(spec.get("agent")))
     if not actual and not ctx.of("model_call", "tool_call", agent=spec.get("agent")):
         return result(spec, "no-data", "LLMSim saw nothing from this agent, so no path can be judged — is it pointed at LLMSim?")
     ok, why = compare_paths(spec.get("mode", "strict"), spec["expected"], actual, spec)
@@ -407,9 +448,10 @@ def check_budget(spec, ctx):
                 problems.append("%s%s tokens %d over the limit of %d" % (who, key, used, limit))
         mc = ctx.of("model_call", agent=agent)
         for key, limit in (spec.get("steps") or {}).items():
-            n = {"modelCalls": len(mc), "toolCalls": len(ctx.of("tool_call", agent=agent))}.get(key, None)
+            tools = len(ctx.tool_calls(agent)) or len(ctx.tool_calls(agent, "agent"))   # served, or the agent's own when none were
+            n = {"modelCalls": len(mc), "toolCalls": tools}.get(key, None)
             if key == "total":
-                n = len(mc) + len(ctx.of("tool_call", agent=agent))
+                n = len(mc) + tools
             if n > limit:
                 problems.append("%s%d %s over the limit of %d" % (who, n, key, limit))
         lat = spec.get("latencyMs") or {}

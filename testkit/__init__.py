@@ -82,6 +82,11 @@ def on_capture(cap):
     timeline.on_capture(cap)
 
 
+def capture_started(cap):
+    from . import timeline
+    timeline.started(cap)
+
+
 def store_runs():
     from . import store
     return store.store().runs()
@@ -101,3 +106,36 @@ def run_rules():
     """Rules a running scenario brought with it, tried before every other."""
     from . import runtime
     return runtime.run_rules()
+
+
+def run_faults():
+    """Model faults a running scenario brought with it, tried before the saved ones."""
+    from . import runtime
+    return runtime.run_faults()
+
+
+def run_script(view):
+    """For a request that belongs to a running scenario with a script of its own: "scripted"
+    when one of that run's rules answers it, "refuse" when none does and the scenario said
+    unmatched requests are refused, None otherwise — Routing decides, as for any request."""
+    from . import runtime
+    run = (view.get("identity") or {}).get("run")
+    if not run or not runtime.has_run_rules(run):
+        return None
+    for rule in runtime.own_rules(run):
+        if rule.get("enabled") is not False and rule.get("turns") and core.host.cond_result(rule.get("when", {}), view)[0]:
+            return "scripted"
+    return "refuse" if runtime.run_option(run, "unmatched") == "refuse" else None
+
+
+def claim_for(handler, body):
+    """{"run", "agent"} when a running scenario adopts this request, which names no run itself."""
+    from . import runtime
+    if not runtime._CLAIM:
+        return None
+    meta = {"provider": getattr(handler, "provider", ""), "shape": "", "model": (body or {}).get("model") if isinstance(body, dict) else "",
+            "path": handler.path.split("?")[0], "stream": bool((body or {}).get("stream")) if isinstance(body, dict) else False,
+            "route": "", "identity": {}, "credential": {},
+            "headers": {k.lower(): v for k, v in handler.headers.items() if k.lower() not in core.host.SENSITIVE_HEADERS}}
+    found = runtime.claim_for(core.host.build_view(meta, body if isinstance(body, dict) else {}))
+    return {"run": found[0], "agent": found[1]} if found else None

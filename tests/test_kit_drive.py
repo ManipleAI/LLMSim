@@ -48,7 +48,10 @@ def case_a_scenario_file_is_a_whole_test(sim):
     assert result["turns"][0]["reply"].endswith("handed it to a manager.")
     # the run is on the timeline: the user, the model twice, the agent's reply, the verdict
     tl = sim.api("GET", "/api/runs/%s/timeline" % result["run"])[1]
-    assert [e["kind"] for e in tl["events"]] == ["user_turn", "model_call", "model_call", "agent_reply", "check"], tl["counts"]
+    assert [e["kind"] for e in tl["events"]] == ["user_turn", "model_call", "tool_call", "model_call", "agent_reply", "check"], tl["counts"]
+    # the agent's own tool is seen when its result comes back to the model, after the call that asked for it
+    reported = tl["events"][2]
+    assert reported["data"]["source"] == "agent" and reported["data"]["tool"] == "lookup_order" and reported["parent"] == tl["events"][1]["id"], reported
     assert tl["agents"] == ["support"]
     # the agent was told which run and agent it was, by the driver, so its model calls landed in the run
     assert agent.seen[-1]["body"]["run"] == result["run"]
@@ -225,7 +228,7 @@ def case_a_recording_can_stand_in_for_the_models_script(sim):
     assert changed["verdict"] == "fail" and any(c["type"] == "model" for c in changed["checks"]), changed
     # the real tier does not apply the model block at all
     real = run(sim, sc, tier="real")
-    assert real["model"] == {"tier": "real"}, real["model"]
+    assert real["model"]["tier"] == "real" and "cassette" not in real["model"], real["model"]
 
 
 def case_the_process_driver_is_off_unless_the_operator_turns_it_on(sim):

@@ -923,6 +923,7 @@ Set these in the environment before starting `server.py`.
 | `LLMSIM_ANTHROPIC_UPSTREAM_KEY`, `LLMSIM_ANTHROPIC_UPSTREAM_MODEL` | none | The key and model the Anthropic API route uses |
 | `LLMSIM_ANTHROPIC_UPSTREAM`, `LLMSIM_ANTHROPIC_UPSTREAM_AUTH` | Anthropic's API, `api_key` | Its base URL, and `bearer` for a gateway's token |
 | `LLMSIM_CHATGPT_AUTH` | `llmsim.chatgpt-auth.json` | Where the ChatGPT sign-in is kept |
+| `LLMSIM_CHATGPT_PORTS`, `LLMSIM_CHATGPT_BIND` | `1455,1457`, `127.0.0.1` | Where the sign-in's redirect is listened for. In a container: `LLMSIM_CHATGPT_BIND=0.0.0.0` and the port published, `-p 127.0.0.1:1457:1457` |
 | `LLMSIM_CHATGPT_MODEL` | The plan's own choice | The plan model to use |
 | `LLMSIM_RUNS_DB` | `llmsim.runs.db` | Where the test kit keeps runs |
 | `LLMSIM_CREDENTIALS` | `llmsim.credentials.json` | Where the test kit keeps credentials |

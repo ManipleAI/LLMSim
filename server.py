@@ -1916,6 +1916,10 @@ CHATGPT_CLIENT_ID = os.environ.get("LLMSIM_CHATGPT_CLIENT_ID", "REMOVED_CLIENT_I
 CHATGPT_ORIGINATOR = os.environ.get("LLMSIM_CHATGPT_ORIGINATOR", "removed_originator")
 CHATGPT_SCOPE = "openid profile email offline_access api.connectors.read api.connectors.invoke"
 CHATGPT_PORTS = tuple(int(p) for p in os.environ.get("LLMSIM_CHATGPT_PORTS", "1455,1457").split(","))
+# Where the sign-in's redirect is listened for. This machine only, normally. In a container the
+# browser is outside it, so the port has to be published and the listener has to take connections
+# from beyond the container's own loopback: LLMSIM_CHATGPT_BIND=0.0.0.0, with -p 127.0.0.1:1457:1457.
+CHATGPT_BIND = os.environ.get("LLMSIM_CHATGPT_BIND", "127.0.0.1")
 CHATGPT_AUTH_PATH = os.environ.get("LLMSIM_CHATGPT_AUTH", os.path.join(DATA_DIR, "llmsim.chatgpt-auth.json"))
 CHATGPT_CLIENT_VERSION = os.environ.get("LLMSIM_CHATGPT_CLIENT_VERSION", "1.0.0")
 CHATGPT_USER_AGENT = "LLMSim/0.1 (+https://github.com/ManipleAI/LLMSim)"
@@ -2169,7 +2173,7 @@ def _start_callback_listener(release_wait=1.5):
     while True:
         for port in CHATGPT_PORTS:
             try:
-                server = HTTPServer(("127.0.0.1", port), _CallbackHandler)
+                server = HTTPServer((CHATGPT_BIND, port), _CallbackHandler)
             except OSError:
                 continue
             threading.Thread(target=lambda: server.serve_forever(poll_interval=0.05), daemon=True).start()

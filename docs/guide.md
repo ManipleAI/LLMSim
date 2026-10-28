@@ -568,6 +568,8 @@ An agent built with LangGraph, LangChain or a framework like them calls its mode
 
 **Checks name what the run made.** `{{run}}`, and `{{agent}}` when there is one agent, are filled in in checks as they are in the script, so a check can find the file a scripted step wrote under the run's name.
 
+`test-agents/langgraph` in this repository is a worked example: a team of LangGraph agents, and the scenarios that test every part of this kit on them.
+
 ### Build it on the canvas
 
 The **Canvas** switch shows the same scenario as a picture of the run it describes: who speaks on the left, the agent in the middle, what it reaches on the right — in three rows, the model and other agents, the tools it calls, and the records and faults this run installs — and the checks underneath. The picture takes the whole width of the page, and **Full screen** gives it everything right of the menu (**Exit full screen** or Esc gives it back; the browser remembers which you chose). A block is one part of the document. Clicking it opens that part's own fields in a panel beside the picture, which closes again with **Done**, the same fields the form has, writing to the same place; the **+** buttons add a turn, a check, a mock, another agent or a fault where it belongs, and a block's **Remove** takes it out. **Check it is valid** marks each block the validator has something to say about, with its words on the block.

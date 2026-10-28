@@ -134,3 +134,10 @@ for t in tests/test_*.py; do python3 "$t" || break; done
 Each file starts its own LLMSim on a free port with a throwaway directory. The
 documentation page is built from `docs/guide.md` with `bin/build-docs`, and a test
 fails if the two are out of step.
+
+Those tests drive a fake agent written for them. [`test-agents/langgraph`](test-agents/langgraph/README.md)
+is a team of real ones, built on LangChain and LangGraph, and two suites that run every
+capability of the test kit on them: MCP tools loaded at run time, REST tools, agents that
+hand work to each other over A2A, a real agent behind a proxy, every driver, and an agent
+seen only through its OpenTelemetry spans. It has dependencies of its own, and an LLMSim of
+its own in Docker, so it never touches one somebody else is using.

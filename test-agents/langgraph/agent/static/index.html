@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LangGraph Agent</title>
+<style>
+  :root {
+    --page:#f6f4f0; --surface:#fff; --ink:#1d2128; --muted:#69707c; --faint:#9aa0aa; --border:#e3ded5;
+    --side:#191d24; --side-fg:#d9dde4; --side-dim:#8b93a1; --primary:#b8401f; --tool:#f1efe9; --ok:#2f7d4f; --bad:#b3261e;
+    --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--page); color:var(--ink); font:14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; display:flex; height:100vh; }
+  aside { width:260px; flex:0 0 260px; background:var(--side); color:var(--side-fg); display:flex; flex-direction:column; }
+  aside h1 { font-size:15px; margin:0; padding:18px 16px 4px; }
+  aside .model { color:var(--side-dim); font-size:11.5px; padding:0 16px 14px; overflow-wrap:anywhere; }
+  aside button.new { margin:0 12px 10px; padding:8px 10px; border-radius:7px; border:1px solid #333a46; background:#232833; color:#fff; font:inherit; cursor:pointer; text-align:left; }
+  aside button.new:hover { background:#2b313d; }
+  #threads { overflow:auto; flex:1; padding:0 6px 12px; }
+  .th { display:flex; align-items:center; gap:4px; border-radius:6px; }
+  .th button.open { flex:1; text-align:left; background:none; border:0; color:var(--side-fg); font:inherit; font-size:13px; padding:7px 10px; cursor:pointer; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .th[aria-current=true], .th:hover { background:#262b35; }
+  .th button.del { visibility:hidden; background:none; border:0; color:var(--side-dim); cursor:pointer; padding:4px 8px; }
+  .th:hover button.del { visibility:visible; }
+  main { flex:1; min-width:0; display:flex; flex-direction:column; }
+  #log { flex:1; overflow:auto; padding:24px clamp(16px, 6vw, 90px); display:flex; flex-direction:column; gap:12px; }
+  .empty { margin:auto; text-align:center; color:var(--muted); max-width:46ch; }
+  .empty b { color:var(--ink); display:block; font-size:16px; margin-bottom:6px; }
+  .msg { max-width:min(860px, 100%); padding:10px 14px; border-radius:10px; white-space:pre-wrap; overflow-wrap:anywhere; }
+  .user { align-self:flex-end; background:var(--primary); color:#fff; }
+  .assistant { align-self:flex-start; background:var(--surface); border:1px solid var(--border); }
+  .thought { align-self:flex-start; color:var(--muted); font-style:italic; font-size:13px; max-width:860px; white-space:pre-wrap; }
+  .step { align-self:flex-start; max-width:min(860px, 100%); width:100%; background:var(--tool); border:1px solid var(--border); border-radius:9px; font-size:12.5px; }
+  .step summary { cursor:pointer; padding:7px 12px; list-style:none; display:flex; gap:8px; align-items:baseline; }
+  .step summary::-webkit-details-marker { display:none; }
+  .step .k { font:600 10px/1 var(--mono); letter-spacing:.08em; text-transform:uppercase; color:var(--faint); }
+  .step .n { font-family:var(--mono); font-weight:600; }
+  .step .a { color:var(--muted); font-family:var(--mono); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; flex:1; }
+  .step pre { margin:0; padding:8px 12px 10px; border-top:1px solid var(--border); font:12px/1.45 var(--mono); white-space:pre-wrap; overflow-wrap:anywhere; max-height:340px; overflow:auto; }
+  .step.wait summary::after { content:"running…"; color:var(--faint); margin-left:auto; }
+  .error { align-self:flex-start; color:var(--bad); background:#fbeceb; border:1px solid #f0c9c6; padding:8px 12px; border-radius:8px; white-space:pre-wrap; }
+  form { display:flex; gap:10px; padding:14px clamp(16px, 6vw, 90px) 20px; border-top:1px solid var(--border); background:var(--page); }
+  textarea { flex:1; resize:none; min-height:48px; max-height:220px; padding:12px 14px; border-radius:10px; border:1px solid var(--border); font:inherit; background:var(--surface); color:var(--ink); }
+  textarea:focus { outline:2px solid #e9c8bd; border-color:var(--primary); }
+  form button { padding:0 18px; border-radius:10px; border:0; background:var(--primary); color:#fff; font:600 14px/1 inherit; cursor:pointer; }
+  form button:disabled { opacity:.5; cursor:default; }
+  @media (max-width:720px) { aside { display:none; } }
+</style>
+</head>
+<body>
+<aside>
+  <h1>LangGraph Agent</h1>
+  <div class="model" id="model"></div>
+  <button class="new" onclick="newChat()">+ New chat</button>
+  <div id="threads"></div>
+</aside>
+<main>
+  <div id="log"></div>
+  <form onsubmit="send(event)">
+    <textarea id="box" rows="1" placeholder="Give the agent a task…  (Enter sends, Shift+Enter is a new line)"
+      onkeydown="if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); send(event); }"
+      oninput="this.style.height = 'auto'; this.style.height = this.scrollHeight + 'px'"></textarea>
+    <button id="go">Send</button>
+  </form>
+</main>
+<script>
+let THREAD = null, BUSY = false;
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const brief = (args) => { const s = JSON.stringify(args); return s.length > 140 ? s.slice(0, 139) + "…" : s; };
+
+function empty() {
+  $("log").innerHTML = `<div class="empty"><b>What should it do?</b>It can read and write files in its workspace folder, run Python, fetch web pages and tell the time. Every step it takes is shown here.</div>`;
+}
+function add(html) { const log = $("log"); log.querySelector(".empty")?.remove(); log.insertAdjacentHTML("beforeend", html); log.scrollTop = log.scrollHeight; return log.lastElementChild; }
+const say = (role, text) => add(`<div class="msg ${role}">${esc(text)}</div>`);
+const call = (c) => add(`<details class="step wait" data-id="${esc(c.id)}"><summary><span class="k">tool</span><span class="n">${esc(c.name)}</span><span class="a">${esc(brief(c.args))}</span></summary><pre>${esc(JSON.stringify(c.args, null, 2))}</pre></details>`);
+function result(r) {
+  const el = [...document.querySelectorAll(".step")].find((x) => x.dataset.id === r.id);
+  if (!el) return add(`<details class="step"><summary><span class="k">result</span><span class="n">${esc(r.name)}</span></summary><pre>${esc(r.text)}</pre></details>`);
+  el.classList.remove("wait");
+  el.insertAdjacentHTML("beforeend", `<pre>${esc(r.text)}</pre>`);
+}
+
+async function loadThreads() {
+  const { threads } = await (await fetch("/api/threads")).json();
+  $("threads").innerHTML = threads.map((t) => `<div class="th" aria-current="${t.id === THREAD}"><button class="open" onclick="openChat('${t.id}')" title="${esc(t.title)}">${esc(t.title)}</button><button class="del" onclick="forget('${t.id}')" title="Forget this chat">✕</button></div>`).join("");
+}
+async function openChat(id) {
+  if (BUSY) return;
+  THREAD = id; localStorage.setItem("agent.thread", id);
+  const { messages } = await (await fetch("/api/threads/" + id)).json();
+  $("log").innerHTML = ""; if (!messages.length) empty();
+  for (const m of messages) {
+    if (m.role === "user") say("user", m.text);
+    else if (m.role === "assistant") { if (m.toolCalls.length) { if (m.text) add(`<div class="thought">${esc(m.text)}</div>`); m.toolCalls.forEach(call); } else say("assistant", m.text); }
+    else if (m.role === "tool") result({ id: m.callId, name: m.name, text: m.text });
+  }
+  loadThreads();
+}
+function newChat() { if (BUSY) return; THREAD = null; localStorage.removeItem("agent.thread"); empty(); loadThreads(); $("box").focus(); }
+async function forget(id) {
+  if (!confirm("Forget this chat?")) return;
+  await fetch("/api/threads/" + id, { method: "DELETE" });
+  if (id === THREAD) newChat(); else loadThreads();
+}
+
+async function send(e) {
+  e.preventDefault();
+  const text = $("box").value.trim(); if (!text || BUSY) return;
+  BUSY = true; $("go").disabled = true; $("box").value = ""; $("box").style.height = "auto";
+  say("user", text);
+  try {
+    const res = await fetch("/api/chat/stream", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: text, thread_id: THREAD }) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+    const reader = res.body.getReader(), dec = new TextDecoder(); let buf = "";
+    for (;;) {
+      const { value, done } = await reader.read(); if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let i; while ((i = buf.indexOf("\n\n")) >= 0) {
+        const line = buf.slice(0, i); buf = buf.slice(i + 2);
+        if (!line.startsWith("data: ")) continue;
+        const ev = JSON.parse(line.slice(6));
+        if (ev.type === "thread") { THREAD = ev.id; localStorage.setItem("agent.thread", ev.id); loadThreads(); }
+        else if (ev.type === "tool_call") call(ev);
+        else if (ev.type === "tool_result") result(ev);
+        else if (ev.type === "thought") add(`<div class="thought">${esc(ev.text)}</div>`);
+        else if (ev.type === "answer") say("assistant", ev.text);
+        else if (ev.type === "stopped") add(`<div class="error">${esc(ev.text)}</div>`);
+        else if (ev.type === "error") add(`<div class="error">${esc(ev.text)}</div>`);
+      }
+    }
+  } catch (err) { add(`<div class="error">${esc(err.message)}</div>`); }
+  BUSY = false; $("go").disabled = false; loadThreads(); $("box").focus();
+}
+
+fetch("/healthz").then((r) => r.json()).then((h) => { $("model").textContent = `${h.model} · ${new URL(h.modelBaseUrl).host}`; });
+const kept = localStorage.getItem("agent.thread");
+if (kept) openChat(kept).catch(newChat); else { empty(); loadThreads(); }
+</script>
+</body>
+</html>

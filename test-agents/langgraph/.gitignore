@@ -1,0 +1,14 @@
+# The key to the model, and where the chats and the agent's files are kept.
+.env
+.env.llmsim
+data/
+workspace/
+data-llmsim/
+workspace-llmsim/
+.venv
+__pycache__/
+llmsim/last-run.json
+.env.otel
+data-otel/
+workspace-otel/
+llmsim/capabilities-report.json

@@ -1301,13 +1301,14 @@ let DASH = { agents: [], answered: {} };
 const whenAgo = (t) => { if (!t) return ""; const s = Math.max(0, Date.now() / 1000 - t); return s < 90 ? Math.round(s) + "s ago" : s < 5400 ? Math.round(s / 60) + "m ago" : s < 129600 ? Math.round(s / 3600) + "h ago" : Math.round(s / 86400) + "d ago"; };
 async function dashLoad() {
   const get = async (p) => { const r = await REST("GET", p); return r.ok ? r.body : {}; };
-  const [sc, rs, ag, tr] = await Promise.all(["/api/scenarios", "/api/results", "/api/agents", "/api/testruns"].map(get));
+  // Each scenario's last result, however long ago; the newest hundred are for telling a flaky one.
+  const [sc, rs, lt, ag, tr] = await Promise.all(["/api/scenarios", "/api/results", "/api/results?latest=scenario", "/api/agents", "/api/testruns"].map(get));
   const scenarios = sc.scenarios || [], results = rs.results || [], runs = tr.testruns || [];
   DASH.agents = ag.agents || [];
   const pick = document.getElementById("dash-agent"), had = pick.value;
   pick.innerHTML = DASH.agents.length ? DASH.agents.map((a) => `<option value="${esc(a.id)}">${esc(a.id)}${a.label ? " · " + esc(a.label) : ""}</option>`).join("") : `<option value="">No agents saved yet</option>`;
   if (had && DASH.agents.some((a) => a.id === had)) pick.value = had;
-  const last = latestByScenario(results), byScenario = {};
+  const last = latestByScenario([...(lt.results || []), ...results]), byScenario = {};
   for (const r of results) (byScenario[r.scenario] = byScenario[r.scenario] || []).push(r);
   // What answered each last run is in the run itself, not in the list: read the ones not read yet.
   await Promise.all(Object.values(last).filter((r) => !(r.run in DASH.answered)).slice(0, 80).map(async (r) => {
@@ -2300,7 +2301,7 @@ async function labLoad() {
   document.getElementById("lab-h1").textContent = a.title;
   document.getElementById("lab-h1p").textContent = a.help;
   // A scenario's last result is shown beside it, on any agent.
-  if (LABK === "scenarios") { const rr = await REST("GET", "/api/results"); LASTRES = rr.ok ? latestByScenario(rr.body.results || []) : {}; }
+  if (LABK === "scenarios") { const rr = await REST("GET", "/api/results?latest=scenario"); LASTRES = rr.ok ? latestByScenario(rr.body.results || []) : {}; }
   document.getElementById("lab-new").hidden = !!a.readonly; document.getElementById("lab-new").textContent = a.newLabel || "New";
   document.getElementById("lab-extra").innerHTML = a.extra ? a.extra() : "";
   const r = await REST("GET", a.list);
@@ -2334,9 +2335,20 @@ async function labOpen(i) {
     if (r.ok && !a.oneKey) { doc = { ...doc }; delete doc.ok; }
   }
   labEdit(doc);
-  labLoad();
+  await labLoad();
+  labReveal();
 }
-function labNew() { const a = LAB[LABK]; LABID = null; LABNEW = true; labEdit(JSON.parse(JSON.stringify(a.blank || {}))); }
+function labNew() { const a = LAB[LABK]; LABID = null; LABNEW = true; labEdit(JSON.parse(JSON.stringify(a.blank || {}))); labReveal(); }
+// What was opened is under the list, which can be eighty rows long: bring it to the top of the
+// page, clear of the status bar and the page's header, once the list has been redrawn — a scroll
+// started before the redraw is lost in it.
+function labReveal() {
+  const el = document.getElementById("lab-editor");
+  if (el.hidden || el.classList.contains("full")) return;
+  const head = document.querySelector("#v-lab .head"), bar = document.getElementById("statusbar");
+  el.style.scrollMarginTop = ((head ? head.offsetHeight : 0) + (bar ? bar.offsetHeight : 0) + 12) + "px";
+  el.scrollIntoView({ block: "start", behavior: "smooth" });
+}
 
 // ── the editor: a form, the same thing as JSON, or a drawn result ──────────
 function labEdit(doc) {
@@ -2357,7 +2369,6 @@ function labEdit(doc) {
   note("lab-note", "");
   if (a.opened) a.opened();
   labDraw();
-  document.getElementById("lab-editor").scrollIntoView({ block: "nearest", behavior: "smooth" });
 }
 function labDraw() {
   const a = LAB[LABK], form = document.getElementById("lab-form"), json = document.getElementById("lab-json"), cv = document.getElementById("lab-canvas");

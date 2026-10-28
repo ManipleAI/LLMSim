@@ -240,7 +240,16 @@ def _results(method, rest, body, query, host):
                          "finishedAt": doc.get("finishedAt"), "label": doc.get("label", ""), "agents": doc.get("agentRefs") or [],
                          "testrun": doc.get("testrun", "")})
         want, on = (query.get("scenario") or [None])[0], (query.get("agent") or [None])[0]
-        return ok({"results": [r for r in rows if (not want or r["scenario"] == want) and (not on or on in r["agents"])][:_int(query, "limit", 100)]})
+        rows = [r for r in rows if (not want or r["scenario"] == want) and (not on or on in r["agents"])]
+        if (query.get("latest") or [None])[0] == "scenario":
+            # each scenario's newest result, however long ago it ran: the newest hundred of all
+            # results leave out every scenario not run lately, and it shows as never run
+            newest = {}
+            for r in rows:
+                if r["scenario"] and (r["scenario"] not in newest or (r["finishedAt"] or 0) > (newest[r["scenario"]]["finishedAt"] or 0)):
+                    newest[r["scenario"]] = r
+            return ok({"results": sorted(newest.values(), key=lambda r: -(r["finishedAt"] or 0))[:_int(query, "limit", 10000)]})
+        return ok({"results": rows[:_int(query, "limit", 100)]})
     if method == "GET" and len(rest) >= 1:
         result = runner.result_of(rest[0])
         if not result:

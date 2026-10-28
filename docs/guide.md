@@ -822,7 +822,7 @@ These are what a client calls. Prefix any of them with `/run/<run>` or `/run/<ru
 | `POST /api/scenarios/validate` | Check one without saving it. Body `{scenario}`. |
 | `POST /api/scenarios/<id>/run` | Run a saved one. Body `{run?, tier?, label?, seed?, keepState?, wait?, agent?}`. `agent` is a saved agent to run it on. |
 | `POST /api/scenarios/run` | Run one that is not saved. Body `{scenario, …the same options}`. |
-| `GET /api/results` | The results, newest first. Query `scenario`, `agent` (a saved agent), `limit`. |
+| `GET /api/results` | The results, newest first. Query `scenario`, `agent` (a saved agent), `limit` (100 unless given). `latest=scenario` gives each scenario's newest result instead, however long ago it ran. |
 | `GET /api/results/<run>` | One result: verdict, checks with evidence, and the conversation |
 | `GET /api/results/<run>/junit` | The same as JUnit XML |
 | `DELETE /api/results/<run>` | Remove one |

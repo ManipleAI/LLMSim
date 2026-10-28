@@ -182,6 +182,15 @@ def case_a_saved_scenario_runs_by_name_and_in_the_background(sim):
     assert got["result"]["verdict"] == "pass", got
     listed = sim.api("GET", "/api/results?scenario=refund")[1]["results"]
     assert listed and listed[0]["run"] == "bg-1" and listed[0]["verdict"] == "pass"
+    # each scenario's newest result, however many runs of others came after it
+    sim.api("PUT", "/api/scenarios/again", dict(scenario(sim.agent), id="again"))
+    for n in range(3):
+        sim.api("POST", "/api/scenarios/again/run", {"run": "again-%d" % n})
+    assert "refund" not in [r["scenario"] for r in sim.api("GET", "/api/results?limit=3")[1]["results"]]
+    latest = {r["scenario"]: r["run"] for r in sim.api("GET", "/api/results?latest=scenario")[1]["results"]}
+    assert latest.get("refund") == "bg-1" and latest.get("again") == "again-2", latest
+    assert len(sim.api("GET", "/api/results?latest=scenario&scenario=again")[1]["results"]) == 1
+    sim.api("DELETE", "/api/scenarios/again")
     assert sim.api("POST", "/api/scenarios/nope/run", {})[0] == 404
     assert sim.api("POST", "/api/scenarios/refund/run", {"tier": "weird"})[0] == 400
 

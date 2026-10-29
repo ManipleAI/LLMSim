@@ -92,6 +92,37 @@
   nav .foot .status { display:flex; align-items:center; gap:7px; }
   .dot { width:7px; height:7px; border-radius:50%; background:var(--green); flex:0 0 7px; }
   .dot.off { background:#6b3b31; }
+  nav .foot .who { display:flex; align-items:center; gap:6px; margin-top:8px; }
+  nav .foot .who[hidden] { display:none; }
+  nav .foot .who b { color:var(--chrome-fg); font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  nav .foot .who form { margin:0 0 0 auto; }
+
+  /* ── sign-in: Maniple's card, in front of the console while nobody is signed in ── */
+  #signin { display:none; position:fixed; inset:0; z-index:1000; background:var(--page); align-items:center; justify-content:center; padding:16px; overflow:auto; }
+  body.signing-in #signin { display:flex; }
+  body.signing-in > nav, body.signing-in > main { visibility:hidden; }
+  #signin form { width:100%; max-width:384px; background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:32px;
+                 box-shadow:0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.06); }
+  #signin .si-brand { display:flex; align-items:center; gap:10px; margin-bottom:32px; }
+  #signin .si-brand b { font-size:20px; font-weight:700; letter-spacing:-.02em; color:var(--ink); }
+  #signin .si-brand b span { color:var(--primary); }
+  #signin h1 { font-size:18px; font-weight:700; margin:0 0 4px; }
+  #signin .lead { color:var(--muted); font-size:13px; margin:0 0 24px; }
+  #signin label { display:block; font-family:var(--mono); font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); margin-bottom:8px; }
+  #signin input { display:block; width:100%; box-sizing:border-box; border:1px solid var(--border); border-radius:6px; padding:10px; margin:0 0 16px;
+                  font:inherit; font-size:13px; color:var(--ink); background:var(--surface); }
+  #signin input#si-pw { margin-bottom:20px; }
+  #signin input:focus { outline:none; border-color:var(--primary); }
+  #signin .si-err { color:var(--primary); font-size:12.5px; margin:-4px 0 16px; }
+  #signin .si-err[hidden] { display:none; }
+  #signin button { display:block; width:100%; background:var(--primary); color:#fff; border:0; border-radius:6px; padding:10px 16px;
+                   font:inherit; font-size:13px; font-weight:500; cursor:pointer; }
+  #signin button:hover { background:var(--primary-hover); }
+  #signin button:disabled { opacity:.6; cursor:default; }
+  #signin .si-foot { color:var(--faint); font-size:11.5px; text-align:center; margin:20px 0 0; }
+  nav .foot .who button { width:auto; min-height:0; height:auto; margin:0; display:inline-block; font:inherit; font-size:12px; line-height:1.5;
+    color:var(--chrome-fg); background:none; border:1px solid #2c3340; border-radius:5px; padding:2px 9px; cursor:pointer; }
+  nav .foot .who button:hover { border-color:var(--chrome-dim); }
 
   /* ── main ────────────────────────────────────────────────────────── */
   main { flex:1; min-width:0; height:100vh; overflow:auto; }
@@ -317,6 +348,10 @@
   .tag.rec { background:var(--primary-tint); color:var(--primary); }
   .tag.set { background:var(--green-tint); color:var(--green); }
   .tag.err { background:var(--amber-tint); color:var(--amber); }
+  .acc-key { display:flex; gap:8px; align-items:center; margin-top:12px; padding:10px 12px; border:1px solid var(--green); border-radius:7px; background:var(--green-tint); }
+  .acc-key code { flex:1; min-width:0; overflow-wrap:anywhere; font:12.5px/1.5 var(--mono); color:var(--ink); }
+  .acc-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:14px; align-items:center; }
+  .acc-actions .hint { color:var(--faint); font-size:12px; }
 
   /* ── behaviors, faults, evidence ─────────────────────────────────── */
   pre.json { margin:6px 0 0; padding:10px 12px; background:var(--subtle); border:1px solid var(--border-soft); border-radius:7px;
@@ -388,6 +423,27 @@
 </style>
 </head>
 <body>
+<div id="signin" role="dialog" aria-modal="true" aria-labelledby="si-title">
+  <form id="si-form" onsubmit="signIn(event)">
+    <div class="si-brand">
+      <svg width="30" height="30" viewBox="0 0 100 100" fill="none" aria-hidden="true">
+        <path d="M10 42 L50 12 L90 42" stroke="#B23A22" stroke-width="15" stroke-linecap="square"/>
+        <path d="M10 66 L50 36 L90 66" stroke="#14181F" stroke-width="15" stroke-linecap="square"/>
+        <path d="M10 90 L50 60 L90 90" stroke="#14181F" stroke-width="15" stroke-linecap="square"/>
+      </svg>
+      <b>LLM<span>Sim</span></b>
+    </div>
+    <h1 id="si-title">Sign in</h1>
+    <p class="lead">To the console of this LLMSim. Agents under test do not need to: the vendors' routes stay open.</p>
+    <label for="si-user">User name</label>
+    <input id="si-user" autocomplete="username" required placeholder="admin" autofocus>
+    <label for="si-pw">Password</label>
+    <input id="si-pw" type="password" autocomplete="current-password" required>
+    <p class="si-err" id="si-err" role="alert" hidden></p>
+    <button type="submit" id="si-go">Sign in</button>
+    <p class="si-foot">The password is LLMSIM_ADMIN_PASSWORD, or the one set in Settings.</p>
+  </form>
+</div>
 
 <nav>
   <div class="brand">
@@ -453,6 +509,7 @@
   <div class="group">Secrets</div>
   <button data-view="lab/credentials" onclick="show('lab/credentials')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l3 3M15 8l2 2"/></svg><span>Credentials</span></button>
   <div class="group">This LLMSim</div>
+  <button data-view="access" onclick="show('access')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Sign-in and API key</span></button>
   <button data-view="about" onclick="show('about')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg><span>Storage and status</span></button>
   <button onclick="window.open(api('/guide'), '_blank', 'noopener')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h6a3 3 0 0 1 3 3v13a2 2 0 0 0-2-2H4zM20 4h-6a3 3 0 0 0-3 3"/><path d="M20 4v14h-7"/></svg><span>Documentation</span><span class="n">↗</span></button>
   </div>
@@ -460,6 +517,8 @@
   <div class="foot">
     <div class="status"><span id="dot" class="dot"></span><span id="conn">connected</span></div>
     <div style="margin-top:5px" id="footmode">scripted</div>
+    <div class="who" id="who" hidden><span>signed in as</span> <b id="who-name"></b>
+      <form onsubmit="signOut(event)"><button type="submit">Sign out</button></form></div>
   </div>
 </nav>
 
@@ -1077,6 +1136,10 @@
   </section>
 
   <!-- ── Settings: this LLMSim ──────────────────────────────────────────── -->
+  <section class="view" id="v-access" hidden>
+    <div class="head"><div><h1>Sign-in and API key</h1><p>Who may use this console and the API. What an agent under test calls (the vendors' routes and the test kit's stand-ins) stays open, because an agent cannot sign in.</p></div></div>
+    <div class="body"><div id="access-body"></div></div>
+  </section>
   <section class="view" id="v-about" hidden>
     <div class="head"><div><h1>Storage and status</h1><p>Where this LLMSim keeps what it is told, and what it is serving now.</p></div></div>
     <div class="body"><div id="about-body"></div></div>
@@ -1084,6 +1147,51 @@
 </main>
 
 <script>
+// When this LLMSim asks for a sign-in, the sign-in is drawn in front of the page, which stays where it
+// is: signing in reloads it, on the same screen, now with the cookie.
+(function () {
+  const plain = window.fetch.bind(window);
+  const signingIn = () => document.body.classList.contains("signing-in");
+  window.signInShow = () => {
+    if (signingIn()) return;
+    document.body.classList.add("signing-in");
+    document.getElementById("si-user").focus();
+  };
+  window.fetch = async (...args) => {
+    const r = await plain(...args);
+    if (r.status === 401 && r.headers.get("X-LLMSim-Sign-In")) signInShow();
+    return r;
+  };
+  window.signIn = async (e) => {
+    e.preventDefault();
+    const go = document.getElementById("si-go"), err = document.getElementById("si-err");
+    go.disabled = true; go.textContent = "Signing in…"; err.hidden = true;
+    try {
+      const r = await plain("/login", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ user: document.getElementById("si-user").value, password: document.getElementById("si-pw").value }) });
+      const out = await r.json().catch(() => ({}));
+      if (r.ok) return location.reload();
+      err.textContent = out.message || ("Sign in failed (HTTP " + r.status + ")");
+      err.hidden = false;
+      document.getElementById("si-pw").select();
+    } catch (x) {
+      err.textContent = "LLMSim did not answer: " + x.message; err.hidden = false;
+    } finally {
+      go.disabled = false; go.textContent = "Sign in";
+    }
+  };
+  window.signOut = async (e) => {
+    e.preventDefault();
+    await plain("/logout", { method: "POST" }).catch(() => {});
+    location.reload();
+  };
+  window.whoRefresh = () => plain("/api/auth").then((r) => r.ok ? r.json() : null).then((a) => {
+    const signedIn = !!(a && a.on && a.user);
+    document.getElementById("who").hidden = !signedIn;
+    if (signedIn) document.getElementById("who-name").textContent = a.user;
+  }).catch(() => {});
+  whoRefresh();
+})();
 let CFG = null, MODELS = {}, ALL = [], REQS = [], SINCE = 0, VIEW = "overview", PICKED = null, RULES = [];
 // The default route may be held on something else for a while, by a test that needs it. What was chosen is not changed.
 let HOLD = null, STATE = null;
@@ -1138,6 +1246,7 @@ function show(v) {
 }
 
 async function load() {
+  if (document.body.classList.contains("signing-in")) return;
   let s;
   try {
     const r = await fetch(api("/api/ui/state?since=" + SINCE));
@@ -1275,6 +1384,97 @@ function renderStatus() {
   rec.className = "chip " + (SESS.mode === "off" ? "" : "warn");
   document.getElementById("sb-host").textContent = location.host;
   if (VIEW === "about") renderAbout();
+}
+
+// ── Settings: sign-in and API key ─────────────────────────────────────────
+// What the server says, never the password and never more of a key than its last four.
+// A key made here is in ACC_MADE until the page is left: it is shown once.
+let ACC = null, ACC_MADE = null;
+async function accessLoad() {
+  const r = await REST("GET", "/api/access");
+  if (r.ok) { ACC = r.body; accessRender(); }
+}
+function accessRender(message, bad) {
+  const el = document.getElementById("access-body");
+  if (!el || !ACC) return;
+  const pw = ACC.password, key = ACC.key;
+  const needCurrent = pw.set && ACC.you;
+  // What the environment gave is the first one: one set here replaces it, and is kept across restarts.
+  const envNote = (name, what, used) => used
+    ? `<p class="help">Now <code>${name}</code>, from where LLMSim is started. A ${what} set here replaces it, and is kept across restarts.</p>`
+    : `<p class="help">Set here, replacing <code>${name}</code>.</p>`;
+  el.innerHTML = `
+    <div class="card"><h2>Sign-in ${ACC.on ? tagFor("set", "on") : tagFor("err", "off")}</h2>
+      ${ACC.on
+        ? `<p class="help" style="margin:0">The console asks for a sign-in${pw.set ? " as <b>" + esc(ACC.user) + "</b>" : " (no password is set, so only the key gets in)"}, and <code>/api/…</code> needs that sign-in or the API key. A sign-in lasts ${esc(String(ACC.sessionDays))} days.</p>`
+        : `<div class="note warn" style="margin:0">Anyone who can reach this port can use the console and the whole API, and spend a signed-in plan or a saved key. Set a password below to require a sign-in.</div>`}
+      ${needCurrent ? `<label for="acc-current">Your current password <span class="hint">· needed to change any of this</span></label><input id="acc-current" type="password" autocomplete="current-password">` : ""}
+      <div id="acc-note" class="note" ${message ? "" : "hidden"} style="${bad ? "background:var(--primary-tint);color:var(--primary-hover)" : "background:var(--green-tint);color:var(--green)"}">${esc(message || "")}</div>
+    </div>
+    <div class="card"><h2>Console password</h2>
+      ${pw.env ? envNote("LLMSIM_ADMIN_PASSWORD", "password", pw.from === "env") : ""}
+        <p class="help">${pw.set ? "Changing it signs everybody else out. You stay signed in." : "Setting one turns the sign-in on. You stay signed in on this browser."}</p>
+        <div class="row">
+          <div><label for="acc-user">User name${ACC.userFrom === "env" ? ' <span class="hint">· from LLMSIM_ADMIN_USER</span>' : ""}</label><input id="acc-user" type="text" autocomplete="username" value="${esc(ACC.user)}"></div>
+          <div><label for="acc-pw">${pw.set ? "New password" : "Password"} <span class="hint">· at least 8 characters</span></label><input id="acc-pw" type="password" autocomplete="new-password"></div>
+          <div><label for="acc-pw2">Type it again</label><input id="acc-pw2" type="password" autocomplete="new-password"></div>
+        </div>
+        <div class="acc-actions"><button class="btn" onclick="accPassword()">${pw.set ? "Change the password" : "Turn on the sign-in"}</button></div>
+    </div>
+    <div class="card"><h2>API key ${key.set ? tagFor("set", "ends " + (key.hint || "").replace("…", "")) : ""}</h2>
+      <p class="help">For scripts, CI and the <code>llmsim</code> CLI: send it as the <code>X-LLMSim-Key</code> header, or as a bearer token on <code>/api/…</code>. Only a hash of it is kept, so a key is shown once, when it is made.</p>
+      ${key.env ? envNote("LLMSIM_API_KEY", "key", key.from === "env") : ""}
+        <div class="acc-actions">
+          <button class="btn" onclick="accKey('new-key')" ${pw.set ? "" : "disabled"}>${key.set ? "Make a new key" : "Make a key"}</button>
+          ${key.from === "settings" ? `<button class="btn ghost" onclick="accKey('remove-key')">Remove the key</button>` : ""}
+          ${pw.set ? (key.set ? '<span class="hint">A new key replaces this one at once.</span>' : "") : '<span class="hint">Set a console password first: a key alone would lock this page out.</span>'}
+        </div>
+      ${ACC_MADE ? `<div class="acc-key"><code id="acc-made">${esc(ACC_MADE)}</code><button class="btn ghost" onclick="copyText(ACC_MADE); note('acc-copied', 'Copied.')">Copy</button></div>
+        <p class="help" style="margin:8px 0 0">Copy it now: it is not shown again. <span id="acc-copied"></span><br>
+        <code>curl ${esc(location.origin)}/api/rules -H "X-LLMSim-Key: …"</code> · <code>LLMSIM_API_KEY=… bin/llmsim results</code></p>` : ""}
+    </div>
+    ${ACC.on && !pw.env ? `<div class="card"><h2>Turn off the sign-in</h2>
+      <p class="help">Removes the password and the key kept here. Anyone who can reach this port can then use everything.</p>
+      <button class="btn ghost" onclick="accOff()">Turn off the sign-in</button></div>` : ""}`;
+}
+function accNote(message, bad) {
+  const el = document.getElementById("acc-note");
+  if (!el) return;
+  el.textContent = message;
+  el.style.cssText = bad ? "background:var(--primary-tint);color:var(--primary-hover)" : "background:var(--green-tint);color:var(--green)";
+  el.hidden = false;
+}
+async function accessAct(body) {
+  const cur = document.getElementById("acc-current");
+  if (cur) body.current = cur.value;
+  const r = await REST("POST", "/api/access", body);
+  if (r.body && r.body.on !== undefined) ACC = Object.assign({}, ACC, r.body);
+  // Read again, as the cookie this answer may have set: who is signed in decides what the page asks for.
+  const now = await REST("GET", "/api/access");
+  if (now.ok) ACC = now.body;
+  // Only new-key answers newKey; every answer also carries "key", which is the key's status, never the key.
+  if (r.ok && typeof r.body.newKey === "string") ACC_MADE = r.body.newKey;
+  if (r.ok && body.action === "remove-key") ACC_MADE = null;
+  accessRender((r.body && r.body.message) || ("HTTP " + r.status), !r.ok);
+  whoRefresh();
+  return r;
+}
+async function accPassword() {
+  const a = document.getElementById("acc-pw").value, b = document.getElementById("acc-pw2").value;
+  // Said in place, not redrawn: a redraw would empty what was typed.
+  if (a !== b) return accNote("The two passwords are not the same.", true);
+  const user = document.getElementById("acc-user");
+  await accessAct({ action: "password", password: a, user: user && !user.disabled ? user.value : undefined });
+}
+async function accKey(action) {
+  if (action === "new-key" && ACC.key.set && !confirm("Make a new key? The one in use stops working at once.")) return;
+  if (action === "remove-key" && !confirm("Remove the key? Scripts and CI using it are refused from now on.")) return;
+  await accessAct({ action });
+}
+async function accOff() {
+  if (!confirm("Turn off the sign-in? Anyone who can reach this port can then use the console and the whole API.")) return;
+  ACC_MADE = null;
+  await accessAct({ action: "off" });
 }
 
 function renderAbout() {
@@ -1630,6 +1830,7 @@ const copyText = (t) => navigator.clipboard && navigator.clipboard.writeText(t);
 // A page that re-reads its data while it is on screen, and stops when it is not.
 const PAGES = {};
 PAGES.about = { enter: renderAbout };
+PAGES.access = { enter: () => { ACC_MADE = null; accessLoad(); } };
 PAGES.capture = { enter: () => stLoad() };
 PAGES.connect = { enter: () => renderOverview() };
 PAGES.dashboard = { enter: dashLoad, poll: () => { if (DASH.until && Date.now() < DASH.until) dashLoad(); } };
@@ -4127,7 +4328,7 @@ const runAll = () => execute({}, "all");
 const runOne = (id) => execute({ testIds: [id] });
 const runPlan = (id) => execute({ planId: id });
 
-show((location.hash || "").slice(1) || "overview");
+if (!document.body.classList.contains("signing-in")) show((location.hash || "").slice(1) || "overview");
 window.addEventListener("hashchange", () => { const v = (location.hash || "").slice(1); if (v && v !== VIEWKEY) show(v); });
 load();
 setInterval(load, 1500);

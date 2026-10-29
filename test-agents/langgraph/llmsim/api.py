@@ -4,7 +4,8 @@ import json, os, sys, urllib.request, urllib.error
 BASE = os.environ.get("LLMSIM_URL", "http://127.0.0.1:18110")
 def api(method, path, body=None, timeout=600):
     req = urllib.request.Request(BASE + path, method=method, data=json.dumps(body).encode() if body is not None else None,
-                                 headers={"Content-Type": "application/json"})
+                                 headers=dict({"Content-Type": "application/json"},
+                                              **({"X-LLMSim-Key": os.environ["LLMSIM_API_KEY"]} if os.environ.get("LLMSIM_API_KEY") else {})))
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return r.status, json.load(r)

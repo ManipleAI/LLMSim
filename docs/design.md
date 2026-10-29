@@ -230,12 +230,15 @@ A status becomes that vendor's own error envelope, so a client's retry and
 backoff handling is exercised rather than bypassed. Leave a model unset and
 it falls through to the script exactly as before.
 
-There is no sign-in. This runs on a developer's machine or a test box, holds
-nothing worth taking, and a password in front of it was friction on the one
-path everybody uses — the same posture the vendor endpoints already have,
-since their keys are published in this file. Bind the port somewhere
-reachable and the console is reachable too. The upstream key is still never
-sent to the browser: the page is told whether one is stored, and no more.
+A checkout starts with no sign-in: on a developer's own machine a password is
+friction on the one path everybody uses. Anywhere else LLMSim holds what is
+worth taking (every request an agent sent, a saved key, a signed-in plan), so
+a password (`LLMSIM_ADMIN_PASSWORD`, or one set in Settings) puts the console and
+`/api` behind a cookie, and `LLMSIM_API_KEY` adds a key for scripts. The installers
+leave both unset, so an install behaves as it always has. What an agent calls (the vendor
+routes, the test kit's stand-ins) stays open, because an agent cannot sign in.
+The upstream key is still never sent to the browser: the page is told whether
+one is stored, and no more.
 
 ## Two modes: scripted, or one real model behind every name
 
@@ -383,10 +386,9 @@ script; *Answer here if the plan cannot be reached* is opt-in.
 | `LLMSIM_CHATGPT_ISSUER` / `_BACKEND` | OpenAI's | Overridden by the tests to point at a stand-in. |
 | `LLMSIM_CHATGPT_CLIENT_ID` / `_ORIGINATOR` | Codex's | What the sign-in presents itself as. |
 
-**Read this before turning it on.** The rest of LLMSim holds nothing worth
-taking, and that is why the console has no sign-in. Signed in, this holds a
-subscription: anyone who can reach the port can spend it, through the vendor
-routes with their published keys. Keep it on your own machine or a network you
+**Read this before turning it on.** Signed in, this holds a subscription:
+anyone who can reach the port can spend it, through the vendor routes with their
+published keys, even when the console needs a sign-in. Keep it on your own machine or a network you
 trust. The sign-in presents as the Codex client, which is what makes it work;
 whether a given use of a plan that way is permitted is OpenAI's to say, not
 this file's. Usage counts against the plan's own limits.

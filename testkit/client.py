@@ -14,12 +14,17 @@ class LLMSimError(Exception):
 
 
 class Client:
-    def __init__(self, server=None):
+    def __init__(self, server=None, api_key=None):
         import os
         self.server = (server or os.environ.get("LLMSIM_URL") or "http://localhost:8099").rstrip("/")
+        # Needed once the server asks for a sign-in (LLMSIM_API_KEY on it); sent only when there is one.
+        self.api_key = api_key if api_key is not None else os.environ.get("LLMSIM_API_KEY", "")
 
     def call(self, method, path, body=None, timeout=3700):
-        req = urllib.request.Request(self.server + path, json.dumps(body).encode() if body is not None else None, {"Content-Type": "application/json"}, method=method)
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["X-LLMSim-Key"] = self.api_key
+        req = urllib.request.Request(self.server + path, json.dumps(body).encode() if body is not None else None, headers, method=method)
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 status, text = resp.status, resp.read().decode()

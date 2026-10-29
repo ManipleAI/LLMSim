@@ -11,7 +11,8 @@
     llmsim experiment compare BASELINE CANDIDATE
     llmsim experiment baseline EXPERIMENT
 
-The server is LLMSIM_URL (default http://localhost:8099) or --server. Exit status:
+The server is LLMSIM_URL (default http://localhost:8099) or --server; its API key, when it asks for
+one, is LLMSIM_API_KEY or --api-key. Exit status:
 0 every check passed · 1 a check failed, errored or had no data · 2 could not run.
 Standard library only.
 """
@@ -36,6 +37,7 @@ def print_result(result):
 def main():
     ap = argparse.ArgumentParser(prog="llmsim", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--server", default=os.environ.get("LLMSIM_URL", "http://localhost:8099"))
+    ap.add_argument("--api-key", default=os.environ.get("LLMSIM_API_KEY", ""))
     sub = ap.add_subparsers(dest="cmd", required=True)
     run = sub.add_parser("run")
     run.add_argument("file", nargs="?")
@@ -69,7 +71,7 @@ def main():
     ex.add_argument("--junit")
     ex.add_argument("--json", action="store_true")
     args = ap.parse_args()
-    client = Client(args.server)
+    client = Client(args.server, args.api_key)
     try:
         sys.exit(dispatch(args, client))
     except LLMSimError as exc:

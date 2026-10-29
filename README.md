@@ -62,6 +62,8 @@ Nothing leaves your machine unless you route it to a real model on purpose.
   your own code evaluators.
 - **Built for CI.** A CLI with exit codes and JUnit output, datasets and experiments gated
   against a baseline, a pytest plugin, and a GitHub Action.
+- **Open on your machine, signed in when shared.** Set a password, and the console asks
+  for a sign-in (then a cookie); add an API key for scripts and CI.
 - **One console for all of it.** It uses the same HTTP API a script does, and adds a visual
   canvas for building tests.
 
@@ -251,6 +253,7 @@ that regressed, and fails the build:
 - uses: ManipleAI/LLMSim@main
   with:
     server-url: http://localhost:8099
+    api-key: ${{ secrets.LLMSIM_API_KEY }}   # when the server requires a sign-in
     dataset: refunds
     tier: simulated          # a scripted or recorded model: free and exact
 ```
@@ -312,6 +315,8 @@ example:
 | Variable | What it sets |
 |---|---|
 | `LLMSIM_PORT` | The port (default `8099`) |
+| `LLMSIM_ADMIN_USER`, `LLMSIM_ADMIN_PASSWORD` | The console's sign-in |
+| `LLMSIM_API_KEY` | The key scripts and CI send as `X-LLMSim-Key` |
 | `LLMSIM_DATA` | Where LLMSim keeps what it writes |
 | `LLMSIM_SCRIPT` | The rules file to answer from (default `responses.json`) |
 | `LLMSIM_UPSTREAM`, `LLMSIM_UPSTREAM_KEY`, `LLMSIM_UPSTREAM_FORMAT` | A real model to send requests to |
@@ -321,9 +326,33 @@ The [documentation](docs/guide.md) lists all of them.
 
 ## Security
 
-**LLMSim has no login.** Anyone who can reach its port can use all of it. Once a real
-model's key is saved or a ChatGPT plan is signed in, they can also spend it. Run it on your
-own machine or on a network you trust, and don't expose it to the internet.
+**LLMSim starts open**, as it always has, which suits your own machine: anyone who can
+reach the port can use the console and the whole API. Anywhere else, set a password, in
+either of two ways:
+
+- **In the console**, under **Settings › Sign-in and API key**. Set a password, then make
+  an API key (it is shown once). Only hashes of them are kept.
+- **Where LLMSim is started**, for the first sign-in. A password or key set in the console
+  later replaces it:
+
+```bash
+LLMSIM_ADMIN_PASSWORD='choose one' LLMSIM_API_KEY='llmsim-…' python3 server.py
+```
+
+- **The console** shows a sign-in in front of the page you opened. Sign in once and a
+  cookie keeps you signed in (`HttpOnly`, `SameSite=Strict`, 7 days). **Sign out** is at
+  the bottom of the menu.
+- **The API key** is a second way in, for what cannot sign in. It is used only once a
+  password is set: a key alone changes nothing.
+- **Scripts and CI** send the key as the `X-LLMSim-Key` header, or as a bearer token on
+  `/api/…`. `bin/llmsim`, the pytest plugin and the GitHub Action (`api-key`) read it from
+  `LLMSIM_API_KEY`.
+- **What an agent calls stays open**, because an agent under test cannot sign in: the
+  vendors' routes, which take their own keys, and the test kit's stand-ins. If LLMSim
+  answers with a real model (a saved Anthropic key, an upstream or a ChatGPT plan), also set
+  `LLMSIM_OPENAI_KEY`, `LLMSIM_ANTHROPIC_KEY` and `LLMSIM_DEEPSEEK_KEY` to keys of your own.
+
+Even with it on, put LLMSim behind HTTPS before you expose it beyond a network you trust.
 
 ## Documentation
 
@@ -347,6 +376,13 @@ for t in tests/test_*.py; do python3 "$t" || break; done
 Each test file starts its own LLMSim on a free port, with a throwaway data directory. The
 documentation page is built from `docs/guide.md` with `bin/build-docs`, and a test fails if
 the two are out of step.
+
+`tests/test_access_page.py` also clicks through **Settings › Sign-in and API key** in a real
+browser. It needs Node and Playwright for Node, and skips without them:
+
+```bash
+NODE_PATH=/path/to/node_modules python3 tests/test_access_page.py
+```
 
 Contributions are welcome. Open an issue to discuss a change, or send a pull request with a
 test that shows it working.

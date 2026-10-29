@@ -24,6 +24,44 @@ LLMSIM_PORT=9000 python3 server.py    # or another port
 
 The console is at `http://localhost:8099/ui`. Everything on it is also an HTTP API, and this documentation shows both.
 
+### Require a sign-in
+
+Out of the box LLMSim is open: anyone who can reach the port can use the console and the whole API. That suits your own machine. Anywhere else, set a password (and, for scripts, an API key), either in the console or where LLMSim is started. With no password set, LLMSim works exactly as it always has.
+
+**In the console:** open **Settings › Sign-in and API key**.
+- Set a password. That turns the sign-in on, and you stay signed in.
+- Then **Make a key**. The key is shown once, so copy it then.
+- The same page changes the password, makes a new key (the old one stops working at once), removes the key, or turns the sign-in off.
+- Once you are signed in, each change asks for your current password.
+- LLMSim keeps only hashes of the password and the key, in `llmsim.access.json`, which only LLMSim's user can read.
+
+**Where it is started:** set these for the first sign-in. A password or key set in the console later replaces them, and is kept across restarts:
+
+```bash
+LLMSIM_ADMIN_PASSWORD='choose one' LLMSIM_API_KEY='llmsim-…' python3 server.py
+```
+
+| Variable | Does |
+|---|---|
+| `LLMSIM_ADMIN_USER` | The console's user name. `admin` if left out. |
+| `LLMSIM_ADMIN_PASSWORD` | Its password. This is what turns the sign-in on. Sign in once on the console; a cookie keeps you signed in. |
+| `LLMSIM_API_KEY` | For scripts, CI and the `llmsim` CLI: send it as `X-LLMSim-Key`, or as a bearer token on `/api/…`. Used only once a password is set. |
+| `LLMSIM_SESSION_DAYS` | How long a sign-in lasts. 7 if left out. |
+
+Setting the password turns the sign-in on. A key with no password is not used, and the startup log says so. Then:
+
+- The console (`/ui`) shows a sign-in in front of the screen you opened, and that screen once you are in. Nothing is redirected. **Sign out** is at the bottom of the menu.
+- `/api/…` answers `401` without the cookie or the key.
+- `/healthz` says only that LLMSim is up.
+- The vendors' routes, the test kit's stand-ins (`/mcp`, `/mock`, `/a2a`, `/a2a-proxy`, `/otlp`, `/callbacks`) and this guide stay open. An agent under test calls those and cannot sign in. The vendors' routes take their own keys: set `LLMSIM_ANTHROPIC_KEY`, `LLMSIM_OPENAI_KEY` and `LLMSIM_DEEPSEEK_KEY` to keys of your own if LLMSim answers with a real model.
+
+```bash
+curl localhost:8099/api/rules -H "X-LLMSim-Key: $LLMSIM_API_KEY"
+LLMSIM_API_KEY=… bin/llmsim results
+```
+
+The cookie is `HttpOnly` and `SameSite=Strict`, and is named after the port, so two LLMSims on one machine keep separate sign-ins. A change made with it must come from the console's own page. It is signed with a key kept in `llmsim.secret`, so a restart keeps you signed in. Changing the password signs everybody out. After five wrong passwords in a row, the next try waits a minute.
+
 ### Point a client at it
 
 Give the client a base URL and the matching key. The keys are fake and published. A wrong one gets the vendor's own 401.
@@ -374,7 +412,7 @@ The client's `temperature` or `top_p`, stop sequences, tools and tool choice are
 
 The ChatGPT sign-in is OpenAI's OAuth flow, and its redirect lands on `127.0.0.1:1455` on the machine LLMSim runs on. On your own machine that just works. When LLMSim runs somewhere else, the console asks you to paste the address your browser ended up on instead.
 
-> **Once you sign in, LLMSim holds a real subscription.** It listens on every network interface and the console has no login, so anyone who can reach the port can spend the plan. Keep it on your own machine or a network you trust.
+> **Once you sign in, LLMSim holds a real subscription.** It listens on every network interface, and the vendors' routes take keys that are published, so anyone who can reach the port can spend the plan. [Require a sign-in](#require-a-sign-in), set vendor keys of your own, or keep it on your own machine or a network you trust.
 
 The sign-in is kept in `llmsim.chatgpt-auth.json` beside the server. A container with no volume loses it on restart and goes back to scripted answers.
 
@@ -698,13 +736,14 @@ bin/llmsim experiment run --dataset refunds --gate    # a dataset, gated against
 
 ## API reference
 
-Every route answers JSON. A request body is JSON too, and no `Content-Type` header is required. There is no authentication on the management API: anyone who can reach the port can use it.
+Every route answers JSON. A request body is JSON too, and no `Content-Type` header is required. Once a sign-in is required ([Require a sign-in](#require-a-sign-in)), every `/api/…` route needs the console's cookie or the API key in `X-LLMSim-Key`.
 
 | Status | Means |
 |---|---|
 | `200` | Done. The body has `"ok": true`. |
 | `202` | Started in the background. Poll the route the body names. |
 | `400` | The request was wrong. The body lists every problem under `problems`. |
+| `401` | A sign-in is required, and neither the cookie nor the API key came with the request. |
 | `403` | The request came from a page on another website. |
 | `404` | There is no such rule, fault, recording, run or route. |
 | `409` | The current state forbids it, for example a recording is already running. |
@@ -802,6 +841,16 @@ These are what a client calls. Prefix any of them with `/run/<run>` or `/run/<ru
 | `POST /api/routing/hold` | Hold the default route for a while without changing what is kept. Body `{default, by, seconds?, everyModel?}`; `seconds` is 1 to 3600 and 300 if left out. Answers `409` if someone else holds it. |
 | `DELETE /api/routing/hold/<id>` | Release that hold. Releasing one that already ended is not an error. |
 | `DELETE /api/routing/hold` | Release whatever hold is in force |
+
+### Access
+
+| Method and path | Does |
+|---|---|
+| `POST /login` | Sign in: `{user, password}`. Sets the cookie and answers `{ok, user}`; `401` when they do not match, `429` after five wrong passwords in a row. |
+| `POST /logout` | Clear the cookie |
+| `GET /api/auth` | `{on, user, via}`: whether a sign-in is required, and who this request is (`via` is `cookie` or `key`) |
+| `GET /api/access` | What the Settings page shows: whether the sign-in is on, the user, and where the password and the key come from (`env` or `settings`). Never the password, and only the key's last four characters. |
+| `POST /api/access` | One change: `{action: "password", password, user?}`, `{action: "new-key"}` (answers the key as `newKey`, once), `{action: "remove-key"}` or `{action: "off"}`. With the cookie, add `current`, the current password. A password or key set here replaces the environment's. `409` for `off` while `LLMSIM_ADMIN_PASSWORD` is set, and for `remove-key` on the environment's key. |
 
 ### Settings
 
@@ -977,7 +1026,7 @@ The sign-in is read when LLMSim starts. Copying a sign-in file into a running LL
 
 ## Limits
 
-- There is no authentication. Anyone who can reach the port can use everything here, and can spend a signed-in ChatGPT plan or a saved Anthropic key. Keep it on your own machine or a network you trust.
+- Unless a sign-in is required, anyone who can reach the port can use everything here, and can spend a signed-in ChatGPT plan or a saved Anthropic key. Even with one, the vendors' routes take their own keys, which are published unless you set your own. There is one console user.
 - Captured requests are held in memory only.
 - An assertion that passes over a request too large to keep whole says so in `warnings`.
 - A streamed answer from a real model is passed through event by event, so only the stream faults can reach it.
@@ -989,3 +1038,5 @@ for t in tests/test_*.py; do python3 "$t" || break; done
 ```
 
 Each file starts its own LLMSim on a free port with a throwaway directory. The instance you are running is never touched.
+
+`tests/test_access_page.py` drives **Settings › Sign-in and API key** in a real browser: it sets and changes the password, makes, replaces and removes the key, signs out and in, and turns the sign-in off. It needs Node and Playwright for Node (`NODE_PATH=/path/to/node_modules`), and says it skipped without them.

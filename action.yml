@@ -7,6 +7,9 @@ inputs:
   server-url:
     description: The LLMSim server to run against.
     required: true
+  api-key:
+    description: The server's API key (its LLMSIM_API_KEY), when it asks for a sign-in. Pass it from a secret.
+    required: false
   dataset:
     description: The dataset to run: name, name@version or name:tag.
     required: true
@@ -57,6 +60,7 @@ runs:
       run: python3 "$GITHUB_ACTION_PATH/bin/llmsim-ci"
       env:
         INPUT_SERVER-URL: ${{ inputs.server-url }}
+        INPUT_API-KEY: ${{ inputs.api-key }}
         INPUT_DATASET: ${{ inputs.dataset }}
         INPUT_BASELINE: ${{ inputs.baseline }}
         INPUT_REPEAT: ${{ inputs.repeat }}

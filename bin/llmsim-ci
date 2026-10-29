@@ -53,7 +53,7 @@ def main():
     if not dataset:
         print("llmsim-ci: the dataset input is required", file=sys.stderr)
         return 2
-    client = Client(inp("server-url"))
+    client = Client(inp("server-url"), inp("api-key"))
     spec = {"dataset": dataset, "label": os.environ.get("GITHUB_SHA", "")[:12] or None, "tier": inp("tier"), "seed": inp("seed"), "split": inp("split")}
     if inp("repeat"):
         spec["repeat"] = {"n": int(inp("repeat")), "required": int(inp("required") or inp("repeat"))}

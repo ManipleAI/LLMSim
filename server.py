@@ -38,6 +38,8 @@ import base64
 import collections
 import hashlib
 import hmac
+import html
+import http.cookies
 import itertools
 import json
 import os
@@ -204,13 +206,13 @@ CONFIG_PATH = os.environ.get("LLMSIM_CONFIG", os.path.join(DATA_DIR, "llmsim.con
 SUITE_PATH = os.environ.get("LLMSIM_SUITE", os.path.join(DATA_DIR, "llmsim.tests.json"))
 SUITE_KEYS = ("tests", "plans")
 
-# The console has no sign-in.
+# The console asks for a sign-in only once one is configured (see "access" below).
 #
-# This is a simulator: it runs on a developer's machine or a test box, it
-# holds no data worth taking, and a password in front of it was friction on
-# the one path everybody uses. Bind the port somewhere reachable and the
-# console is reachable too — which is the same posture the vendor endpoints
-# below already have, since their keys are published in this file.
+# On a developer's own machine a password is friction on the one path everybody
+# uses, so a checkout starts open, as it always has. Anywhere else it holds what
+# is worth taking: every request an agent sent, a saved key, a signed-in plan.
+# There, LLMSIM_ADMIN_PASSWORD and LLMSIM_API_KEY put the console and /api behind
+# a sign-in, and the installers set them.
 
 DEFAULTS = {
     "routing": {
@@ -3998,6 +4000,187 @@ def credential_accepted(cred):
     return cred["label"].startswith("published:")
 
 
+# -- access: who may use the console and the API -----------------------------
+#
+# Off until it is configured, so a checkout, a test and every LLMSim installed
+# before this keep working as they did. Set either value and it is on:
+#
+#   LLMSIM_ADMIN_USER       the console's user name (default admin)
+#   LLMSIM_ADMIN_PASSWORD   its password: sign in at /login once, then a cookie
+#   LLMSIM_API_KEY          for scripts and CI: X-LLMSim-Key, or a bearer token
+#
+# What it guards is the console and /api/…: everything that reads what was sent,
+# changes what is answered, or spends a signed-in plan or a saved key. What it
+# does not guard is what an agent under test calls, because an agent cannot be
+# made to sign in: the vendors' routes (their own keys, LLMSIM_OPENAI_KEY and the
+# rest), the test kit's stand-ins (/mcp, /mock, /a2a, /a2a-proxy, /otlp,
+# /callbacks), the health check and the guide.
+
+ADMIN_USER = os.environ.get("LLMSIM_ADMIN_USER") or "admin"
+ADMIN_PASSWORD = os.environ.get("LLMSIM_ADMIN_PASSWORD") or ""
+ACCESS_KEY = os.environ.get("LLMSIM_API_KEY") or ""
+ACCESS_ON = bool(ADMIN_PASSWORD or ACCESS_KEY)
+SESSION_SECONDS = int(float(os.environ.get("LLMSIM_SESSION_DAYS") or 7) * 86400)
+# Cookies are not kept apart by port, and two LLMSims on one machine are usual,
+# so each one's cookie carries its port: signing in to one does not sign out the other.
+SESSION_COOKIE = "llmsim_session_%d" % PORT
+SECRET_PATH = os.environ.get("LLMSIM_SECRET") or os.path.join(DATA_DIR, "llmsim.secret")
+OPEN_PATHS = ("/", "/healthz", "/guide", "/login", "/logout", "/favicon.ico")
+SIGN_IN_FAILS = {}                     # client address -> (failures in a row, time of the last)
+SIGN_IN_LOCK = threading.Lock()
+SIGN_IN_LIMIT, SIGN_IN_WAIT_S = 5, 60
+_SECRET = []
+
+
+def _session_secret():
+    """The key cookies are signed with, made once and kept beside the rest, so a
+    restart does not sign anybody out. Owner-only: whoever has it can mint a cookie."""
+    if _SECRET:
+        return _SECRET[0]
+    try:
+        with open(SECRET_PATH, "rb") as fh:
+            secret = fh.read().strip()
+    except FileNotFoundError:
+        secret = b""
+    if len(secret) < 32:
+        secret = base64.urlsafe_b64encode(os.urandom(32)).rstrip(b"=")
+        os.makedirs(os.path.dirname(SECRET_PATH) or ".", exist_ok=True)
+        fd = os.open(SECRET_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(secret + b"\n")
+    _SECRET.append(secret)
+    return secret
+
+
+def _session_mac(user, expires):
+    # The password is part of the key, so changing it signs out every cookie made with the old one.
+    key = _session_secret() + hashlib.sha256(("%s\0%s" % (ADMIN_USER, ADMIN_PASSWORD)).encode()).digest()
+    return hmac.new(key, ("%s.%d" % (user, expires)).encode(), hashlib.sha256).hexdigest()
+
+
+def session_cookie_for(user):
+    expires = int(time.time()) + SESSION_SECONDS
+    name = base64.urlsafe_b64encode(user.encode()).decode().rstrip("=")
+    return "%s.%d.%s" % (name, expires, _session_mac(user, expires))
+
+
+def session_user(value):
+    """The user a cookie was made for, or None when it is not one of ours, has run out,
+    or was made before the password changed."""
+    if not ADMIN_PASSWORD or not value:
+        return None
+    try:
+        name, expires, mac = value.split(".")
+        user, expires = base64.urlsafe_b64decode(name + "=" * (-len(name) % 4)).decode(), int(expires)
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if expires < time.time() or user != ADMIN_USER:
+        return None
+    return user if hmac.compare_digest(mac, _session_mac(user, expires)) else None
+
+
+def access_key_ok(key):
+    return bool(ACCESS_KEY) and bool(key) and hmac.compare_digest(key.encode(), ACCESS_KEY.encode())
+
+
+def password_ok(user, password):
+    if not ADMIN_PASSWORD:
+        return False
+    # Both compared, always, so how long a refusal takes says nothing about which was wrong.
+    same_user = hmac.compare_digest(str(user).encode(), ADMIN_USER.encode())
+    same_password = hmac.compare_digest(str(password).encode(), ADMIN_PASSWORD.encode())
+    return same_user and same_password
+
+
+def sign_in_wait(address):
+    """Seconds this address must wait before it may try a password again; 0 when it may."""
+    with SIGN_IN_LOCK:
+        fails, last = SIGN_IN_FAILS.get(address, (0, 0))
+    if fails < SIGN_IN_LIMIT:
+        return 0
+    return max(0, int(last + SIGN_IN_WAIT_S - time.time()))
+
+
+def sign_in_result(address, ok):
+    with SIGN_IN_LOCK:
+        if ok:
+            SIGN_IN_FAILS.pop(address, None)
+        else:
+            fails, _ = SIGN_IN_FAILS.get(address, (0, 0))
+            SIGN_IN_FAILS[address] = (fails + 1, time.time())
+
+
+def access_guarded(path):
+    """Whether a path needs a sign-in or the key, once access is on. The path is the
+    one left after a /run/…, /agent/… or provider prefix is taken off it."""
+    if path in OPEN_PATHS:
+        return False
+    return path == "/ui" or path.startswith("/api/") or path == "/api"
+
+
+def html_escape(value):
+    return html.escape(str(value or ""), quote=True)
+
+
+# The sign-in page: one form, served by this process like the console, in its colours.
+# {{next}}, {{user}} and {{message}} are filled in, escaped, when it is sent.
+LOGIN_PAGE = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in · LLMSim</title>
+<style>
+  :root { --page:#efece6; --surface:#fff; --ink:#14181f; --muted:#5a6068; --border:#e7e2d9;
+          --primary:#b23a22; --primary-hover:#8e2c18; --primary-tint:#f7ece8; --chrome:#14181f; }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; display:grid; place-items:center; padding:16px; background:var(--page); color:var(--ink);
+         font:14px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-font-smoothing:antialiased; }
+  main { width:100%; max-width:380px; background:var(--surface); border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+  header { background:var(--chrome); color:#fbfaf7; padding:18px 24px; display:flex; gap:12px; align-items:center; }
+  header b { display:block; font-size:16px; } header span { color:#7d8590; font-size:12px; }
+  form { padding:22px 24px 24px; display:grid; gap:14px; }
+  h1 { margin:0; font-size:18px; } p.lead { margin:-8px 0 0; color:var(--muted); font-size:13px; }
+  label { display:grid; gap:5px; font-size:13px; color:var(--muted); }
+  input { font:inherit; color:var(--ink); padding:9px 11px; border:1px solid var(--border); border-radius:6px; background:#fff; }
+  input:focus { outline:2px solid var(--primary); outline-offset:-1px; border-color:var(--primary); }
+  button { font:inherit; font-weight:600; color:#fff; background:var(--primary); border:0; border-radius:6px; padding:10px; cursor:pointer; }
+  button:hover { background:var(--primary-hover); }
+  .msg { margin:0; padding:9px 11px; border-radius:6px; background:var(--primary-tint); color:var(--primary-hover); font-size:13px; }
+</style></head>
+<body><main>
+  <header>
+    <svg width="22" height="22" viewBox="0 0 100 100" fill="none" aria-hidden="true">
+      <path d="M10 42 L50 12 L90 42" stroke="#B23A22" stroke-width="15" stroke-linecap="square"/>
+      <path d="M10 66 L50 36 L90 66" stroke="#FBFAF7" stroke-width="15" stroke-linecap="square"/>
+      <path d="M10 90 L50 60 L90 90" stroke="#FBFAF7" stroke-width="15" stroke-linecap="square"/>
+    </svg>
+    <div><b>LLMSim</b><span>the vendors' APIs, simulated</span></div>
+  </header>
+  <form method="post" action="/login">
+    <h1>Sign in</h1>
+    <p class="lead">To the console of this LLMSim.</p>
+    {{message}}
+    <label>User name <input name="user" autocomplete="username" required value="{{user}}" autofocus></label>
+    <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+    <input type="hidden" name="next" id="next" value="{{next}}">
+    <button type="submit">Sign in</button>
+  </form>
+</main>
+<script>
+  // A redirect keeps the page's #fragment (which screen was open) but a form post drops it, so it rides in next.
+  (function () { var n = document.getElementById("next"); if (location.hash && n.value.indexOf("#") < 0) n.value += location.hash; })();
+</script>
+</body></html>
+"""
+
+
+def safe_next(value):
+    """Where to go after signing in: a path on this server, never another site."""
+    value = str(value or "")
+    if not value.startswith("/") or value.startswith("//") or "\\" in value or "\n" in value or "\r" in value:
+        return "/ui"
+    return value
+
+
 # -- identity: who sent it ----------------------------------------------------
 
 def _dig_path(value, path):
@@ -6140,6 +6323,13 @@ class Handler(BaseHTTPRequestHandler):
         key = self.presented_key()
         self.provider = self.resolve_provider(prefix, key, path) or "openai"
         self.cred = credential_of(self)
+        if not self.authorize("GET", path):
+            return
+        if path == "/login":
+            return self.login_get()
+        if path == "/api/auth":
+            return self.send_json(200, {"on": ACCESS_ON, "user": self.who if self.who not in (None, "key") else None,
+                                        "via": "key" if self.who == "key" else "cookie" if self.who else None})
 
         if path.startswith(REST_PREFIXES):
             return self.rest_api("GET", path, None, urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query))
@@ -6205,6 +6395,9 @@ class Handler(BaseHTTPRequestHandler):
             return self.wfile.write(payload)
 
         if path in ("/", "/healthz"):
+            if ACCESS_ON and not self.who:
+                # Alive, and nothing more: the rest says what is routed where and which rules exist.
+                return self.send_json(200, {"ok": True, "service": "llmsim", "access": "sign-in required"})
             return self.send_json(200, {
                 "ok": True, "service": "llmsim",
                 "providers": sorted(API_KEYS),
@@ -6270,6 +6463,8 @@ class Handler(BaseHTTPRequestHandler):
         body = self._json_body()
         if body is None:
             return self.send_json(400, {"ok": False, "message": "The body is not valid JSON."})
+        if not self.authorize("PUT", path):
+            return
         if path.startswith(REST_PREFIXES):
             return self.rest_api("PUT", path, body, urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query))
         if testkit.owns(path):
@@ -6287,6 +6482,8 @@ class Handler(BaseHTTPRequestHandler):
         body = self._json_body()
         if body is None:
             return self.send_json(400, {"ok": False, "message": "The body is not valid JSON."})
+        if not self.authorize("PATCH", path):
+            return
         if testkit.owns(path):
             return self.kit_route("PATCH", path, json.dumps(body).encode())
         return self.send_json(405, {"error": "PATCH is taken only by a mock backend: " + path})
@@ -6296,6 +6493,8 @@ class Handler(BaseHTTPRequestHandler):
         prefix, path = self.split_path()
         self.provider = self.resolve_provider(prefix, self.presented_key(), path) or "openai"
         self._json_body()                       # a body, if one was sent, is read and ignored
+        if not self.authorize("DELETE", path):
+            return
         if path.startswith(REST_PREFIXES):
             return self.rest_api("DELETE", path, None, urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query))
         if testkit.owns(path):
@@ -6321,6 +6520,12 @@ class Handler(BaseHTTPRequestHandler):
 
         length = int(self.headers.get("Content-Length") or 0)
         raw = self.rfile.read(length) if length else b"{}"
+        if not self.authorize("POST", path):
+            return
+        if path == "/login":
+            return self.login_post(raw if length else b"")
+        if path == "/logout":
+            return self.logout_post()
         if testkit.owns(path):
             return self.kit_route("POST", path, raw)
         try:
@@ -6377,6 +6582,133 @@ class Handler(BaseHTTPRequestHandler):
 
 
 
+
+    # -- access --
+
+    def _cookie(self, name):
+        jar = http.cookies.SimpleCookie()
+        try:
+            jar.load(self.headers.get("Cookie") or "")
+        except http.cookies.CookieError:
+            return ""
+        return jar[name].value if name in jar else ""
+
+    def _presented_access_key(self, path):
+        key = (self.headers.get("X-LLMSim-Key") or "").strip()
+        if not key and path.startswith("/api"):
+            # A bearer token on /api/… is never a vendor's key: no vendor route lives there.
+            auth = self.headers.get("authorization") or ""
+            key = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+        return key
+
+    def authorize(self, method, path):
+        """True when this request may go on. When it may not, the refusal has been sent.
+
+        Who it is is kept on the handler: "key" for the API key, the user's name for a
+        console cookie, None when access is off or the path is one anybody may use.
+        """
+        self.who = None
+        if not ACCESS_ON:
+            return True
+        if access_key_ok(self._presented_access_key(path)):
+            self.who = "key"
+            return True
+        user = session_user(self._cookie(SESSION_COOKIE))
+        if user:
+            # A cookie is sent by the browser whoever made the request, so a change made
+            # with one must come from the console's own page. Another site on this machine
+            # (another port is the same site to a browser) says so in Origin, or in
+            # Sec-Fetch-Site when it leaves Origin out.
+            if method not in ("GET", "HEAD") and (
+                    self.foreign_origin() or (not self.headers.get("Origin")
+                                              and self.headers.get("Sec-Fetch-Site") in ("cross-site", "same-site"))):
+                self.send_json(403, {"ok": False, "message": "That request came from another site."})
+                return False
+            self.who = user
+            return True
+        if not access_guarded(path):
+            return True
+        if path == "/ui" and method == "GET":
+            self.send_response(303)
+            self.send_header("Location", "/login?next=/ui")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return False
+        raw = json.dumps({"ok": False, "message": "Sign in at /login, or send the API key (X-LLMSim-Key, or a bearer token)."}).encode()
+        self.send_response(401)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(raw)))
+        # What the console looks for to send its page to the sign-in.
+        self.send_header("X-LLMSim-Sign-In", "/login")
+        self.send_header("WWW-Authenticate", 'Bearer realm="llmsim"')
+        self.end_headers()
+        self.wfile.write(raw)
+        return False
+
+    def _secure_cookie(self):
+        return (self.headers.get("X-Forwarded-Proto") or "").lower() == "https" or os.environ.get("LLMSIM_COOKIE_SECURE") == "1"
+
+    def _cookie_header(self, value, max_age):
+        return "%s=%s; Path=/; HttpOnly; SameSite=Strict; Max-Age=%d%s" % (
+            SESSION_COOKIE, value, max_age, "; Secure" if self._secure_cookie() else "")
+
+    def _redirect(self, where, cookie=None):
+        self.send_response(303)
+        self.send_header("Location", where)
+        if cookie:
+            self.send_header("Set-Cookie", cookie)
+        self.send_header("Content-Length", "0")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
+    def login_page(self, next_path="/ui", message="", status=200, user=""):
+        if not ADMIN_PASSWORD:
+            message = message or ("No console password is set on this LLMSim. Set LLMSIM_ADMIN_PASSWORD and restart it."
+                                  if ACCESS_ON else "")
+        page = LOGIN_PAGE.replace("{{next}}", html_escape(next_path)).replace("{{user}}", html_escape(user))
+        page = page.replace("{{message}}", ('<p class="msg" role="alert">%s</p>' % html_escape(message)) if message else "")
+        raw = page.encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(raw)))
+        self.send_header("Cache-Control", "no-store")
+        # The sign-in page is never framed, so a click on it is always the person's own.
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Content-Security-Policy", "frame-ancestors 'none'")
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def login_get(self):
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+        next_path = safe_next((query.get("next") or ["/ui"])[0])
+        if not ACCESS_ON or session_user(self._cookie(SESSION_COOKIE)):
+            return self._redirect(next_path)
+        return self.login_page(next_path)
+
+    def login_post(self, raw):
+        form = urllib.parse.parse_qs(raw.decode("utf-8", "replace"))
+        user, password = (form.get("user") or [""])[0], (form.get("password") or [""])[0]
+        next_path = safe_next((form.get("next") or ["/ui"])[0])
+        if not ACCESS_ON:
+            return self._redirect(next_path)
+        if self.foreign_origin():
+            return self.login_page(next_path, "That sign-in came from another site.", 403)
+        address = self.client_address[0]
+        wait = sign_in_wait(address)
+        if wait:
+            return self.login_page(next_path, "Too many wrong passwords. Try again in %d seconds." % wait, 429, user)
+        ok = password_ok(user, password)
+        sign_in_result(address, ok)
+        if not ok:
+            log("access: a sign-in as %r from %s was refused" % (user[:64], address))
+            return self.login_page(next_path, "That user name and password do not match.", 401, user)
+        log("access: %s signed in from %s" % (user, address))
+        return self._redirect(next_path, self._cookie_header(session_cookie_for(user), SESSION_SECONDS))
+
+    def logout_post(self):
+        if self.foreign_origin():
+            return self.send_json(403, {"ok": False, "message": "That request came from another site."})
+        return self._redirect("/login" if ACCESS_ON else "/ui", self._cookie_header("", 0))
 
     def foreign_origin(self):
         """True when a browser says the request came from some other site.
@@ -7243,6 +7575,13 @@ def main():
                    " for the default route" if CONFIG["routing"]["default"] == "anthropic" else ""))
         else:
             log("anthropic: routes point at Anthropic but no key is set — those requests will fail until one is")
+    if ACCESS_ON:
+        log("access: the console and /api need a sign-in%s%s"
+            % (" (user %s, password from LLMSIM_ADMIN_PASSWORD)" % ADMIN_USER if ADMIN_PASSWORD else " — no console password is set, only the API key",
+               ", or the API key from LLMSIM_API_KEY" if ACCESS_KEY else " — no API key is set, so scripts cannot reach /api"))
+    else:
+        log("access: OPEN — anyone who can reach port %d can use the console and the whole API." % PORT)
+        log("        Set LLMSIM_ADMIN_PASSWORD and LLMSIM_API_KEY to require a sign-in.")
     log("console: http://localhost:%d/ui   guide: http://localhost:%d/guide" % (PORT, PORT))
     for name in sorted(API_KEYS):
         log("  %-9s http://localhost:%d/%s   key %s" % (name, PORT, name, API_KEYS[name]))

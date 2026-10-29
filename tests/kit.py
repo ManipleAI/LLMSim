@@ -39,7 +39,10 @@ class Sim:
                         LLMSIM_CHATGPT_AUTH=os.path.join(self.workdir, "auth.json"),
                         LLMSIM_RULES=os.path.join(self.workdir, "rules.json"), LLMSIM_ASSERTIONS=os.path.join(self.workdir, "assertions.json"),
                         LLMSIM_RUNS_DB=os.path.join(self.workdir, "runs.db"),
-                        LLMSIM_CREDENTIALS=os.path.join(self.workdir, "credentials.json"), **(env or {}))
+                        LLMSIM_CREDENTIALS=os.path.join(self.workdir, "credentials.json"),
+                        # Open unless a test asks otherwise, whatever the shell running the tests has set.
+                        LLMSIM_SECRET=os.path.join(self.workdir, "secret"))
+        self.env.update(dict({"LLMSIM_ADMIN_PASSWORD": "", "LLMSIM_API_KEY": ""}, **(env or {})))
         self.proc = None
         self.base = "http://127.0.0.1:%d" % self.port
 

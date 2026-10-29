@@ -92,6 +92,12 @@
   nav .foot .status { display:flex; align-items:center; gap:7px; }
   .dot { width:7px; height:7px; border-radius:50%; background:var(--green); flex:0 0 7px; }
   .dot.off { background:#6b3b31; }
+  nav .foot .who { display:flex; align-items:center; gap:6px; margin-top:8px; }
+  nav .foot .who b { color:var(--chrome-fg); font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  nav .foot .who form { margin:0 0 0 auto; }
+  nav .foot .who button { width:auto; min-height:0; height:auto; margin:0; display:inline-block; font:inherit; font-size:12px; line-height:1.5;
+    color:var(--chrome-fg); background:none; border:1px solid #2c3340; border-radius:5px; padding:2px 9px; cursor:pointer; }
+  nav .foot .who button:hover { border-color:var(--chrome-dim); }
 
   /* ── main ────────────────────────────────────────────────────────── */
   main { flex:1; min-width:0; height:100vh; overflow:auto; }
@@ -460,6 +466,8 @@
   <div class="foot">
     <div class="status"><span id="dot" class="dot"></span><span id="conn">connected</span></div>
     <div style="margin-top:5px" id="footmode">scripted</div>
+    <div class="who" id="who" hidden><span>signed in as</span> <b id="who-name"></b>
+      <form method="post" action="/logout"><button type="submit">Sign out</button></form></div>
   </div>
 </nav>
 
@@ -1084,6 +1092,21 @@
 </main>
 
 <script>
+// When this LLMSim asks for a sign-in, every call the page makes is refused with it: go and sign in,
+// and come back to the screen that was open.
+(function () {
+  const plain = window.fetch.bind(window);
+  window.fetch = async (...args) => {
+    const r = await plain(...args);
+    if (r.status === 401 && r.headers.get("X-LLMSim-Sign-In")) location.href = "/login?next=" + encodeURIComponent(location.pathname + location.hash);
+    return r;
+  };
+  plain("/api/auth").then((r) => r.ok ? r.json() : null).then((a) => {
+    if (!a || !a.on || !a.user) return;
+    document.getElementById("who-name").textContent = a.user;
+    document.getElementById("who").hidden = false;
+  }).catch(() => {});
+})();
 let CFG = null, MODELS = {}, ALL = [], REQS = [], SINCE = 0, VIEW = "overview", PICKED = null, RULES = [];
 // The default route may be held on something else for a while, by a test that needs it. What was chosen is not changed.
 let HOLD = null, STATE = null;

@@ -96,6 +96,30 @@
   nav .foot .who[hidden] { display:none; }
   nav .foot .who b { color:var(--chrome-fg); font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   nav .foot .who form { margin:0 0 0 auto; }
+
+  /* ── sign-in: Maniple's card, in front of the console while nobody is signed in ── */
+  #signin { display:none; position:fixed; inset:0; z-index:1000; background:var(--page); align-items:center; justify-content:center; padding:16px; overflow:auto; }
+  body.signing-in #signin { display:flex; }
+  body.signing-in > nav, body.signing-in > main { visibility:hidden; }
+  #signin form { width:100%; max-width:384px; background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:32px;
+                 box-shadow:0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.06); }
+  #signin .si-brand { display:flex; align-items:center; gap:10px; margin-bottom:32px; }
+  #signin .si-brand b { font-size:20px; font-weight:700; letter-spacing:-.02em; color:var(--ink); }
+  #signin .si-brand b span { color:var(--primary); }
+  #signin h1 { font-size:18px; font-weight:700; margin:0 0 4px; }
+  #signin .lead { color:var(--muted); font-size:13px; margin:0 0 24px; }
+  #signin label { display:block; font-family:var(--mono); font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); margin-bottom:8px; }
+  #signin input { display:block; width:100%; box-sizing:border-box; border:1px solid var(--border); border-radius:6px; padding:10px; margin:0 0 16px;
+                  font:inherit; font-size:13px; color:var(--ink); background:var(--surface); }
+  #signin input#si-pw { margin-bottom:20px; }
+  #signin input:focus { outline:none; border-color:var(--primary); }
+  #signin .si-err { color:var(--primary); font-size:12.5px; margin:-4px 0 16px; }
+  #signin .si-err[hidden] { display:none; }
+  #signin button { display:block; width:100%; background:var(--primary); color:#fff; border:0; border-radius:6px; padding:10px 16px;
+                   font:inherit; font-size:13px; font-weight:500; cursor:pointer; }
+  #signin button:hover { background:var(--primary-hover); }
+  #signin button:disabled { opacity:.6; cursor:default; }
+  #signin .si-foot { color:var(--faint); font-size:11.5px; text-align:center; margin:20px 0 0; }
   nav .foot .who button { width:auto; min-height:0; height:auto; margin:0; display:inline-block; font:inherit; font-size:12px; line-height:1.5;
     color:var(--chrome-fg); background:none; border:1px solid #2c3340; border-radius:5px; padding:2px 9px; cursor:pointer; }
   nav .foot .who button:hover { border-color:var(--chrome-dim); }
@@ -399,6 +423,27 @@
 </style>
 </head>
 <body>
+<div id="signin" role="dialog" aria-modal="true" aria-labelledby="si-title">
+  <form id="si-form" onsubmit="signIn(event)">
+    <div class="si-brand">
+      <svg width="30" height="30" viewBox="0 0 100 100" fill="none" aria-hidden="true">
+        <path d="M10 42 L50 12 L90 42" stroke="#B23A22" stroke-width="15" stroke-linecap="square"/>
+        <path d="M10 66 L50 36 L90 66" stroke="#14181F" stroke-width="15" stroke-linecap="square"/>
+        <path d="M10 90 L50 60 L90 90" stroke="#14181F" stroke-width="15" stroke-linecap="square"/>
+      </svg>
+      <b>LLM<span>Sim</span></b>
+    </div>
+    <h1 id="si-title">Sign in</h1>
+    <p class="lead">To the console of this LLMSim. Agents under test do not need to: the vendors' routes stay open.</p>
+    <label for="si-user">User name</label>
+    <input id="si-user" autocomplete="username" required placeholder="admin" autofocus>
+    <label for="si-pw">Password</label>
+    <input id="si-pw" type="password" autocomplete="current-password" required>
+    <p class="si-err" id="si-err" role="alert" hidden></p>
+    <button type="submit" id="si-go">Sign in</button>
+    <p class="si-foot">The password is LLMSIM_ADMIN_PASSWORD, or the one set in Settings.</p>
+  </form>
+</div>
 
 <nav>
   <div class="brand">
@@ -473,7 +518,7 @@
     <div class="status"><span id="dot" class="dot"></span><span id="conn">connected</span></div>
     <div style="margin-top:5px" id="footmode">scripted</div>
     <div class="who" id="who" hidden><span>signed in as</span> <b id="who-name"></b>
-      <form method="post" action="/logout"><button type="submit">Sign out</button></form></div>
+      <form onsubmit="signOut(event)"><button type="submit">Sign out</button></form></div>
   </div>
 </nav>
 
@@ -1102,14 +1147,43 @@
 </main>
 
 <script>
-// When this LLMSim asks for a sign-in, every call the page makes is refused with it: go and sign in,
-// and come back to the screen that was open.
+// When this LLMSim asks for a sign-in, the sign-in is drawn in front of the page, which stays where it
+// is: signing in reloads it, on the same screen, now with the cookie.
 (function () {
   const plain = window.fetch.bind(window);
+  const signingIn = () => document.body.classList.contains("signing-in");
+  window.signInShow = () => {
+    if (signingIn()) return;
+    document.body.classList.add("signing-in");
+    document.getElementById("si-user").focus();
+  };
   window.fetch = async (...args) => {
     const r = await plain(...args);
-    if (r.status === 401 && r.headers.get("X-LLMSim-Sign-In")) location.href = "/login?next=" + encodeURIComponent(location.pathname + location.hash);
+    if (r.status === 401 && r.headers.get("X-LLMSim-Sign-In")) signInShow();
     return r;
+  };
+  window.signIn = async (e) => {
+    e.preventDefault();
+    const go = document.getElementById("si-go"), err = document.getElementById("si-err");
+    go.disabled = true; go.textContent = "Signing in…"; err.hidden = true;
+    try {
+      const r = await plain("/login", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ user: document.getElementById("si-user").value, password: document.getElementById("si-pw").value }) });
+      const out = await r.json().catch(() => ({}));
+      if (r.ok) return location.reload();
+      err.textContent = out.message || ("Sign in failed (HTTP " + r.status + ")");
+      err.hidden = false;
+      document.getElementById("si-pw").select();
+    } catch (x) {
+      err.textContent = "LLMSim did not answer: " + x.message; err.hidden = false;
+    } finally {
+      go.disabled = false; go.textContent = "Sign in";
+    }
+  };
+  window.signOut = async (e) => {
+    e.preventDefault();
+    await plain("/logout", { method: "POST" }).catch(() => {});
+    location.reload();
   };
   window.whoRefresh = () => plain("/api/auth").then((r) => r.ok ? r.json() : null).then((a) => {
     const signedIn = !!(a && a.on && a.user);
@@ -1172,6 +1246,7 @@ function show(v) {
 }
 
 async function load() {
+  if (document.body.classList.contains("signing-in")) return;
   let s;
   try {
     const r = await fetch(api("/api/ui/state?since=" + SINCE));
@@ -4241,7 +4316,7 @@ const runAll = () => execute({}, "all");
 const runOne = (id) => execute({ testIds: [id] });
 const runPlan = (id) => execute({ planId: id });
 
-show((location.hash || "").slice(1) || "overview");
+if (!document.body.classList.contains("signing-in")) show((location.hash || "").slice(1) || "overview");
 window.addEventListener("hashchange", () => { const v = (location.hash || "").slice(1); if (v && v !== VIEWKEY) show(v); });
 load();
 setInterval(load, 1500);

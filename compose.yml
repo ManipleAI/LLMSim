@@ -3,12 +3,6 @@ services:
     build: .
     ports:
       - "8099:8099"
-    # Who may use the console and the API. Set in .env beside this file (copy
-    # .env.example); `docker compose up` stops and says so if they are missing.
-    environment:
-      LLMSIM_ADMIN_USER: ${LLMSIM_ADMIN_USER:-admin}
-      LLMSIM_ADMIN_PASSWORD: ${LLMSIM_ADMIN_PASSWORD:?set LLMSIM_ADMIN_PASSWORD in .env (copy .env.example)}
-      LLMSIM_API_KEY: ${LLMSIM_API_KEY:?set LLMSIM_API_KEY in .env (copy .env.example)}
     volumes:
       # Bind-mounted so a script edit needs a restart, not a rebuild.
       - ./responses.json:/app/responses.json:ro

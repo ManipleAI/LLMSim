@@ -233,8 +233,9 @@ it falls through to the script exactly as before.
 A checkout starts with no sign-in: on a developer's own machine a password is
 friction on the one path everybody uses. Anywhere else LLMSim holds what is
 worth taking (every request an agent sent, a saved key, a signed-in plan), so
-`LLMSIM_ADMIN_PASSWORD` and `LLMSIM_API_KEY` put the console and `/api` behind a
-cookie or a key, and the installers set them. What an agent calls (the vendor
+a password (`LLMSIM_ADMIN_PASSWORD`, or one set in Settings) puts the console and
+`/api` behind a cookie, and `LLMSIM_API_KEY` adds a key for scripts. The installers
+leave both unset, so an install behaves as it always has. What an agent calls (the vendor
 routes, the test kit's stand-ins) stays open, because an agent cannot sign in.
 The upstream key is still never sent to the browser: the page is told whether
 one is stored, and no more.

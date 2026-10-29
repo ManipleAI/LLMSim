@@ -42,10 +42,6 @@ spec:
             # The ChatGPT sign-in, keys, routing, rules and runs: on the
             # volume, so a restart or a new image does not sign it out.
             - { name: LLMSIM_DATA, value: /data }
-          # Who may use the console and the API (install.sh makes it). Optional, so an
-          # LLMSim installed before there was a sign-in starts as it did, open.
-          envFrom:
-            - secretRef: { name: llmsim-access, optional: true }
           ports:
             - { name: http, containerPort: 8099 }
           readinessProbe:

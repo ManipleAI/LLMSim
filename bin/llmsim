@@ -88,8 +88,6 @@ def dispatch(args, client):
         return 0 if body.get("valid") else 1
     if args.cmd == "results":
         status, body = client.call("GET", "/api/results" + ("?scenario=" + args.scenario if args.scenario else ""))
-        if status != 200:
-            raise LLMSimError(body.get("message") or "HTTP %d" % status)
         for r in body.get("results", []):
             print("%-8s %-28s %s" % (r["verdict"], r["run"], r["scenario"]))
         return 0

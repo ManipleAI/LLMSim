@@ -38,7 +38,6 @@ import base64
 import collections
 import hashlib
 import hmac
-import html
 import http.cookies
 import itertools
 import json
@@ -4002,18 +4001,19 @@ def credential_accepted(cred):
 
 # -- access: who may use the console and the API -----------------------------
 #
-# Off until it is configured, so a checkout, a test and every LLMSim installed
-# before this keep working as they did. Configured either where LLMSim is started,
+# Off until a password is set, so a checkout, a test and every LLMSim installed
+# before this keep working as they did. Set either where LLMSim is started,
 # which wins and cannot be changed from the console:
 #
 #   LLMSIM_ADMIN_USER       the console's user name (default admin)
-#   LLMSIM_ADMIN_PASSWORD   its password: sign in at /login once, then a cookie
+#   LLMSIM_ADMIN_PASSWORD   its password: the console asks for it once, then a cookie
 #   LLMSIM_API_KEY          for scripts and CI: X-LLMSim-Key, or a bearer token
 #
 # or on the console's Settings › Sign-in and API key page, which keeps them in
 # llmsim.access.json: the password as a PBKDF2 hash and the key as a SHA-256 hash,
 # so the file is no use to whoever reads it. A key made there is shown once.
-# A password or a key, from either place, turns the sign-in on.
+# The password turns the sign-in on. The key is a second way in, for what cannot
+# sign in; a key with no password is not used, as it would lock the console out.
 #
 # What it guards is the console and /api/…: everything that reads what was sent,
 # changes what is answered, or spends a signed-in plan or a saved key. What it
@@ -4035,7 +4035,8 @@ SESSION_SECONDS = int(float(os.environ.get("LLMSIM_SESSION_DAYS") or 7) * 86400)
 # so each one's cookie carries its port: signing in to one does not sign out the other.
 SESSION_COOKIE = "llmsim_session_%d" % PORT
 SECRET_PATH = os.environ.get("LLMSIM_SECRET") or os.path.join(DATA_DIR, "llmsim.secret")
-OPEN_PATHS = ("/", "/healthz", "/guide", "/login", "/logout", "/favicon.ico")
+# /api/auth says only whether a sign-in is needed and who this request is, which the sign-in itself needs to know.
+OPEN_PATHS = ("/", "/healthz", "/guide", "/ui", "/ui/", "/login", "/logout", "/api/auth", "/favicon.ico")
 SIGN_IN_FAILS = {}                     # client address -> (failures in a row, time of the last)
 SIGN_IN_LOCK = threading.Lock()
 SIGN_IN_LIMIT, SIGN_IN_WAIT_S = 5, 60
@@ -4078,7 +4079,7 @@ def key_set():
 
 
 def access_on():
-    return password_set() or key_set()
+    return password_set()
 
 
 def hash_password(password):
@@ -4150,7 +4151,7 @@ def session_user(value):
 
 
 def access_key_ok(key):
-    if not key:
+    if not key or not access_on():
         return False
     if ENV_KEY:
         return hmac.compare_digest(key.encode(), ENV_KEY.encode())
@@ -4201,73 +4202,11 @@ def sign_in_result(address, ok):
 
 def access_guarded(path):
     """Whether a path needs a sign-in or the key, once access is on. The path is the
-    one left after a /run/…, /agent/… or provider prefix is taken off it."""
+    one left after a /run/…, /agent/… or provider prefix is taken off it. The console's
+    page itself is not: it holds nothing, and it is where the sign-in is asked for."""
     if path in OPEN_PATHS:
         return False
-    return path == "/ui" or path.startswith("/api/") or path == "/api"
-
-
-def html_escape(value):
-    return html.escape(str(value or ""), quote=True)
-
-
-# The sign-in page: one form, served by this process like the console, in its colours.
-# {{next}}, {{user}} and {{message}} are filled in, escaped, when it is sent.
-LOGIN_PAGE = """<!doctype html>
-<html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sign in · LLMSim</title>
-<style>
-  :root { --page:#efece6; --surface:#fff; --ink:#14181f; --muted:#5a6068; --border:#e7e2d9;
-          --primary:#b23a22; --primary-hover:#8e2c18; --primary-tint:#f7ece8; --chrome:#14181f; }
-  * { box-sizing:border-box; }
-  body { margin:0; min-height:100vh; display:grid; place-items:center; padding:16px; background:var(--page); color:var(--ink);
-         font:14px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-font-smoothing:antialiased; }
-  main { width:100%; max-width:380px; background:var(--surface); border:1px solid var(--border); border-radius:10px; overflow:hidden; }
-  header { background:var(--chrome); color:#fbfaf7; padding:18px 24px; display:flex; gap:12px; align-items:center; }
-  header b { display:block; font-size:16px; } header span { color:#7d8590; font-size:12px; }
-  form { padding:22px 24px 24px; display:grid; gap:14px; }
-  h1 { margin:0; font-size:18px; } p.lead { margin:-8px 0 0; color:var(--muted); font-size:13px; }
-  label { display:grid; gap:5px; font-size:13px; color:var(--muted); }
-  input { font:inherit; color:var(--ink); padding:9px 11px; border:1px solid var(--border); border-radius:6px; background:#fff; }
-  input:focus { outline:2px solid var(--primary); outline-offset:-1px; border-color:var(--primary); }
-  button { font:inherit; font-weight:600; color:#fff; background:var(--primary); border:0; border-radius:6px; padding:10px; cursor:pointer; }
-  button:hover { background:var(--primary-hover); }
-  .msg { margin:0; padding:9px 11px; border-radius:6px; background:var(--primary-tint); color:var(--primary-hover); font-size:13px; }
-</style></head>
-<body><main>
-  <header>
-    <svg width="22" height="22" viewBox="0 0 100 100" fill="none" aria-hidden="true">
-      <path d="M10 42 L50 12 L90 42" stroke="#B23A22" stroke-width="15" stroke-linecap="square"/>
-      <path d="M10 66 L50 36 L90 66" stroke="#FBFAF7" stroke-width="15" stroke-linecap="square"/>
-      <path d="M10 90 L50 60 L90 90" stroke="#FBFAF7" stroke-width="15" stroke-linecap="square"/>
-    </svg>
-    <div><b>LLMSim</b><span>the vendors' APIs, simulated</span></div>
-  </header>
-  <form method="post" action="/login">
-    <h1>Sign in</h1>
-    <p class="lead">To the console of this LLMSim.</p>
-    {{message}}
-    <label>User name <input name="user" autocomplete="username" required value="{{user}}" autofocus></label>
-    <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
-    <input type="hidden" name="next" id="next" value="{{next}}">
-    <button type="submit">Sign in</button>
-  </form>
-</main>
-<script>
-  // A redirect keeps the page's #fragment (which screen was open) but a form post drops it, so it rides in next.
-  (function () { var n = document.getElementById("next"); if (location.hash && n.value.indexOf("#") < 0) n.value += location.hash; })();
-</script>
-</body></html>
-"""
-
-
-def safe_next(value):
-    """Where to go after signing in: a path on this server, never another site."""
-    value = str(value or "")
-    if not value.startswith("/") or value.startswith("//") or "\\" in value or "\n" in value or "\r" in value:
-        return "/ui"
-    return value
+    return path.startswith("/api/") or path == "/api"
 
 
 # -- identity: who sent it ----------------------------------------------------
@@ -6029,6 +5968,9 @@ class Handler(BaseHTTPRequestHandler):
                 page = fh.read()
         except FileNotFoundError:
             return self.send_json(500, {"error": "ui.html is missing from the image"})
+        if access_on() and not self.who:
+            # The sign-in is drawn in front of the console from the first paint, not after a round trip.
+            page = page.replace(b"<body>", b'<body class="signing-in">', 1)
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(page)))
@@ -6414,8 +6356,6 @@ class Handler(BaseHTTPRequestHandler):
         self.cred = credential_of(self)
         if not self.authorize("GET", path):
             return
-        if path == "/login":
-            return self.login_get()
         if path == "/api/access":
             return self.send_json(200, dict(access_status(), ok=True, you=self.who if self.who not in (None, "key") else None))
         if path == "/api/auth":
@@ -6725,25 +6665,21 @@ class Handler(BaseHTTPRequestHandler):
             return True
         if not access_guarded(path):
             return True
-        if path == "/ui" and method == "GET":
-            self.send_response(303)
-            self.send_header("Location", "/login?next=/ui")
-            self.send_header("Content-Length", "0")
-            self.end_headers()
-            return False
-        raw = json.dumps({"ok": False, "message": "Sign in at /login, or send the API key (X-LLMSim-Key, or a bearer token)."}).encode()
+        raw = json.dumps({"ok": False, "message": "Sign in on the console (/ui), or send the API key (X-LLMSim-Key, or a bearer token)."}).encode()
         self.send_response(401)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(raw)))
-        # What the console looks for to send its page to the sign-in.
-        self.send_header("X-LLMSim-Sign-In", "/login")
+        # What the console looks for to put its sign-in in front of the page.
+        self.send_header("X-LLMSim-Sign-In", "/ui")
         self.send_header("WWW-Authenticate", 'Bearer realm="llmsim"')
         self.end_headers()
         self.wfile.write(raw)
         return False
 
     def _access_reply(self, code, message, cookie=None, **extra):
-        payload = dict(access_status(), ok=code < 400, message=message, **extra)
+        return self._reply(code, dict(access_status(), ok=code < 400, message=message, **extra), cookie)
+
+    def _reply(self, code, payload, cookie=None):
         raw = json.dumps(payload).encode()
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
@@ -6833,63 +6769,37 @@ class Handler(BaseHTTPRequestHandler):
         return "%s=%s; Path=/; HttpOnly; SameSite=Strict; Max-Age=%d%s" % (
             SESSION_COOKIE, value, max_age, "; Secure" if self._secure_cookie() else "")
 
-    def _redirect(self, where, cookie=None):
-        self.send_response(303)
-        self.send_header("Location", where)
-        if cookie:
-            self.send_header("Set-Cookie", cookie)
-        self.send_header("Content-Length", "0")
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-
-    def login_page(self, next_path="/ui", message="", status=200, user=""):
-        if not password_set():
-            message = message or ("No console password is set on this LLMSim. Set LLMSIM_ADMIN_PASSWORD and restart it."
-                                  if access_on() else "")
-        page = LOGIN_PAGE.replace("{{next}}", html_escape(next_path)).replace("{{user}}", html_escape(user))
-        page = page.replace("{{message}}", ('<p class="msg" role="alert">%s</p>' % html_escape(message)) if message else "")
-        raw = page.encode()
-        self.send_response(status)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(raw)))
-        self.send_header("Cache-Control", "no-store")
-        # The sign-in page is never framed, so a click on it is always the person's own.
-        self.send_header("X-Frame-Options", "DENY")
-        self.send_header("Content-Security-Policy", "frame-ancestors 'none'")
-        self.end_headers()
-        self.wfile.write(raw)
-
-    def login_get(self):
-        query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
-        next_path = safe_next((query.get("next") or ["/ui"])[0])
-        if not access_on() or session_user(self._cookie(SESSION_COOKIE)):
-            return self._redirect(next_path)
-        return self.login_page(next_path)
-
     def login_post(self, raw):
-        form = urllib.parse.parse_qs(raw.decode("utf-8", "replace"))
-        user, password = (form.get("user") or [""])[0], (form.get("password") or [""])[0]
-        next_path = safe_next((form.get("next") or ["/ui"])[0])
+        """The console's sign-in, {user, password}: a cookie when they match. JSON in and
+        out, so the console asks for it in front of its own page and nothing is redirected."""
+        try:
+            body = json.loads(raw or b"{}")
+        except json.JSONDecodeError:
+            body = None
+        if not isinstance(body, dict):
+            return self.send_json(400, {"ok": False, "message": "Send {\"user\": …, \"password\": …} as JSON."})
+        user, password = str(body.get("user") or ""), str(body.get("password") or "")
         if not access_on():
-            return self._redirect(next_path)
+            return self.send_json(200, {"ok": True, "on": False, "user": None})
         if self.foreign_origin():
-            return self.login_page(next_path, "That sign-in came from another site.", 403)
+            return self.send_json(403, {"ok": False, "message": "That sign-in came from another site."})
         address = self.client_address[0]
         wait = sign_in_wait(address)
         if wait:
-            return self.login_page(next_path, "Too many wrong passwords. Try again in %d seconds." % wait, 429, user)
+            return self.send_json(429, {"ok": False, "message": "Too many wrong passwords. Try again in %d seconds." % wait})
         ok = password_ok(user, password)
         sign_in_result(address, ok)
         if not ok:
             log("access: a sign-in as %r from %s was refused" % (user[:64], address))
-            return self.login_page(next_path, "That user name and password do not match.", 401, user)
+            return self.send_json(401, {"ok": False, "message": "That user name and password do not match."})
         log("access: %s signed in from %s" % (user, address))
-        return self._redirect(next_path, self._cookie_header(session_cookie_for(user), SESSION_SECONDS))
+        return self._reply(200, {"ok": True, "on": True, "user": user},
+                           self._cookie_header(session_cookie_for(user), SESSION_SECONDS))
 
     def logout_post(self):
         if self.foreign_origin():
             return self.send_json(403, {"ok": False, "message": "That request came from another site."})
-        return self._redirect("/login" if access_on() else "/ui", self._cookie_header("", 0))
+        return self._reply(200, {"ok": True, "on": access_on(), "user": None}, self._cookie_header("", 0))
 
     def foreign_origin(self):
         """True when a browser says the request came from some other site.
@@ -7758,14 +7668,14 @@ def main():
             log("anthropic: routes point at Anthropic but no key is set — those requests will fail until one is")
     if access_on():
         st = access_status()
-        log("access: the console and /api need a sign-in%s%s"
-            % (" (user %s, password from %s)" % (st["user"], "LLMSIM_ADMIN_PASSWORD" if st["password"]["from"] == "env" else "Settings")
-               if st["password"]["set"] else " — no console password is set, only the API key",
+        log("access: the console and /api need a sign-in (user %s, password from %s)%s"
+            % (st["user"], "LLMSIM_ADMIN_PASSWORD" if st["password"]["from"] == "env" else "Settings",
                ", or the API key from %s" % ("LLMSIM_API_KEY" if st["key"]["from"] == "env" else "Settings")
                if st["key"]["set"] else " — no API key is set, so scripts cannot reach /api"))
+    elif key_set():
+        log("access: OPEN — an API key is set but no console password, so the key is not used. Set LLMSIM_ADMIN_PASSWORD too.")
     else:
-        log("access: OPEN — anyone who can reach port %d can use the console and the whole API." % PORT)
-        log("        Turn on a sign-in at /ui#access, or set LLMSIM_ADMIN_PASSWORD and LLMSIM_API_KEY.")
+        log("access: open (no LLMSIM_ADMIN_PASSWORD set); a sign-in can be turned on at /ui#access")
     log("console: http://localhost:%d/ui   guide: http://localhost:%d/guide" % (PORT, PORT))
     for name in sorted(API_KEYS):
         log("  %-9s http://localhost:%d/%s   key %s" % (name, PORT, name, API_KEYS[name]))

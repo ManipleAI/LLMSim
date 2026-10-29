@@ -153,6 +153,6 @@ says `no-data`, and so does the run.
 * OTLP is read as JSON only (set `OTEL_EXPORTER_OTLP_PROTOCOL=http/json`): protobuf needs a library this does not have.
 * The pytest plugin was written without pytest installed here and is tested through its session class, not under pytest.
 * `server.py` is not split into modules. The kit is, and the existing file is untouched except for a handful of hooks.
-* Unless a sign-in is required (`LLMSIM_ADMIN_PASSWORD`, `LLMSIM_API_KEY`), anyone who can reach the port can use all of
+* Unless a sign-in is required (`LLMSIM_ADMIN_PASSWORD`, with `LLMSIM_API_KEY` for scripts), anyone who can reach the port can use all of
   this, including the shared run store. With one, the management API needs the key; the stand-ins an agent calls
   (`/mcp`, `/mock`, `/a2a`, `/a2a-proxy`, `/otlp`) stay open, because an agent cannot sign in.

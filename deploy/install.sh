@@ -5,15 +5,6 @@
 #
 # On k3d rather than k3s: K3D_CLUSTER=<name> NAMESPACE=... ./deploy/install.sh
 #
-# Who may use the console and the API is the Secret llmsim-access. A new install
-# makes one and prints the password and the API key once; to choose them, pass
-#
-#   LLMSIM_ADMIN_USER=admin LLMSIM_ADMIN_PASSWORD=... LLMSIM_API_KEY=... ./deploy/install.sh
-#
-# which also changes them on an install that has them. LLMSIM_OPEN=1 installs one
-# with no sign-in. An LLMSim installed before there was a sign-in is left as open
-# as it was unless they are passed, so what already talks to it keeps working.
-#
 # What LLMSim writes for itself (the ChatGPT sign-in, keys, routing, your rules,
 # runs) lives on the volume llmsim-data, so installing again, a new image or a
 # restarted pod keeps it. An LLMSim installed before that volume existed kept
@@ -22,7 +13,7 @@
 set -euo pipefail
 NS=${NAMESPACE:-default}
 HERE=$(cd "$(dirname "$0")/.." && pwd)
-STATE='llmsim.config.json llmsim.chatgpt-auth.json llmsim.access.json llmsim.secret llmsim.credentials.json llmsim.rules.json llmsim.assertions.json llmsim.tests.json llmsim.runs.db llmsim.runs.db-wal cassettes evaluators'
+STATE='llmsim.config.json llmsim.chatgpt-auth.json llmsim.credentials.json llmsim.rules.json llmsim.assertions.json llmsim.tests.json llmsim.runs.db llmsim.runs.db-wal cassettes evaluators'
 
 docker build -q -t llmsim:dev "$HERE"
 if command -v k3s >/dev/null 2>&1; then
@@ -34,31 +25,6 @@ else
 fi
 
 kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
-
-secret_value() {
-  kubectl -n "$NS" get secret llmsim-access -o jsonpath="{.data.$1}" 2>/dev/null | base64 -d 2>/dev/null || true
-}
-make_secret() { head -c 24 /dev/urandom | base64 | tr -d '/+=\n'; }
-HAD_SECRET=; kubectl -n "$NS" get secret llmsim-access >/dev/null 2>&1 && HAD_SECRET=1
-NEW_INSTALL=1; kubectl -n "$NS" get deploy llmsim >/dev/null 2>&1 && NEW_INSTALL=
-MADE=
-if [ -n "${LLMSIM_ADMIN_PASSWORD:-}${LLMSIM_API_KEY:-}" ] || { [ -z "$HAD_SECRET" ] && [ -n "$NEW_INSTALL" ] && [ "${LLMSIM_OPEN:-}" != 1 ]; }; then
-  # What was not passed is kept from the Secret, and made only when there is none.
-  ADMIN_USER=${LLMSIM_ADMIN_USER:-$(secret_value LLMSIM_ADMIN_USER)}
-  ADMIN_PASSWORD=${LLMSIM_ADMIN_PASSWORD:-$(secret_value LLMSIM_ADMIN_PASSWORD)}
-  API_KEY=${LLMSIM_API_KEY:-$(secret_value LLMSIM_API_KEY)}
-  [ -n "$ADMIN_USER" ] || ADMIN_USER=admin
-  [ -n "$ADMIN_PASSWORD" ] || { ADMIN_PASSWORD=$(make_secret); MADE=1; }
-  [ -n "$API_KEY" ] || { API_KEY="llmsim-$(make_secret)"; MADE=1; }
-  # From a file, owner-only and gone straight after, so the values never sit in a process list.
-  ENVF=$(mktemp); chmod 600 "$ENVF"
-  printf 'LLMSIM_ADMIN_USER=%s\nLLMSIM_ADMIN_PASSWORD=%s\nLLMSIM_API_KEY=%s\n' "$ADMIN_USER" "$ADMIN_PASSWORD" "$API_KEY" > "$ENVF"
-  kubectl -n "$NS" create secret generic llmsim-access --from-env-file="$ENVF" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
-  rm -f "$ENVF"
-elif [ -z "$HAD_SECRET" ]; then
-  echo "LLMSim stays OPEN: anyone who can reach it can use the console and the whole API."
-  echo "  To require a sign-in: LLMSIM_ADMIN_PASSWORD=... LLMSIM_API_KEY=... $0"
-fi
 
 # Created once, never re-applied: a claim cannot be changed in place, and one
 # made by hand earlier (say with a storage class named) must not be fought.
@@ -135,16 +101,6 @@ kubectl -n "$NS" rollout status deploy/llmsim --timeout=3m
 
 echo
 echo "LLMSim is at http://llmsim.$NS.svc:8099  (its state: the volume llmsim-data)"
-if kubectl -n "$NS" get secret llmsim-access >/dev/null 2>&1; then
-  echo "  console    http://llmsim.$NS.svc:8099/login  as ${ADMIN_USER:-$(secret_value LLMSIM_ADMIN_USER)}"
-  if [ -n "$MADE" ]; then
-    echo
-    echo "  Made for this install, and shown only now (they are kept in the Secret llmsim-access):"
-    echo "    password  $ADMIN_PASSWORD"
-    echo "    API key   $API_KEY"
-  fi
-  echo "  read them again:  kubectl -n $NS get secret llmsim-access -o jsonpath='{.data.LLMSIM_ADMIN_PASSWORD}' | base64 -d"
-fi
 echo "  anthropic  http://llmsim.$NS.svc:8099/anthropic"
 echo "  openai     http://llmsim.$NS.svc:8099/openai/v1"
 echo "  deepseek   http://llmsim.$NS.svc:8099/deepseek/v1"

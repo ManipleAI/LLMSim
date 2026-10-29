@@ -26,7 +26,7 @@ The console is at `http://localhost:8099/ui`. Everything on it is also an HTTP A
 
 ### Require a sign-in
 
-Out of the box LLMSim is open: anyone who can reach the port can use the console and the whole API. That suits your own machine. Anywhere else, set a password and an API key, either in the console or where LLMSim is started.
+Out of the box LLMSim is open: anyone who can reach the port can use the console and the whole API. That suits your own machine. Anywhere else, set a password (and, for scripts, an API key), either in the console or where LLMSim is started. With no password set, LLMSim works exactly as it always has.
 
 **In the console:** open **Settings › Sign-in and API key**.
 - Set a password. That turns the sign-in on, and you stay signed in.
@@ -44,13 +44,13 @@ LLMSIM_ADMIN_PASSWORD='choose one' LLMSIM_API_KEY='llmsim-…' python3 server.py
 | Variable | Does |
 |---|---|
 | `LLMSIM_ADMIN_USER` | The console's user name. `admin` if left out. |
-| `LLMSIM_ADMIN_PASSWORD` | Its password. Sign in once at `/login`; a cookie keeps you signed in. |
-| `LLMSIM_API_KEY` | For scripts, CI and the `llmsim` CLI: send it as `X-LLMSim-Key`, or as a bearer token on `/api/…`. |
+| `LLMSIM_ADMIN_PASSWORD` | Its password. This is what turns the sign-in on. Sign in once on the console; a cookie keeps you signed in. |
+| `LLMSIM_API_KEY` | For scripts, CI and the `llmsim` CLI: send it as `X-LLMSim-Key`, or as a bearer token on `/api/…`. Used only once a password is set. |
 | `LLMSIM_SESSION_DAYS` | How long a sign-in lasts. 7 if left out. |
 
-Setting either the password or the key turns the sign-in on. Then:
+Setting the password turns the sign-in on. A key with no password is not used, and the startup log says so. Then:
 
-- The console (`/ui`) sends you to `/login`, and back to the screen you were on. **Sign out** is at the bottom of the menu.
+- The console (`/ui`) shows a sign-in in front of the screen you opened, and that screen once you are in. Nothing is redirected. **Sign out** is at the bottom of the menu.
 - `/api/…` answers `401` without the cookie or the key.
 - `/healthz` says only that LLMSim is up.
 - The vendors' routes, the test kit's stand-ins (`/mcp`, `/mock`, `/a2a`, `/a2a-proxy`, `/otlp`, `/callbacks`) and this guide stay open. An agent under test calls those and cannot sign in. The vendors' routes take their own keys: set `LLMSIM_ANTHROPIC_KEY`, `LLMSIM_OPENAI_KEY` and `LLMSIM_DEEPSEEK_KEY` to keys of your own if LLMSim answers with a real model.
@@ -61,8 +61,6 @@ LLMSIM_API_KEY=… bin/llmsim results
 ```
 
 The cookie is `HttpOnly` and `SameSite=Strict`, and is named after the port, so two LLMSims on one machine keep separate sign-ins. A change made with it must come from the console's own page. It is signed with a key kept in `llmsim.secret`, so a restart keeps you signed in. Changing the password signs everybody out. After five wrong passwords in a row, the next try waits a minute.
-
-`docker compose` takes the values from `.env` (copy `.env.example`), and `deploy/install.sh` makes them for a new install and prints them once.
 
 ### Point a client at it
 
@@ -848,8 +846,7 @@ These are what a client calls. Prefix any of them with `/run/<run>` or `/run/<ru
 
 | Method and path | Does |
 |---|---|
-| `GET /login` | The sign-in page. `?next=` is where to go after it. |
-| `POST /login` | Sign in. A form with `user`, `password` and `next`. Sets the cookie and redirects. `429` after five wrong passwords in a row. |
+| `POST /login` | Sign in: `{user, password}`. Sets the cookie and answers `{ok, user}`; `401` when they do not match, `429` after five wrong passwords in a row. |
 | `POST /logout` | Clear the cookie |
 | `GET /api/auth` | `{on, user, via}`: whether a sign-in is required, and who this request is (`via` is `cookie` or `key`) |
 | `GET /api/access` | What the Settings page shows: whether the sign-in is on, the user, and where the password and the key come from (`env` or `settings`). Never the password, and only the key's last four characters. |

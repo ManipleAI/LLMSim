@@ -62,8 +62,8 @@ Nothing leaves your machine unless you route it to a real model on purpose.
   your own code evaluators.
 - **Built for CI.** A CLI with exit codes and JUnit output, datasets and experiments gated
   against a baseline, a pytest plugin, and a GitHub Action.
-- **Open on your machine, signed in when shared.** Set a password and an API key, and the
-  console needs a sign-in (then a cookie) and the API needs the key.
+- **Open on your machine, signed in when shared.** Set a password, and the console asks
+  for a sign-in (then a cookie); add an API key for scripts and CI.
 - **One console for all of it.** It uses the same HTTP API a script does, and adds a visual
   canvas for building tests.
 
@@ -288,22 +288,17 @@ docker build -t llmsim .
 docker run -p 8099:8099 -v llmsim-data:/data llmsim
 ```
 
-**Docker Compose**, with the data on a named volume. It asks for a console password and
-an API key, kept in `.env`:
+**Docker Compose**, with the data on a named volume:
 
 ```bash
-cp .env.example .env         # then set LLMSIM_ADMIN_PASSWORD and LLMSIM_API_KEY
 docker compose up -d
 ```
 
 **Kubernetes** (k3s or k3d): `deploy/install.sh` builds the image and applies
-`deploy/k8s.yaml` with a persistent volume. A new install gets a console password and an
-API key, kept in the Secret `llmsim-access` and printed once. To choose them yourself, pass
-them in:
+`deploy/k8s.yaml` with a persistent volume.
 
 ```bash
 NAMESPACE=llmsim ./deploy/install.sh
-NAMESPACE=llmsim LLMSIM_ADMIN_PASSWORD=… LLMSIM_API_KEY=… ./deploy/install.sh
 ```
 
 ### Where it keeps things
@@ -331,9 +326,9 @@ The [documentation](docs/guide.md) lists all of them.
 
 ## Security
 
-**`python3 server.py` starts open**, which suits your own machine: anyone who can reach the
-port can use the console and the whole API. Anywhere else, require a sign-in, in either of
-two ways:
+**LLMSim starts open**, as it always has, which suits your own machine: anyone who can
+reach the port can use the console and the whole API. Anywhere else, set a password, in
+either of two ways:
 
 - **In the console**, under **Settings › Sign-in and API key**. Set a password, then make
   an API key (it is shown once). Only hashes of them are kept.
@@ -343,8 +338,11 @@ two ways:
 LLMSIM_ADMIN_PASSWORD='choose one' LLMSIM_API_KEY='llmsim-…' python3 server.py
 ```
 
-- **The console** sends you to `/login`. Sign in once and a cookie keeps you signed in
-  (`HttpOnly`, `SameSite=Strict`, 7 days). **Sign out** is at the bottom of the menu.
+- **The console** shows a sign-in in front of the page you opened. Sign in once and a
+  cookie keeps you signed in (`HttpOnly`, `SameSite=Strict`, 7 days). **Sign out** is at
+  the bottom of the menu.
+- **The API key** is a second way in, for what cannot sign in. It is used only once a
+  password is set: a key alone changes nothing.
 - **Scripts and CI** send the key as the `X-LLMSim-Key` header, or as a bearer token on
   `/api/…`. `bin/llmsim`, the pytest plugin and the GitHub Action (`api-key`) read it from
   `LLMSIM_API_KEY`.
@@ -353,8 +351,7 @@ LLMSIM_ADMIN_PASSWORD='choose one' LLMSIM_API_KEY='llmsim-…' python3 server.py
   answers with a real model (a saved Anthropic key, an upstream or a ChatGPT plan), also set
   `LLMSIM_OPENAI_KEY`, `LLMSIM_ANTHROPIC_KEY` and `LLMSIM_DEEPSEEK_KEY` to keys of your own.
 
-`docker compose` and `deploy/install.sh` set up the sign-in for you. Even with it on, put
-LLMSim behind HTTPS before you expose it beyond a network you trust.
+Even with it on, put LLMSim behind HTTPS before you expose it beyond a network you trust.
 
 ## Documentation
 

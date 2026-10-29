@@ -13,5 +13,8 @@ llmsim.runs.db-*
 llmsim.credentials.json
 # Signs the console's cookies: whoever has it can sign in.
 llmsim.secret
+# The console password and API key set in Settings (hashes, but still not for a repository).
+llmsim.access.json
+llmsim.access.json.tmp
 # The console password and the API key, for docker compose.
 .env

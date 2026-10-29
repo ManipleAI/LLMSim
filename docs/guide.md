@@ -26,7 +26,16 @@ The console is at `http://localhost:8099/ui`. Everything on it is also an HTTP A
 
 ### Require a sign-in
 
-Out of the box LLMSim is open: anyone who can reach the port can use the console and the whole API. That suits your own machine. Anywhere else, set a password and an API key:
+Out of the box LLMSim is open: anyone who can reach the port can use the console and the whole API. That suits your own machine. Anywhere else, set a password and an API key, either in the console or where LLMSim is started.
+
+**In the console:** open **Settings › Sign-in and API key**.
+- Set a password. That turns the sign-in on, and you stay signed in.
+- Then **Make a key**. The key is shown once, so copy it then.
+- The same page changes the password, makes a new key (the old one stops working at once), removes the key, or turns the sign-in off.
+- Once you are signed in, each change asks for your current password.
+- LLMSim keeps only hashes of the password and the key, in `llmsim.access.json`, which only LLMSim's user can read.
+
+**Where it is started:** set these, which win over the console and cannot be changed from it:
 
 ```bash
 LLMSIM_ADMIN_PASSWORD='choose one' LLMSIM_API_KEY='llmsim-…' python3 server.py
@@ -843,6 +852,8 @@ These are what a client calls. Prefix any of them with `/run/<run>` or `/run/<ru
 | `POST /login` | Sign in. A form with `user`, `password` and `next`. Sets the cookie and redirects. `429` after five wrong passwords in a row. |
 | `POST /logout` | Clear the cookie |
 | `GET /api/auth` | `{on, user, via}`: whether a sign-in is required, and who this request is (`via` is `cookie` or `key`) |
+| `GET /api/access` | What the Settings page shows: whether the sign-in is on, the user, and where the password and the key come from (`env` or `settings`). Never the password, and only the key's last four characters. |
+| `POST /api/access` | One change: `{action: "password", password, user?}`, `{action: "new-key"}` (answers the key, once), `{action: "remove-key"}` or `{action: "off"}`. With the cookie, add `current`, the current password. `409` when the environment sets what it would change. |
 
 ### Settings
 

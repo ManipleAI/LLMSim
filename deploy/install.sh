@@ -22,7 +22,7 @@
 set -euo pipefail
 NS=${NAMESPACE:-default}
 HERE=$(cd "$(dirname "$0")/.." && pwd)
-STATE='llmsim.config.json llmsim.chatgpt-auth.json llmsim.credentials.json llmsim.rules.json llmsim.assertions.json llmsim.tests.json llmsim.runs.db llmsim.runs.db-wal cassettes evaluators'
+STATE='llmsim.config.json llmsim.chatgpt-auth.json llmsim.access.json llmsim.secret llmsim.credentials.json llmsim.rules.json llmsim.assertions.json llmsim.tests.json llmsim.runs.db llmsim.runs.db-wal cassettes evaluators'
 
 docker build -q -t llmsim:dev "$HERE"
 if command -v k3s >/dev/null 2>&1; then

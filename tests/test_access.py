@@ -196,6 +196,116 @@ def case_key_only_has_no_console_password(sim):
     check(status == 200, "the key works: %s" % status)
 
 
+# -- set from Settings -------------------------------------------------------------
+
+def act(sim, body, cookie=None, key=None, origin=True):
+    headers = {}
+    if cookie:
+        headers["Cookie"] = cookie
+    if key:
+        headers["X-LLMSim-Key"] = key
+    if origin:
+        headers["Origin"] = "http://127.0.0.1:%d" % sim.port
+    status, hdrs, text = sim.call("POST", "/api/access", body, headers)
+    import json as _json
+    return status, hdrs, _json.loads(text)
+
+
+def case_settings_starts_open(sim):
+    status, body = sim.api("GET", "/api/access")
+    check(status == 200 and body["on"] is False and body["password"]["set"] is False, "open: %s" % body)
+    status, _, body = act(sim, {"action": "new-key"})
+    check(status == 409, "a key alone is refused while there is no password, or the console locks itself out: %s" % status)
+    status, _, body = act(sim, {"action": "password", "password": "short"})
+    check(status == 400, "a short password is refused: %s" % status)
+
+
+def case_settings_turns_it_on(sim):
+    status, headers, body = act(sim, {"action": "password", "user": "owner", "password": "first-password"})
+    check(status == 200 and body["on"] and body["user"] == "owner", "on: %s %s" % (status, body))
+    sim.cookie = cookie_of(headers)
+    check(sim.cookie.startswith("llmsim_session_%d=" % sim.port), "whoever turned it on stays signed in: %s" % headers.get("Set-Cookie"))
+    status, _ = sim.api("GET", "/api/rules")
+    check(status == 401, "now /api needs a sign-in: %s" % status)
+    status, _ = sim.api("GET", "/api/rules", headers={"Cookie": sim.cookie})
+    check(status == 200, "and the cookie it gave works: %s" % status)
+    status, _, _ = sign_in(sim, user="owner", password="first-password")
+    check(status == 303, "/login takes the new password: %s" % status)
+    kept = open(sim.env["LLMSIM_ACCESS"]).read()
+    check("first-password" not in kept and "pbkdf2_sha256$" in kept, "only a hash is kept")
+    check(oct(os.stat(sim.env["LLMSIM_ACCESS"]).st_mode & 0o777) == "0o600", "owner-only")
+
+
+def case_settings_asks_for_the_current_password(sim):
+    status, _, body = act(sim, {"action": "new-key"}, cookie=sim.cookie)
+    check(status == 403, "a change made with a cookie needs the current password: %s" % status)
+    status, _, body = act(sim, {"action": "new-key", "current": "wrong"}, cookie=sim.cookie)
+    check(status == 403, "and the right one: %s" % status)
+    status, _, _ = sim.call("POST", "/api/access", {"action": "off", "current": "first-password"},
+                            {"Cookie": sim.cookie, "Origin": "http://localhost:3000"})
+    check(status == 403, "another site cannot use the cookie here either: %s" % status)
+
+
+def case_settings_makes_a_key(sim):
+    status, _, body = act(sim, {"action": "new-key", "current": "first-password"}, cookie=sim.cookie)
+    check(status == 200 and body["key"].startswith("llmsim-"), "made: %s" % status)
+    sim.key = body["key"]
+    status, st = sim.api("GET", "/api/access", headers={"X-LLMSim-Key": sim.key})
+    check(status == 200 and st["key"] == {"set": True, "from": "settings", "hint": "…" + sim.key[-4:]}, "the key works, and only its end is shown: %s" % st)
+    check(sim.key not in open(sim.env["LLMSIM_ACCESS"]).read(), "only a hash of the key is kept")
+    status, _, body = act(sim, {"action": "new-key", "current": "first-password"}, cookie=sim.cookie)
+    status, _ = sim.api("GET", "/api/rules", headers={"X-LLMSim-Key": sim.key})
+    check(status == 401, "a new key replaces the old one at once: %s" % status)
+    sim.key = body["key"]
+
+
+def case_settings_changes_the_password(sim):
+    old = sim.cookie
+    status, headers, body = act(sim, {"action": "password", "password": "second-password", "current": "first-password"}, cookie=old)
+    check(status == 200, "changed: %s %s" % (status, body))
+    sim.cookie = cookie_of(headers)
+    status, _ = sim.api("GET", "/api/rules", headers={"Cookie": old})
+    check(status == 401, "the cookie made before no longer works: %s" % status)
+    status, _ = sim.api("GET", "/api/rules", headers={"Cookie": sim.cookie})
+    check(status == 200, "the one handed back does: %s" % status)
+    status, _, _ = act(sim, {"action": "password", "password": "third-password"}, key=sim.key)
+    check(status == 200, "the API key may set the password without it: %s" % status)
+    status, _, _ = act(sim, {"action": "password", "password": "second-password"}, key=sim.key)
+
+
+def case_settings_survive_a_restart(sim):
+    sim.restart()
+    status, _ = sim.api("GET", "/api/rules", headers={"X-LLMSim-Key": sim.key})
+    check(status == 200, "the key after a restart: %s" % status)
+    status, headers, _ = sign_in(sim, user="owner", password="second-password")
+    check(status == 303, "the password after a restart: %s" % status)
+    sim.cookie = cookie_of(headers)
+
+
+def case_settings_removes_the_key_and_turns_off(sim):
+    status, _, _ = act(sim, {"action": "remove-key", "current": "second-password"}, cookie=sim.cookie)
+    check(status == 200, "removed: %s" % status)
+    status, _ = sim.api("GET", "/api/rules", headers={"X-LLMSim-Key": sim.key})
+    check(status == 401, "the key is refused: %s" % status)
+    status, headers, body = act(sim, {"action": "off", "current": "second-password"}, cookie=sim.cookie)
+    check(status == 200 and body["on"] is False and "Max-Age=0" in (headers.get("Set-Cookie") or ""), "off: %s" % body)
+    status, _ = sim.api("GET", "/api/rules")
+    check(status == 200, "open again: %s" % status)
+
+
+def case_settings_cannot_change_what_the_environment_set(sim):
+    status, headers, _ = sign_in(sim)
+    cookie = cookie_of(headers)
+    status, _, body = act(sim, {"action": "password", "password": "another-one", "current": PASSWORD}, cookie=cookie)
+    check(status == 409 and "LLMSIM_ADMIN_PASSWORD" in body["message"], "the environment's password: %s %s" % (status, body.get("message")))
+    status, _, body = act(sim, {"action": "new-key", "current": PASSWORD}, cookie=cookie)
+    check(status == 409 and "LLMSIM_API_KEY" in body["message"], "the environment's key: %s" % status)
+    status, _, body = act(sim, {"action": "off", "current": PASSWORD}, cookie=cookie)
+    check(status == 409, "nor turn it off: %s" % status)
+    status, body = sim.api("GET", "/api/access", headers={"Cookie": cookie})
+    check(body["password"]["from"] == "env" and body["key"]["from"] == "env" and body["key"]["hint"] == "…" + KEY[-4:], "said where: %s" % body)
+
+
 def run(title, sim, cases):
     print(title)
     failed = 0
@@ -223,6 +333,12 @@ def main():
             case_next_never_leaves, case_cookie_survives_a_restart, case_sign_out, case_a_new_password_signs_everyone_out,
             case_too_many_wrong_passwords]),
         ("key only", Sim(env={"LLMSIM_API_KEY": KEY}), [case_key_only_has_no_console_password]),
+        ("from Settings", Sim(), [
+            case_settings_starts_open, case_settings_turns_it_on, case_settings_asks_for_the_current_password,
+            case_settings_makes_a_key, case_settings_changes_the_password, case_settings_survive_a_restart,
+            case_settings_removes_the_key_and_turns_off]),
+        ("Settings beside the environment", Sim(env={"LLMSIM_ADMIN_PASSWORD": PASSWORD, "LLMSIM_API_KEY": KEY}),
+         [case_settings_cannot_change_what_the_environment_set]),
     ]
     total = failed = 0
     for title, sim, cases in groups:

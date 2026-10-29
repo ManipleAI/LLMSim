@@ -4003,11 +4003,17 @@ def credential_accepted(cred):
 # -- access: who may use the console and the API -----------------------------
 #
 # Off until it is configured, so a checkout, a test and every LLMSim installed
-# before this keep working as they did. Set either value and it is on:
+# before this keep working as they did. Configured either where LLMSim is started,
+# which wins and cannot be changed from the console:
 #
 #   LLMSIM_ADMIN_USER       the console's user name (default admin)
 #   LLMSIM_ADMIN_PASSWORD   its password: sign in at /login once, then a cookie
 #   LLMSIM_API_KEY          for scripts and CI: X-LLMSim-Key, or a bearer token
+#
+# or on the console's Settings › Sign-in and API key page, which keeps them in
+# llmsim.access.json: the password as a PBKDF2 hash and the key as a SHA-256 hash,
+# so the file is no use to whoever reads it. A key made there is shown once.
+# A password or a key, from either place, turns the sign-in on.
 #
 # What it guards is the console and /api/…: everything that reads what was sent,
 # changes what is answered, or spends a signed-in plan or a saved key. What it
@@ -4016,10 +4022,14 @@ def credential_accepted(cred):
 # rest), the test kit's stand-ins (/mcp, /mock, /a2a, /a2a-proxy, /otlp,
 # /callbacks), the health check and the guide.
 
-ADMIN_USER = os.environ.get("LLMSIM_ADMIN_USER") or "admin"
-ADMIN_PASSWORD = os.environ.get("LLMSIM_ADMIN_PASSWORD") or ""
-ACCESS_KEY = os.environ.get("LLMSIM_API_KEY") or ""
-ACCESS_ON = bool(ADMIN_PASSWORD or ACCESS_KEY)
+ENV_USER = os.environ.get("LLMSIM_ADMIN_USER") or ""
+ENV_PASSWORD = os.environ.get("LLMSIM_ADMIN_PASSWORD") or ""
+ENV_KEY = os.environ.get("LLMSIM_API_KEY") or ""
+ACCESS_PATH = os.environ.get("LLMSIM_ACCESS") or os.path.join(DATA_DIR, "llmsim.access.json")
+ACCESS = {"user": "", "password": "", "key": "", "keyHint": "", "changed": 0}
+ACCESS_LOCK = threading.Lock()
+PBKDF2_ROUNDS = 200000
+MIN_PASSWORD = 8
 SESSION_SECONDS = int(float(os.environ.get("LLMSIM_SESSION_DAYS") or 7) * 86400)
 # Cookies are not kept apart by port, and two LLMSims on one machine are usual,
 # so each one's cookie carries its port: signing in to one does not sign out the other.
@@ -4030,6 +4040,64 @@ SIGN_IN_FAILS = {}                     # client address -> (failures in a row, t
 SIGN_IN_LOCK = threading.Lock()
 SIGN_IN_LIMIT, SIGN_IN_WAIT_S = 5, 60
 _SECRET = []
+
+
+def load_access():
+    try:
+        with open(ACCESS_PATH) as fh:
+            kept = json.load(fh)
+    except FileNotFoundError:
+        return
+    except (OSError, ValueError) as exc:
+        log("access: %s could not be read (%s); its password and key are not used" % (ACCESS_PATH, exc))
+        return
+    for name in ACCESS:
+        if isinstance(kept.get(name), type(ACCESS[name])):
+            ACCESS[name] = kept[name]
+
+
+def save_access():
+    os.makedirs(os.path.dirname(ACCESS_PATH) or ".", exist_ok=True)
+    tmp = ACCESS_PATH + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        json.dump(dict(ACCESS, _="Written by LLMSim's Settings page. Hashes only; owner-only."), fh, indent=1)
+    os.replace(tmp, ACCESS_PATH)
+
+
+def access_user():
+    return ENV_USER or ACCESS["user"] or "admin"
+
+
+def password_set():
+    return bool(ENV_PASSWORD or ACCESS["password"])
+
+
+def key_set():
+    return bool(ENV_KEY or ACCESS["key"])
+
+
+def access_on():
+    return password_set() or key_set()
+
+
+def hash_password(password):
+    salt = os.urandom(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, PBKDF2_ROUNDS)
+    return "pbkdf2_sha256$%d$%s$%s" % (PBKDF2_ROUNDS, salt.hex(), digest.hex())
+
+
+def _password_matches(password, stored):
+    try:
+        scheme, rounds, salt, digest = stored.split("$")
+        got = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt), int(rounds))
+    except ValueError:
+        return False
+    return scheme == "pbkdf2_sha256" and hmac.compare_digest(got.hex(), digest)
+
+
+def hash_key(key):
+    return "sha256$" + hashlib.sha256(key.encode()).hexdigest()
 
 
 def _session_secret():
@@ -4054,7 +4122,9 @@ def _session_secret():
 
 def _session_mac(user, expires):
     # The password is part of the key, so changing it signs out every cookie made with the old one.
-    key = _session_secret() + hashlib.sha256(("%s\0%s" % (ADMIN_USER, ADMIN_PASSWORD)).encode()).digest()
+    # A kept password is a hash with its own salt, which changes whenever the password does.
+    stamp = ("env\0%s\0%s" % (user, ENV_PASSWORD)) if ENV_PASSWORD else ("kept\0%s\0%s" % (user, ACCESS["password"]))
+    key = _session_secret() + hashlib.sha256(stamp.encode()).digest()
     return hmac.new(key, ("%s.%d" % (user, expires)).encode(), hashlib.sha256).hexdigest()
 
 
@@ -4067,29 +4137,48 @@ def session_cookie_for(user):
 def session_user(value):
     """The user a cookie was made for, or None when it is not one of ours, has run out,
     or was made before the password changed."""
-    if not ADMIN_PASSWORD or not value:
+    if not password_set() or not value:
         return None
     try:
         name, expires, mac = value.split(".")
         user, expires = base64.urlsafe_b64decode(name + "=" * (-len(name) % 4)).decode(), int(expires)
     except (ValueError, UnicodeDecodeError):
         return None
-    if expires < time.time() or user != ADMIN_USER:
+    if expires < time.time() or user != access_user():
         return None
     return user if hmac.compare_digest(mac, _session_mac(user, expires)) else None
 
 
 def access_key_ok(key):
-    return bool(ACCESS_KEY) and bool(key) and hmac.compare_digest(key.encode(), ACCESS_KEY.encode())
+    if not key:
+        return False
+    if ENV_KEY:
+        return hmac.compare_digest(key.encode(), ENV_KEY.encode())
+    return bool(ACCESS["key"]) and hmac.compare_digest(hash_key(key), ACCESS["key"])
 
 
 def password_ok(user, password):
-    if not ADMIN_PASSWORD:
+    if not password_set():
         return False
     # Both compared, always, so how long a refusal takes says nothing about which was wrong.
-    same_user = hmac.compare_digest(str(user).encode(), ADMIN_USER.encode())
-    same_password = hmac.compare_digest(str(password).encode(), ADMIN_PASSWORD.encode())
+    same_user = hmac.compare_digest(str(user).encode(), access_user().encode())
+    if ENV_PASSWORD:
+        same_password = hmac.compare_digest(str(password).encode(), ENV_PASSWORD.encode())
+    else:
+        same_password = _password_matches(str(password), ACCESS["password"])
     return same_user and same_password
+
+
+def access_status():
+    """What the Settings page shows. Never a password, never a whole key."""
+    return {"on": access_on(), "user": access_user(), "userFrom": "env" if ENV_USER else "settings",
+            "password": {"set": password_set(), "from": "env" if ENV_PASSWORD else "settings" if ACCESS["password"] else None},
+            "key": {"set": key_set(), "from": "env" if ENV_KEY else "settings" if ACCESS["key"] else None,
+                    "hint": ("…" + ENV_KEY[-4:]) if ENV_KEY else ACCESS["keyHint"]},
+            "changed": ACCESS["changed"] or None, "sessionDays": SESSION_SECONDS / 86400.0}
+
+
+load_access()
 
 
 def sign_in_wait(address):
@@ -6327,8 +6416,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/login":
             return self.login_get()
+        if path == "/api/access":
+            return self.send_json(200, dict(access_status(), ok=True, you=self.who if self.who not in (None, "key") else None))
         if path == "/api/auth":
-            return self.send_json(200, {"on": ACCESS_ON, "user": self.who if self.who not in (None, "key") else None,
+            return self.send_json(200, {"on": access_on(), "user": self.who if self.who not in (None, "key") else None,
                                         "via": "key" if self.who == "key" else "cookie" if self.who else None})
 
         if path.startswith(REST_PREFIXES):
@@ -6395,7 +6486,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.wfile.write(payload)
 
         if path in ("/", "/healthz"):
-            if ACCESS_ON and not self.who:
+            if access_on() and not self.who:
                 # Alive, and nothing more: the rest says what is routed where and which rules exist.
                 return self.send_json(200, {"ok": True, "service": "llmsim", "access": "sign-in required"})
             return self.send_json(200, {
@@ -6526,6 +6617,12 @@ class Handler(BaseHTTPRequestHandler):
             return self.login_post(raw if length else b"")
         if path == "/logout":
             return self.logout_post()
+        if path == "/api/access":
+            try:
+                body = json.loads(raw or b"{}")
+            except json.JSONDecodeError:
+                return self.send_json(400, {"ok": False, "message": "The body is not valid JSON."})
+            return self.access_console(body if isinstance(body, dict) else {})
         if testkit.owns(path):
             return self.kit_route("POST", path, raw)
         try:
@@ -6608,7 +6705,7 @@ class Handler(BaseHTTPRequestHandler):
         console cookie, None when access is off or the path is one anybody may use.
         """
         self.who = None
-        if not ACCESS_ON:
+        if not access_on():
             return True
         if access_key_ok(self._presented_access_key(path)):
             self.who = "key"
@@ -6645,6 +6742,90 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(raw)
         return False
 
+    def _access_reply(self, code, message, cookie=None, **extra):
+        payload = dict(access_status(), ok=code < 400, message=message, **extra)
+        raw = json.dumps(payload).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(raw)))
+        self.send_header("Cache-Control", "no-store")
+        if cookie:
+            self.send_header("Set-Cookie", cookie)
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def _current_password_ok(self, body):
+        """A change to the sign-in itself, made with a cookie, asks for the password again:
+        a console left open is not the same as knowing it. The key, or a sign-in not yet
+        turned on, needs nothing more."""
+        if self.who in (None, "key") or not password_set():
+            return True
+        address = self.client_address[0]
+        if sign_in_wait(address):
+            return False
+        ok = password_ok(self.who, body.get("current") or "")
+        sign_in_result(address, ok)
+        return ok
+
+    def access_console(self, body):
+        """Settings › Sign-in and API key. One action per call:
+
+            password      {user?, password, current?}  turn the sign-in on, or change the password
+            new-key       {current?}                   make an API key (replacing one); shown once
+            remove-key    {current?}
+            off           {current?}                   remove the password and the key kept here
+
+        What LLMSIM_ADMIN_* or LLMSIM_API_KEY set where LLMSim was started is not changed here."""
+        if self.foreign_origin():
+            return self.send_json(403, {"ok": False, "message": "That request came from another site."})
+        action = body.get("action")
+        if action not in ("password", "new-key", "remove-key", "off"):
+            return self._access_reply(400, "action is password, new-key, remove-key or off.")
+        if not self._current_password_ok(body):
+            return self._access_reply(403, "Type your current password to change the sign-in.")
+        signed_in_here = self.who not in (None, "key")
+        with ACCESS_LOCK:
+            if action == "password":
+                if ENV_PASSWORD:
+                    return self._access_reply(409, "The password is set by LLMSIM_ADMIN_PASSWORD where LLMSim is started. Change it there.")
+                password, user = str(body.get("password") or ""), str(body.get("user") or "").strip()
+                if len(password) < MIN_PASSWORD:
+                    return self._access_reply(400, "A password is at least %d characters." % MIN_PASSWORD)
+                if user and not ENV_USER:
+                    if not re.fullmatch(r"[A-Za-z0-9._@-]{1,64}", user):
+                        return self._access_reply(400, "A user name is letters, digits, dot, dash, underscore or @, up to 64.")
+                    ACCESS["user"] = user
+                was_on = access_on()
+                ACCESS["password"], ACCESS["changed"] = hash_password(password), int(time.time())
+                save_access()
+                log("access: the console password was %s in Settings" % ("changed" if was_on and signed_in_here else "set"))
+                # Whoever set it stays signed in: everybody else's cookie stopped working with the old password.
+                cookie = None if self.who == "key" else self._cookie_header(session_cookie_for(access_user()), SESSION_SECONDS)
+                return self._access_reply(200, "Saved. The console now asks for a sign-in as %s." % access_user(), cookie)
+            if action == "new-key":
+                if ENV_KEY:
+                    return self._access_reply(409, "The API key is set by LLMSIM_API_KEY where LLMSim is started. Change it there.")
+                if not password_set():
+                    return self._access_reply(409, "Set a console password first. A key alone would lock this page out.")
+                key = "llmsim-" + base64.urlsafe_b64encode(os.urandom(30)).decode().rstrip("=")
+                ACCESS["key"], ACCESS["keyHint"], ACCESS["changed"] = hash_key(key), "…" + key[-4:], int(time.time())
+                save_access()
+                log("access: a new API key was made in Settings (%s); the one before, if any, no longer works" % ACCESS["keyHint"])
+                return self._access_reply(200, "Made. Copy it now: it is not shown again.", key=key)
+            if action == "remove-key":
+                if ENV_KEY:
+                    return self._access_reply(409, "The API key is set by LLMSIM_API_KEY where LLMSim is started. Remove it there.")
+                ACCESS["key"], ACCESS["keyHint"], ACCESS["changed"] = "", "", int(time.time())
+                save_access()
+                log("access: the API key was removed in Settings")
+                return self._access_reply(200, "Removed. Scripts can no longer reach /api with it.")
+            if ENV_PASSWORD or ENV_KEY:
+                return self._access_reply(409, "The sign-in is set by LLMSIM_ADMIN_PASSWORD or LLMSIM_API_KEY where LLMSim is started. Remove them there.")
+            ACCESS.update(password="", key="", keyHint="", changed=int(time.time()))
+            save_access()
+            log("access: the sign-in was turned off in Settings; LLMSim is OPEN")
+            return self._access_reply(200, "Turned off. Anyone who can reach this port can use the console and the API.", self._cookie_header("", 0))
+
     def _secure_cookie(self):
         return (self.headers.get("X-Forwarded-Proto") or "").lower() == "https" or os.environ.get("LLMSIM_COOKIE_SECURE") == "1"
 
@@ -6662,9 +6843,9 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def login_page(self, next_path="/ui", message="", status=200, user=""):
-        if not ADMIN_PASSWORD:
+        if not password_set():
             message = message or ("No console password is set on this LLMSim. Set LLMSIM_ADMIN_PASSWORD and restart it."
-                                  if ACCESS_ON else "")
+                                  if access_on() else "")
         page = LOGIN_PAGE.replace("{{next}}", html_escape(next_path)).replace("{{user}}", html_escape(user))
         page = page.replace("{{message}}", ('<p class="msg" role="alert">%s</p>' % html_escape(message)) if message else "")
         raw = page.encode()
@@ -6681,7 +6862,7 @@ class Handler(BaseHTTPRequestHandler):
     def login_get(self):
         query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
         next_path = safe_next((query.get("next") or ["/ui"])[0])
-        if not ACCESS_ON or session_user(self._cookie(SESSION_COOKIE)):
+        if not access_on() or session_user(self._cookie(SESSION_COOKIE)):
             return self._redirect(next_path)
         return self.login_page(next_path)
 
@@ -6689,7 +6870,7 @@ class Handler(BaseHTTPRequestHandler):
         form = urllib.parse.parse_qs(raw.decode("utf-8", "replace"))
         user, password = (form.get("user") or [""])[0], (form.get("password") or [""])[0]
         next_path = safe_next((form.get("next") or ["/ui"])[0])
-        if not ACCESS_ON:
+        if not access_on():
             return self._redirect(next_path)
         if self.foreign_origin():
             return self.login_page(next_path, "That sign-in came from another site.", 403)
@@ -6708,7 +6889,7 @@ class Handler(BaseHTTPRequestHandler):
     def logout_post(self):
         if self.foreign_origin():
             return self.send_json(403, {"ok": False, "message": "That request came from another site."})
-        return self._redirect("/login" if ACCESS_ON else "/ui", self._cookie_header("", 0))
+        return self._redirect("/login" if access_on() else "/ui", self._cookie_header("", 0))
 
     def foreign_origin(self):
         """True when a browser says the request came from some other site.
@@ -7575,13 +7756,16 @@ def main():
                    " for the default route" if CONFIG["routing"]["default"] == "anthropic" else ""))
         else:
             log("anthropic: routes point at Anthropic but no key is set — those requests will fail until one is")
-    if ACCESS_ON:
+    if access_on():
+        st = access_status()
         log("access: the console and /api need a sign-in%s%s"
-            % (" (user %s, password from LLMSIM_ADMIN_PASSWORD)" % ADMIN_USER if ADMIN_PASSWORD else " — no console password is set, only the API key",
-               ", or the API key from LLMSIM_API_KEY" if ACCESS_KEY else " — no API key is set, so scripts cannot reach /api"))
+            % (" (user %s, password from %s)" % (st["user"], "LLMSIM_ADMIN_PASSWORD" if st["password"]["from"] == "env" else "Settings")
+               if st["password"]["set"] else " — no console password is set, only the API key",
+               ", or the API key from %s" % ("LLMSIM_API_KEY" if st["key"]["from"] == "env" else "Settings")
+               if st["key"]["set"] else " — no API key is set, so scripts cannot reach /api"))
     else:
         log("access: OPEN — anyone who can reach port %d can use the console and the whole API." % PORT)
-        log("        Set LLMSIM_ADMIN_PASSWORD and LLMSIM_API_KEY to require a sign-in.")
+        log("        Turn on a sign-in at /ui#access, or set LLMSIM_ADMIN_PASSWORD and LLMSIM_API_KEY.")
     log("console: http://localhost:%d/ui   guide: http://localhost:%d/guide" % (PORT, PORT))
     for name in sorted(API_KEYS):
         log("  %-9s http://localhost:%d/%s   key %s" % (name, PORT, name, API_KEYS[name]))

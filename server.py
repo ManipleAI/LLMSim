@@ -4002,16 +4002,17 @@ def credential_accepted(cred):
 # -- access: who may use the console and the API -----------------------------
 #
 # Off until a password is set, so a checkout, a test and every LLMSim installed
-# before this keep working as they did. Set either where LLMSim is started,
-# which wins and cannot be changed from the console:
+# before this keep working as they did. Set either where LLMSim is started, which
+# gives the first sign-in:
 #
 #   LLMSIM_ADMIN_USER       the console's user name (default admin)
 #   LLMSIM_ADMIN_PASSWORD   its password: the console asks for it once, then a cookie
 #   LLMSIM_API_KEY          for scripts and CI: X-LLMSim-Key, or a bearer token
 #
-# or on the console's Settings › Sign-in and API key page, which keeps them in
-# llmsim.access.json: the password as a PBKDF2 hash and the key as a SHA-256 hash,
-# so the file is no use to whoever reads it. A key made there is shown once.
+# or on the console's Settings › Sign-in and API key page, which replaces what the
+# environment gave and keeps it in llmsim.access.json: the password as a PBKDF2
+# hash and the key as a SHA-256 hash, so the file is no use to whoever reads it.
+# A key made there is shown once.
 # The password turns the sign-in on. The key is a second way in, for what cannot
 # sign in; a key with no password is not used, as it would lock the console out.
 #
@@ -4067,7 +4068,7 @@ def save_access():
 
 
 def access_user():
-    return ENV_USER or ACCESS["user"] or "admin"
+    return ACCESS["user"] or ENV_USER or "admin"
 
 
 def password_set():
@@ -4124,7 +4125,7 @@ def _session_secret():
 def _session_mac(user, expires):
     # The password is part of the key, so changing it signs out every cookie made with the old one.
     # A kept password is a hash with its own salt, which changes whenever the password does.
-    stamp = ("env\0%s\0%s" % (user, ENV_PASSWORD)) if ENV_PASSWORD else ("kept\0%s\0%s" % (user, ACCESS["password"]))
+    stamp = ("kept\0%s\0%s" % (user, ACCESS["password"])) if ACCESS["password"] else ("env\0%s\0%s" % (user, ENV_PASSWORD))
     key = _session_secret() + hashlib.sha256(stamp.encode()).digest()
     return hmac.new(key, ("%s.%d" % (user, expires)).encode(), hashlib.sha256).hexdigest()
 
@@ -4153,9 +4154,10 @@ def session_user(value):
 def access_key_ok(key):
     if not key or not access_on():
         return False
-    if ENV_KEY:
-        return hmac.compare_digest(key.encode(), ENV_KEY.encode())
-    return bool(ACCESS["key"]) and hmac.compare_digest(hash_key(key), ACCESS["key"])
+    # One made in Settings replaces LLMSIM_API_KEY: the environment's is the first, not the last.
+    if ACCESS["key"]:
+        return hmac.compare_digest(hash_key(key), ACCESS["key"])
+    return bool(ENV_KEY) and hmac.compare_digest(key.encode(), ENV_KEY.encode())
 
 
 def password_ok(user, password):
@@ -4163,19 +4165,21 @@ def password_ok(user, password):
         return False
     # Both compared, always, so how long a refusal takes says nothing about which was wrong.
     same_user = hmac.compare_digest(str(user).encode(), access_user().encode())
-    if ENV_PASSWORD:
-        same_password = hmac.compare_digest(str(password).encode(), ENV_PASSWORD.encode())
-    else:
+    if ACCESS["password"]:
         same_password = _password_matches(str(password), ACCESS["password"])
+    else:
+        same_password = hmac.compare_digest(str(password).encode(), ENV_PASSWORD.encode())
     return same_user and same_password
 
 
 def access_status():
     """What the Settings page shows. Never a password, never a whole key."""
-    return {"on": access_on(), "user": access_user(), "userFrom": "env" if ENV_USER else "settings",
-            "password": {"set": password_set(), "from": "env" if ENV_PASSWORD else "settings" if ACCESS["password"] else None},
-            "key": {"set": key_set(), "from": "env" if ENV_KEY else "settings" if ACCESS["key"] else None,
-                    "hint": ("…" + ENV_KEY[-4:]) if ENV_KEY else ACCESS["keyHint"]},
+    # "from" is the one in use; "env" says whether the environment gave one, which Settings has replaced or not.
+    return {"on": access_on(), "user": access_user(), "userFrom": "env" if ENV_USER and not ACCESS["user"] else "settings",
+            "password": {"set": password_set(), "from": "settings" if ACCESS["password"] else "env" if ENV_PASSWORD else None,
+                         "env": bool(ENV_PASSWORD)},
+            "key": {"set": key_set(), "from": "settings" if ACCESS["key"] else "env" if ENV_KEY else None, "env": bool(ENV_KEY),
+                    "hint": ACCESS["keyHint"] if ACCESS["key"] else ("…" + ENV_KEY[-4:]) if ENV_KEY else ""},
             "changed": ACCESS["changed"] or None, "sessionDays": SESSION_SECONDS / 86400.0}
 
 
@@ -6711,7 +6715,8 @@ class Handler(BaseHTTPRequestHandler):
             remove-key    {current?}
             off           {current?}                   remove the password and the key kept here
 
-        What LLMSIM_ADMIN_* or LLMSIM_API_KEY set where LLMSim was started is not changed here."""
+        A password or a key set here replaces the one LLMSIM_ADMIN_PASSWORD or LLMSIM_API_KEY gave;
+        what the environment gave cannot be removed from here."""
         if self.foreign_origin():
             return self.send_json(403, {"ok": False, "message": "That request came from another site."})
         action = body.get("action")
@@ -6722,12 +6727,10 @@ class Handler(BaseHTTPRequestHandler):
         signed_in_here = self.who not in (None, "key")
         with ACCESS_LOCK:
             if action == "password":
-                if ENV_PASSWORD:
-                    return self._access_reply(409, "The password is set by LLMSIM_ADMIN_PASSWORD where LLMSim is started. Change it there.")
                 password, user = str(body.get("password") or ""), str(body.get("user") or "").strip()
                 if len(password) < MIN_PASSWORD:
                     return self._access_reply(400, "A password is at least %d characters." % MIN_PASSWORD)
-                if user and not ENV_USER:
+                if user and user != access_user():
                     if not re.fullmatch(r"[A-Za-z0-9._@-]{1,64}", user):
                         return self._access_reply(400, "A user name is letters, digits, dot, dash, underscore or @, up to 64.")
                     ACCESS["user"] = user
@@ -6739,8 +6742,6 @@ class Handler(BaseHTTPRequestHandler):
                 cookie = None if self.who == "key" else self._cookie_header(session_cookie_for(access_user()), SESSION_SECONDS)
                 return self._access_reply(200, "Saved. The console now asks for a sign-in as %s." % access_user(), cookie)
             if action == "new-key":
-                if ENV_KEY:
-                    return self._access_reply(409, "The API key is set by LLMSIM_API_KEY where LLMSim is started. Change it there.")
                 if not password_set():
                     return self._access_reply(409, "Set a console password first. A key alone would lock this page out.")
                 key = "llmsim-" + base64.urlsafe_b64encode(os.urandom(30)).decode().rstrip("=")
@@ -6749,15 +6750,16 @@ class Handler(BaseHTTPRequestHandler):
                 log("access: a new API key was made in Settings (%s); the one before, if any, no longer works" % ACCESS["keyHint"])
                 return self._access_reply(200, "Made. Copy it now: it is not shown again.", key=key)
             if action == "remove-key":
-                if ENV_KEY:
-                    return self._access_reply(409, "The API key is set by LLMSIM_API_KEY where LLMSim is started. Remove it there.")
+                if not ACCESS["key"]:
+                    return self._access_reply(409, "This key is LLMSIM_API_KEY, where LLMSim is started. Remove it there, or make a new key here to replace it.")
                 ACCESS["key"], ACCESS["keyHint"], ACCESS["changed"] = "", "", int(time.time())
                 save_access()
-                log("access: the API key was removed in Settings")
-                return self._access_reply(200, "Removed. Scripts can no longer reach /api with it.")
-            if ENV_PASSWORD or ENV_KEY:
-                return self._access_reply(409, "The sign-in is set by LLMSIM_ADMIN_PASSWORD or LLMSIM_API_KEY where LLMSim is started. Remove them there.")
-            ACCESS.update(password="", key="", keyHint="", changed=int(time.time()))
+                log("access: the API key made in Settings was removed")
+                return self._access_reply(200, "Removed. The key from LLMSIM_API_KEY works again." if ENV_KEY
+                                          else "Removed. Scripts can no longer reach /api with it.")
+            if ENV_PASSWORD:
+                return self._access_reply(409, "LLMSIM_ADMIN_PASSWORD is set where LLMSim is started, so the sign-in stays on. Remove it there.")
+            ACCESS.update(user="", password="", key="", keyHint="", changed=int(time.time()))
             save_access()
             log("access: the sign-in was turned off in Settings; LLMSim is OPEN")
             return self._access_reply(200, "Turned off. Anyone who can reach this port can use the console and the API.", self._cookie_header("", 0))
@@ -7669,7 +7671,8 @@ def main():
     if access_on():
         st = access_status()
         log("access: the console and /api need a sign-in (user %s, password from %s)%s"
-            % (st["user"], "LLMSIM_ADMIN_PASSWORD" if st["password"]["from"] == "env" else "Settings",
+            % (st["user"], "LLMSIM_ADMIN_PASSWORD" if st["password"]["from"] == "env" else
+               "Settings, replacing LLMSIM_ADMIN_PASSWORD" if st["password"]["env"] else "Settings",
                ", or the API key from %s" % ("LLMSIM_API_KEY" if st["key"]["from"] == "env" else "Settings")
                if st["key"]["set"] else " — no API key is set, so scripts cannot reach /api"))
     elif key_set():

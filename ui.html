@@ -1397,9 +1397,12 @@ async function accessLoad() {
 function accessRender(message, bad) {
   const el = document.getElementById("access-body");
   if (!el || !ACC) return;
-  const pw = ACC.password, key = ACC.key, envAny = pw.from === "env" || key.from === "env";
+  const pw = ACC.password, key = ACC.key;
   const needCurrent = pw.set && ACC.you;
-  const fromEnv = (name) => `<div class="note warn" style="margin:0">Set by <code>${name}</code> where LLMSim is started. Change it there and restart LLMSim.</div>`;
+  // What the environment gave is the first one: one set here replaces it, and is kept across restarts.
+  const envNote = (name, what, used) => used
+    ? `<p class="help">Now <code>${name}</code>, from where LLMSim is started. A ${what} set here replaces it, and is kept across restarts.</p>`
+    : `<p class="help">Set here, replacing <code>${name}</code>.</p>`;
   el.innerHTML = `
     <div class="card"><h2>Sign-in ${ACC.on ? tagFor("set", "on") : tagFor("err", "off")}</h2>
       ${ACC.on
@@ -1409,28 +1412,28 @@ function accessRender(message, bad) {
       <div id="acc-note" class="note" ${message ? "" : "hidden"} style="${bad ? "background:var(--primary-tint);color:var(--primary-hover)" : "background:var(--green-tint);color:var(--green)"}">${esc(message || "")}</div>
     </div>
     <div class="card"><h2>Console password</h2>
-      ${pw.from === "env" ? fromEnv("LLMSIM_ADMIN_PASSWORD") : `
+      ${pw.env ? envNote("LLMSIM_ADMIN_PASSWORD", "password", pw.from === "env") : ""}
         <p class="help">${pw.set ? "Changing it signs everybody else out. You stay signed in." : "Setting one turns the sign-in on. You stay signed in on this browser."}</p>
         <div class="row">
-          <div><label for="acc-user">User name${ACC.userFrom === "env" ? ' <span class="hint">· from LLMSIM_ADMIN_USER</span>' : ""}</label><input id="acc-user" type="text" autocomplete="username" value="${esc(ACC.user)}" ${ACC.userFrom === "env" ? "disabled" : ""}></div>
+          <div><label for="acc-user">User name${ACC.userFrom === "env" ? ' <span class="hint">· from LLMSIM_ADMIN_USER</span>' : ""}</label><input id="acc-user" type="text" autocomplete="username" value="${esc(ACC.user)}"></div>
           <div><label for="acc-pw">${pw.set ? "New password" : "Password"} <span class="hint">· at least 8 characters</span></label><input id="acc-pw" type="password" autocomplete="new-password"></div>
           <div><label for="acc-pw2">Type it again</label><input id="acc-pw2" type="password" autocomplete="new-password"></div>
         </div>
-        <div class="acc-actions"><button class="btn" onclick="accPassword()">${pw.set ? "Change the password" : "Turn on the sign-in"}</button></div>`}
+        <div class="acc-actions"><button class="btn" onclick="accPassword()">${pw.set ? "Change the password" : "Turn on the sign-in"}</button></div>
     </div>
     <div class="card"><h2>API key ${key.set ? tagFor("set", "ends " + (key.hint || "").replace("…", "")) : ""}</h2>
       <p class="help">For scripts, CI and the <code>llmsim</code> CLI: send it as the <code>X-LLMSim-Key</code> header, or as a bearer token on <code>/api/…</code>. Only a hash of it is kept, so a key is shown once, when it is made.</p>
-      ${key.from === "env" ? fromEnv("LLMSIM_API_KEY") : `
+      ${key.env ? envNote("LLMSIM_API_KEY", "key", key.from === "env") : ""}
         <div class="acc-actions">
           <button class="btn" onclick="accKey('new-key')" ${pw.set ? "" : "disabled"}>${key.set ? "Make a new key" : "Make a key"}</button>
-          ${key.set ? `<button class="btn ghost" onclick="accKey('remove-key')">Remove the key</button>` : ""}
+          ${key.from === "settings" ? `<button class="btn ghost" onclick="accKey('remove-key')">Remove the key</button>` : ""}
           ${pw.set ? (key.set ? '<span class="hint">A new key replaces this one at once.</span>' : "") : '<span class="hint">Set a console password first: a key alone would lock this page out.</span>'}
-        </div>`}
+        </div>
       ${ACC_MADE ? `<div class="acc-key"><code id="acc-made">${esc(ACC_MADE)}</code><button class="btn ghost" onclick="copyText(ACC_MADE); note('acc-copied', 'Copied.')">Copy</button></div>
         <p class="help" style="margin:8px 0 0">Copy it now: it is not shown again. <span id="acc-copied"></span><br>
         <code>curl ${esc(location.origin)}/api/rules -H "X-LLMSim-Key: …"</code> · <code>LLMSIM_API_KEY=… bin/llmsim results</code></p>` : ""}
     </div>
-    ${ACC.on && !envAny ? `<div class="card"><h2>Turn off the sign-in</h2>
+    ${ACC.on && !pw.env ? `<div class="card"><h2>Turn off the sign-in</h2>
       <p class="help">Removes the password and the key kept here. Anyone who can reach this port can then use everything.</p>
       <button class="btn ghost" onclick="accOff()">Turn off the sign-in</button></div>` : ""}`;
 }

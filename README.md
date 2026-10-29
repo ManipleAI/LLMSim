@@ -332,7 +332,8 @@ either of two ways:
 
 - **In the console**, under **Settings › Sign-in and API key**. Set a password, then make
   an API key (it is shown once). Only hashes of them are kept.
-- **Where LLMSim is started**, which takes priority over the console:
+- **Where LLMSim is started**, for the first sign-in. A password or key set in the console
+  later replaces it:
 
 ```bash
 LLMSIM_ADMIN_PASSWORD='choose one' LLMSIM_API_KEY='llmsim-…' python3 server.py

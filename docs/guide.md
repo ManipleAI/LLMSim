@@ -35,7 +35,7 @@ Out of the box LLMSim is open: anyone who can reach the port can use the console
 - Once you are signed in, each change asks for your current password.
 - LLMSim keeps only hashes of the password and the key, in `llmsim.access.json`, which only LLMSim's user can read.
 
-**Where it is started:** set these, which win over the console and cannot be changed from it:
+**Where it is started:** set these for the first sign-in. A password or key set in the console later replaces them, and is kept across restarts:
 
 ```bash
 LLMSIM_ADMIN_PASSWORD='choose one' LLMSIM_API_KEY='llmsim-…' python3 server.py
@@ -850,7 +850,7 @@ These are what a client calls. Prefix any of them with `/run/<run>` or `/run/<ru
 | `POST /logout` | Clear the cookie |
 | `GET /api/auth` | `{on, user, via}`: whether a sign-in is required, and who this request is (`via` is `cookie` or `key`) |
 | `GET /api/access` | What the Settings page shows: whether the sign-in is on, the user, and where the password and the key come from (`env` or `settings`). Never the password, and only the key's last four characters. |
-| `POST /api/access` | One change: `{action: "password", password, user?}`, `{action: "new-key"}` (answers the key, once), `{action: "remove-key"}` or `{action: "off"}`. With the cookie, add `current`, the current password. `409` when the environment sets what it would change. |
+| `POST /api/access` | One change: `{action: "password", password, user?}`, `{action: "new-key"}` (answers the key, once), `{action: "remove-key"}` or `{action: "off"}`. With the cookie, add `current`, the current password. A password or key set here replaces the environment's. `409` for `off` while `LLMSIM_ADMIN_PASSWORD` is set, and for `remove-key` on the environment's key. |
 
 ### Settings
 

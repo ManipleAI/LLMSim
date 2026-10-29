@@ -256,7 +256,7 @@ def case_settings_makes_a_key(sim):
     check(status == 200 and body["key"].startswith("llmsim-"), "made: %s" % status)
     sim.key = body["key"]
     status, st = sim.api("GET", "/api/access", headers={"X-LLMSim-Key": sim.key})
-    check(status == 200 and st["key"] == {"set": True, "from": "settings", "hint": "…" + sim.key[-4:]}, "the key works, and only its end is shown: %s" % st)
+    check(status == 200 and st["key"] == {"set": True, "from": "settings", "env": False, "hint": "…" + sim.key[-4:]}, "the key works, and only its end is shown: %s" % st)
     check(sim.key not in open(sim.env["LLMSIM_ACCESS"]).read(), "only a hash of the key is kept")
     status, _, body = act(sim, {"action": "new-key", "current": "first-password"}, cookie=sim.cookie)
     status, _ = sim.api("GET", "/api/rules", headers={"X-LLMSim-Key": sim.key})
@@ -298,17 +298,35 @@ def case_settings_removes_the_key_and_turns_off(sim):
     check(status == 200, "open again: %s" % status)
 
 
-def case_settings_cannot_change_what_the_environment_set(sim):
+def case_settings_replaces_what_the_environment_gave(sim):
     status, headers, _ = sign_in(sim)
+    check(status == 200, "the first sign-in is LLMSIM_ADMIN_PASSWORD: %s" % status)
     cookie = cookie_of(headers)
-    status, _, body = act(sim, {"action": "password", "password": "another-one", "current": PASSWORD}, cookie=cookie)
-    check(status == 409 and "LLMSIM_ADMIN_PASSWORD" in body["message"], "the environment's password: %s %s" % (status, body.get("message")))
-    status, _, body = act(sim, {"action": "new-key", "current": PASSWORD}, cookie=cookie)
-    check(status == 409 and "LLMSIM_API_KEY" in body["message"], "the environment's key: %s" % status)
-    status, _, body = act(sim, {"action": "off", "current": PASSWORD}, cookie=cookie)
-    check(status == 409, "nor turn it off: %s" % status)
     status, body = sim.api("GET", "/api/access", headers={"Cookie": cookie})
-    check(body["password"]["from"] == "env" and body["key"]["from"] == "env" and body["key"]["hint"] == "…" + KEY[-4:], "said where: %s" % body)
+    check(body["password"] == {"set": True, "from": "env", "env": True} and body["key"]["from"] == "env"
+          and body["key"]["hint"] == "…" + KEY[-4:], "said where: %s" % body)
+    status, _, body = act(sim, {"action": "off", "current": PASSWORD}, cookie=cookie)
+    check(status == 409 and "LLMSIM_ADMIN_PASSWORD" in body["message"], "it cannot be turned off from here: %s" % status)
+    status, _, body = act(sim, {"action": "remove-key", "current": PASSWORD}, cookie=cookie)
+    check(status == 409, "nor the environment's key removed: %s" % status)
+    status, headers, body = act(sim, {"action": "password", "password": "set-in-settings", "current": PASSWORD}, cookie=cookie)
+    check(status == 200 and body["password"]["from"] == "settings", "Settings changes the password: %s %s" % (status, body.get("message")))
+    cookie = cookie_of(headers)
+    status, _, _ = sign_in(sim, password=PASSWORD)
+    check(status == 401, "the environment's password no longer works: %s" % status)
+    status, _, body = act(sim, {"action": "new-key", "current": "set-in-settings"}, cookie=cookie)
+    check(status == 200 and body["key"].startswith("llmsim-"), "Settings makes a key: %s" % status)
+    status, st = sim.api("GET", "/api/access", headers={"Cookie": cookie})
+    check(st["key"]["from"] == "settings" and st["key"]["env"], "in use, in place of the environment's: %s" % st["key"])
+    status, _ = sim.api("GET", "/api/rules", headers={"X-LLMSim-Key": KEY})
+    check(status == 401, "which replaces LLMSIM_API_KEY: %s" % status)
+    sim.restart()
+    status, _, _ = sign_in(sim, password="set-in-settings")
+    check(status == 200, "a restart keeps what Settings set over the environment: %s" % status)
+    status, _, body = act(sim, {"action": "remove-key", "current": "set-in-settings"}, cookie=cookie)
+    check(status == 200 and "LLMSIM_API_KEY works again" in body["message"], "removing the key made here: %s" % body.get("message"))
+    status, _ = sim.api("GET", "/api/rules", headers={"X-LLMSim-Key": KEY})
+    check(status == 200, "brings the environment's back: %s" % status)
 
 
 def run(title, sim, cases):
@@ -343,7 +361,7 @@ def main():
             case_settings_makes_a_key, case_settings_changes_the_password, case_settings_survive_a_restart,
             case_settings_removes_the_key_and_turns_off]),
         ("Settings beside the environment", Sim(env={"LLMSIM_ADMIN_PASSWORD": PASSWORD, "LLMSIM_API_KEY": KEY}),
-         [case_settings_cannot_change_what_the_environment_set]),
+         [case_settings_replaces_what_the_environment_gave]),
     ]
     total = failed = 0
     for title, sim, cases in groups:

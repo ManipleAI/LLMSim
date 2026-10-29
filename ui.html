@@ -1437,6 +1437,13 @@ function accessRender(message, bad) {
       <p class="help">Removes the password and the key kept here. Anyone who can reach this port can then use everything.</p>
       <button class="btn ghost" onclick="accOff()">Turn off the sign-in</button></div>` : ""}`;
 }
+function accNote(message, bad) {
+  const el = document.getElementById("acc-note");
+  if (!el) return;
+  el.textContent = message;
+  el.style.cssText = bad ? "background:var(--primary-tint);color:var(--primary-hover)" : "background:var(--green-tint);color:var(--green)";
+  el.hidden = false;
+}
 async function accessAct(body) {
   const cur = document.getElementById("acc-current");
   if (cur) body.current = cur.value;
@@ -1454,7 +1461,8 @@ async function accessAct(body) {
 }
 async function accPassword() {
   const a = document.getElementById("acc-pw").value, b = document.getElementById("acc-pw2").value;
-  if (a !== b) return accessRender("The two passwords are not the same.", true);
+  // Said in place, not redrawn: a redraw would empty what was typed.
+  if (a !== b) return accNote("The two passwords are not the same.", true);
   const user = document.getElementById("acc-user");
   await accessAct({ action: "password", password: a, user: user && !user.disabled ? user.value : undefined });
 }

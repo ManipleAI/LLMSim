@@ -1038,3 +1038,5 @@ for t in tests/test_*.py; do python3 "$t" || break; done
 ```
 
 Each file starts its own LLMSim on a free port with a throwaway directory. The instance you are running is never touched.
+
+`tests/test_access_page.py` drives **Settings › Sign-in and API key** in a real browser: it sets and changes the password, makes, replaces and removes the key, signs out and in, and turns the sign-in off. It needs Node and Playwright for Node (`NODE_PATH=/path/to/node_modules`), and says it skipped without them.

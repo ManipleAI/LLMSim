@@ -377,6 +377,13 @@ Each test file starts its own LLMSim on a free port, with a throwaway data direc
 documentation page is built from `docs/guide.md` with `bin/build-docs`, and a test fails if
 the two are out of step.
 
+`tests/test_access_page.py` also clicks through **Settings › Sign-in and API key** in a real
+browser. It needs Node and Playwright for Node, and skips without them:
+
+```bash
+NODE_PATH=/path/to/node_modules python3 tests/test_access_page.py
+```
+
 Contributions are welcome. Open an issue to discuss a change, or send a pull request with a
 test that shows it working.
 

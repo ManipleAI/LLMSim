@@ -299,6 +299,39 @@ def case_settings_removes_the_key_and_turns_off(sim):
     check(status == 200, "open again: %s" % status)
 
 
+def case_settings_one_change_at_a_time(sim):
+    status, headers, _ = act(sim, {"action": "password", "user": "first", "password": "password-one"})
+    check(status == 200, "on: %s" % status)
+    cookie = cookie_of(headers)
+    status, _, body = act(sim, {"action": "remove-key", "current": "password-one"}, cookie=cookie)
+    check(status == 409, "removing a key when there is none: %s" % status)
+    status, _, body = act(sim, {"action": "password", "password": "password-two", "current": "wrong"}, cookie=cookie)
+    check(status == 403, "a wrong current password: %s" % status)
+    status, _, _ = sign_in(sim, user="first", password="password-one")
+    check(status == 200, "and the password is unchanged: %s" % status)
+    status, _, body = act(sim, {"action": "password", "user": "bad name!", "password": "password-two", "current": "password-one"}, cookie=cookie)
+    check(status == 400, "a user name with a space: %s" % status)
+    status, headers, body = act(sim, {"action": "password", "user": "second", "password": "password-two", "current": "password-one"}, cookie=cookie)
+    check(status == 200 and body["user"] == "second", "a new user name with the new password: %s %s" % (status, body.get("user")))
+    cookie = cookie_of(headers)
+    status, _, _ = sign_in(sim, user="first", password="password-two")
+    check(status == 401, "the old user name no longer signs in: %s" % status)
+    status, _, _ = sign_in(sim, user="second", password="password-two")
+    check(status == 200, "the new one does: %s" % status)
+    status, _, body = act(sim, {"action": "new-key", "current": "password-two"}, cookie=cookie)
+    first_key = body["newKey"]
+    status, _, body = act(sim, {"action": "new-key"}, key=first_key)
+    check(status == 200, "the key may replace itself, with no password: %s" % status)
+    status, _ = sim.api("GET", "/api/rules", headers={"X-LLMSim-Key": first_key})
+    check(status == 401, "and the old key stops at once: %s" % status)
+    status, _, text = sim.call("GET", "/api/access", headers={"Cookie": cookie})
+    check(body["newKey"] not in text and "pbkdf2" not in text and "sha256$" not in text, "Settings shows neither the key nor a hash")
+    status, _, body = act(sim, {"action": "off", "current": "password-two"}, cookie=cookie)
+    check(status == 200 and body["user"] == "admin", "off forgets the user name too: %s" % body.get("user"))
+    status, _ = sim.api("GET", "/api/rules")
+    check(status == 200, "open again: %s" % status)
+
+
 def case_settings_replaces_what_the_environment_gave(sim):
     status, headers, _ = sign_in(sim)
     check(status == 200, "the first sign-in is LLMSIM_ADMIN_PASSWORD: %s" % status)
@@ -361,6 +394,7 @@ def main():
             case_settings_starts_open, case_settings_turns_it_on, case_settings_asks_for_the_current_password,
             case_settings_makes_a_key, case_settings_changes_the_password, case_settings_survive_a_restart,
             case_settings_removes_the_key_and_turns_off]),
+        ("Settings, one change at a time", Sim(), [case_settings_one_change_at_a_time]),
         ("Settings beside the environment", Sim(env={"LLMSIM_ADMIN_PASSWORD": PASSWORD, "LLMSIM_API_KEY": KEY}),
          [case_settings_replaces_what_the_environment_gave]),
     ]

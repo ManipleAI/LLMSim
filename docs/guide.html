@@ -422,6 +422,7 @@ bin/llmsim experiment run --dataset refunds --gate    # a dataset, gated against
 <h3 id="tests">Tests</h3>
 <div class="code" data-lang="bash"><button class="copy" type="button">Copy</button><pre><code>for t in tests/test_*.py; do python3 "$t" || break; done</code></pre></div>
 <p>Each file starts its own LLMSim on a free port with a throwaway directory. The instance you are running is never touched.</p>
+<p><code>tests/test_access_page.py</code> drives <strong>Settings › Sign-in and API key</strong> in a real browser: it sets and changes the password, makes, replaces and removes the key, signs out and in, and turns the sign-in off. It needs Node and Playwright for Node (<code>NODE_PATH=/path/to/node_modules</code>), and says it skipped without them.</p>
 </div></main>
 </div>
 <script>

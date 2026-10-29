@@ -253,21 +253,22 @@ def case_settings_asks_for_the_current_password(sim):
 
 def case_settings_makes_a_key(sim):
     status, _, body = act(sim, {"action": "new-key", "current": "first-password"}, cookie=sim.cookie)
-    check(status == 200 and body["key"].startswith("llmsim-"), "made: %s" % status)
-    sim.key = body["key"]
+    check(status == 200 and body["newKey"].startswith("llmsim-"), "made: %s" % status)
+    sim.key = body["newKey"]
     status, st = sim.api("GET", "/api/access", headers={"X-LLMSim-Key": sim.key})
     check(status == 200 and st["key"] == {"set": True, "from": "settings", "env": False, "hint": "…" + sim.key[-4:]}, "the key works, and only its end is shown: %s" % st)
     check(sim.key not in open(sim.env["LLMSIM_ACCESS"]).read(), "only a hash of the key is kept")
     status, _, body = act(sim, {"action": "new-key", "current": "first-password"}, cookie=sim.cookie)
     status, _ = sim.api("GET", "/api/rules", headers={"X-LLMSim-Key": sim.key})
     check(status == 401, "a new key replaces the old one at once: %s" % status)
-    sim.key = body["key"]
+    sim.key = body["newKey"]
 
 
 def case_settings_changes_the_password(sim):
     old = sim.cookie
     status, headers, body = act(sim, {"action": "password", "password": "second-password", "current": "first-password"}, cookie=old)
     check(status == 200, "changed: %s %s" % (status, body))
+    check("newKey" not in body and isinstance(body["key"], dict), "only new-key answers a key: %s" % body.get("key"))
     sim.cookie = cookie_of(headers)
     status, _ = sim.api("GET", "/api/rules", headers={"Cookie": old})
     check(status == 401, "the cookie made before no longer works: %s" % status)
@@ -315,7 +316,7 @@ def case_settings_replaces_what_the_environment_gave(sim):
     status, _, _ = sign_in(sim, password=PASSWORD)
     check(status == 401, "the environment's password no longer works: %s" % status)
     status, _, body = act(sim, {"action": "new-key", "current": "set-in-settings"}, cookie=cookie)
-    check(status == 200 and body["key"].startswith("llmsim-"), "Settings makes a key: %s" % status)
+    check(status == 200 and body["newKey"].startswith("llmsim-"), "Settings makes a key: %s" % status)
     status, st = sim.api("GET", "/api/access", headers={"Cookie": cookie})
     check(st["key"]["from"] == "settings" and st["key"]["env"], "in use, in place of the environment's: %s" % st["key"])
     status, _ = sim.api("GET", "/api/rules", headers={"X-LLMSim-Key": KEY})

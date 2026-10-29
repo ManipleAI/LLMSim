@@ -1445,7 +1445,8 @@ async function accessAct(body) {
   // Read again, as the cookie this answer may have set: who is signed in decides what the page asks for.
   const now = await REST("GET", "/api/access");
   if (now.ok) ACC = now.body;
-  if (r.ok && r.body.key) ACC_MADE = r.body.key;
+  // Only new-key answers newKey; every answer also carries "key", which is the key's status, never the key.
+  if (r.ok && typeof r.body.newKey === "string") ACC_MADE = r.body.newKey;
   if (r.ok && body.action === "remove-key") ACC_MADE = null;
   accessRender((r.body && r.body.message) || ("HTTP " + r.status), !r.ok);
   whoRefresh();

@@ -6748,7 +6748,7 @@ class Handler(BaseHTTPRequestHandler):
                 ACCESS["key"], ACCESS["keyHint"], ACCESS["changed"] = hash_key(key), "…" + key[-4:], int(time.time())
                 save_access()
                 log("access: a new API key was made in Settings (%s); the one before, if any, no longer works" % ACCESS["keyHint"])
-                return self._access_reply(200, "Made. Copy it now: it is not shown again.", key=key)
+                return self._access_reply(200, "Made. Copy it now: it is not shown again.", newKey=key)
             if action == "remove-key":
                 if not ACCESS["key"]:
                     return self._access_reply(409, "This key is LLMSIM_API_KEY, where LLMSim is started. Remove it there, or make a new key here to replace it.")

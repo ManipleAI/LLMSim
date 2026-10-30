@@ -383,7 +383,7 @@ curl -X POST localhost:8099/api/sessions/stop   -d '{"run": "r1"}'     # hits, m
 | Route | Answers come from | Set it up |
 |---|---|---|
 | Upstream | One model behind an API key | Routing → Upstream: URL, model and key |
-| ChatGPT plan | Your ChatGPT subscription | Settings → ChatGPT plan → Sign in |
+| ChatGPT plan | Your ChatGPT subscription | Settings → ChatGPT plan → Continue with ChatGPT |
 | Anthropic API | A real Claude model | Routing → Anthropic API: key and model |
 
 The usual pattern: record a session through a real model once, then replay it for every later test run.
@@ -410,11 +410,21 @@ The client's `temperature` or `top_p`, stop sequences, tools and tool choice are
 
 ### ChatGPT plan
 
-The ChatGPT sign-in is OpenAI's OAuth flow, and its redirect lands on `127.0.0.1:1455` on the machine LLMSim runs on. On your own machine that just works. When LLMSim runs somewhere else, the console asks you to paste the address your browser ended up on instead.
+Answer with your own ChatGPT subscription instead of an API key. Requests count against your plan's usage, not API billing, and when the plan's limit is reached they stop: nothing moves to another way of paying. OpenAI describes this for Plus and Pro plans.
 
-> **Once you sign in, LLMSim holds a real subscription.** It listens on every network interface, and the vendors' routes take keys that are published, so anyone who can reach the port can spend the plan. [Require a sign-in](#require-a-sign-in), set vendor keys of your own, or keep it on your own machine or a network you trust.
+**Your own account, for your own use, on your own machine.** Each person signs in with their own ChatGPT. LLMSim ships with nobody's credentials, and what you do with your plan is your responsibility. [OpenAI's Sign in with ChatGPT terms](https://openai.com/policies/sign-in-with-chatgpt-terms/) apply, including that nobody else's requests may reach your plan. LLMSim is independent open-source software, not affiliated with or endorsed by OpenAI.
 
-The sign-in is kept in `llmsim.chatgpt-auth.json` beside the server. A container with no volume loses it on restart and goes back to scripted answers.
+**Signing in.** Press **Continue with ChatGPT** under Settings → ChatGPT plan. It is OpenAI's own Sign in with ChatGPT: LLMSim registers under its own name, you approve it on OpenAI's page, and OpenAI issues a client id for your account that LLMSim keeps. Signing in again comes back as the same account. To change account, sign out and choose **Use another account**. If you did not allow plan usage, **Enable ChatGPT plan usage** asks again.
+
+The redirect lands on `127.0.0.1:1455` on the machine LLMSim runs on. On your own machine that just works. When LLMSim runs somewhere else, the console asks you to paste the address your browser ended up on instead.
+
+**What the route can do.** OpenAI's route takes streamed requests with nothing stored, so a client that asks for a whole answer gets the stream collected for it. `temperature`, `top_p`, `max_tokens` and `stop` are not sent. Function tools work. Image generation, file search and code interpreter are not available on this route, and audio input is not accepted.
+
+**If you signed in with an earlier LLMSim:** that sign-in was made as the Codex client and is no longer used. The console says to sign in again, and doing so replaces it. To remove the old grant at OpenAI, disconnect it in ChatGPT settings.
+
+> **Once you sign in, LLMSim holds a real subscription.** It listens on every network interface, and the vendors' routes take keys that are published, so anyone who can reach the port can spend the plan. Keep it on your own machine. [Require a sign-in](#require-a-sign-in) and set vendor keys of your own if the port can be reached from anywhere else.
+
+The sign-in is kept in `llmsim.chatgpt-auth.json` beside the server, readable only by its owner. **Sign out** revokes it at OpenAI and removes the tokens. A container with no volume loses it on restart and goes back to scripted answers.
 
 ## Model checks
 

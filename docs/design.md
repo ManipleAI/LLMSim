@@ -345,33 +345,62 @@ curl localhost:8099/openai/v1/chat/completions \
 and their results, images, JSON-schema output and reasoning effort all
 translate, and tool-call ids round-trip so an agent loop works. Sampling
 controls — `max_tokens`, `temperature`, `top_p`, `stop` — are *not sent*,
-because the plan backend rejects them; each request that carried one logs
+because the plan's route rejects them; each request that carried one logs
 which were dropped. Usage is the plan's own, cache hits included. A tool call
-is passed on whole when the backend finishes it, not argument-fragment by
+is passed on whole when the route finishes it, not argument-fragment by
 fragment, so streamed text is live but a streamed call arrives in one piece.
 Anthropic's `message_start` carries zero input tokens, since they are not
 known until the end; the real figures are on `message_delta`.
 
-**How the sign-in works.** It is the OAuth + PKCE flow OpenAI's open-source
-Codex client uses, with that client's registered id — read from its source,
-not guessed. That is why the redirect must land on `127.0.0.1:1455` (or
-`1457`): LLMSim listens there, on loopback only, for the length of the
-sign-in. If it is running on another machine, or Codex holds the port, the
-console asks you to paste the address the browser ended up on instead. The
-`state` is checked, a code is single-use, and a request from another site's
-origin cannot start, finish or cancel a sign-in.
+**How the sign-in works.** It is OpenAI's Sign in with ChatGPT for open-source
+and local apps. The first sign-in asks for `dynamic_agent_client` with LLMSim's
+own name as `agent_name_hint`, and the person approves it on OpenAI's page.
+OpenAI then issues a client id for that account, which is what every later
+sign-in, token and refresh uses. Each host has one opaque `ext_agent_host_id`,
+written down before OpenAI first hears it. There is no LLMSim account, secret or
+key of anybody's behind any of this.
+
+The ID token is verified before anything is kept: RS256 against OpenAI's
+published keys (written out with the standard library, which has big integers
+and hashes but no RSA), then issuer, audience, expiry and nonce. A returning
+sign-in that comes back as another account is refused, so its credentials are
+never replaced by accident. A token response without `chatgpt.tokens.use.direct`
+is a sign-in that may not spend the plan: no request goes out, and the console
+offers to ask again with `prompt=consent`.
+
+The redirect must land on `127.0.0.1`, on `1455` or `1457`: LLMSim listens there,
+on loopback only, for the length of the sign-in. If it is running on another
+machine, or another tool holds the port, the console asks you to paste the
+address the browser ended up on instead. The `state` is checked, a code is
+single-use, and a request from another site's origin cannot start, finish or
+cancel a sign-in.
+
+Requests go to `POST https://api.openai.com/v1/responses` with the access token
+as a bearer token. The route takes function tools only inside a namespace, so a
+client's tools travel in one, `client_tools`, which the client never sees. It
+cannot find a tool by name inside a namespace, so a client forcing one tool gets
+that tool offered alone with `tool_choice: "required"`.
+
+A file from before this, when the route signed in as the Codex client, has
+tokens and no client id. Those tokens are never sent anywhere: the console says
+to sign in again, and that replaces the file.
 
 Tokens live in `llmsim.chatgpt-auth.json` — created owner-only, replaced
 atomically, gitignored — and are never sent to the console, which is told only
 whether somebody is signed in and as whom. The access token is refreshed
-before it lapses; if the refresh token is refused for good, LLMSim stops
-asking and says *sign in again* rather than retrying on every request.
-*Sign out* forgets the tokens and asks OpenAI to revoke the grant; if that
-call fails it says so, and the grant can be removed in ChatGPT's settings.
+before it lapses, one refresh at a time because the refresh token rotates; if
+it is refused for good, LLMSim stops asking and says *sign in again* rather than
+retrying on every request. *Sign out* asks OpenAI to revoke the refresh token and
+forgets the tokens, keeping only the registration so the next sign-in comes back
+as the same one; if the revoke fails it says so, and the grant can be removed in
+ChatGPT's settings.
 
 **Failures are the client's own.** A reached plan limit is a **429** in the
-vendor's envelope with the reset time in the message and a `retry-after`; a
-bad request is a 400; an unreachable or refusing backend is a 502. A 401 from
+vendor's envelope, with a `retry-after` and where to manage usage, and no reset
+time unless OpenAI gives one, since an app's own limit may be the one reached. A
+request the route does not support is a 400 naming what; usage that cannot be
+checked just now is a 503; an unreachable or refusing route is a 502. None of them
+moves to another way of paying. A 401 from
 OpenAI is *not* passed on as one — it would tell a gateway its own key was
 wrong and send somebody to fix the wrong thing. After the first byte the
 status is already sent, so a failure is reported inside the stream in that
@@ -383,22 +412,26 @@ script; *Answer here if the plan cannot be reached* is opt-in.
 | `LLMSIM_CHATGPT_MODEL` | *(empty)* | The plan model that seeds the setting; empty means the plan's own default, and the console wins after that. |
 | `LLMSIM_CHATGPT_AUTH` | `llmsim.chatgpt-auth.json` | Where the tokens are kept. |
 | `LLMSIM_CHATGPT_PORTS` | `1455,1457` | The redirect ports to try. |
-| `LLMSIM_CHATGPT_ISSUER` / `_BACKEND` | OpenAI's | Overridden by the tests to point at a stand-in. |
-| `LLMSIM_CHATGPT_CLIENT_ID` / `_ORIGINATOR` | Codex's | What the sign-in presents itself as. |
+| `LLMSIM_CHATGPT_ISSUER` / `_API` | OpenAI's | Overridden by the tests to point at a stand-in. |
 
 **Read this before turning it on.** Signed in, this holds a subscription:
 anyone who can reach the port can spend it, through the vendor routes with their
-published keys, even when the console needs a sign-in. Keep it on your own machine or a network you
-trust. The sign-in presents as the Codex client, which is what makes it work;
-whether a given use of a plan that way is permitted is OpenAI's to say, not
-this file's. Usage counts against the plan's own limits.
+published keys, even when the console needs a sign-in. Keep it on your own
+machine: OpenAI's terms say requests must come from a runtime only you control,
+that another person's activity must not reach your plan, and that a plan is for the
+app you connected it to, not general API access for other tools. LLMSim passes on
+the requests of the agent you point at it, for testing that agent. Whether that use
+fits is OpenAI's to say, not this file's. Each person answers for their own plan,
+and usage counts against its own limits.
 
 **What is and is not verified.** `tests/test_chatgpt_plan.py` runs the whole
 route against a stand-in for OpenAI — no network, no account — and checks the
-contract strictly: the PKCE verifier against its challenge, `store:false`,
-`stream:true`, the account header, rotating refresh tokens, a revoked token
+contract strictly: the PKCE verifier against its challenge, a real RSA signature
+on the ID token, registration and the issued client id, `store:false`,
+`stream:true`, tools in a namespace, rotating refresh tokens, a revoked token
 refreshed once and retried, a dead one not retried, tool-call round trips in
-all three formats, and every failure path. That proves LLMSim speaks the
+all three formats, every failure path, and that nothing of the Codex client is
+left. That proves LLMSim speaks the
 contract it read. It cannot prove OpenAI still honours it today; only a real
 sign-in does, and the first one is the real test.
 

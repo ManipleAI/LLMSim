@@ -177,6 +177,14 @@ You choose where answers come from under **Settings**, for all models or one mod
 time: your rules, an OpenAI- or Anthropic-compatible upstream, Anthropic's API, or a ChatGPT
 plan.
 
+**Using a ChatGPT plan.** Press **Continue with ChatGPT** and sign in with your own account:
+requests count against your plan's usage, not API billing. It uses OpenAI's own
+[Sign in with ChatGPT](https://openai.com/policies/sign-in-with-chatgpt-terms/), under
+LLMSim's own name. Use it for yourself, on your own machine: what you do with your plan is
+your responsibility and OpenAI's terms apply, including that nobody else's requests may reach
+it. LLMSim ships with nobody's credentials, and it is independent open-source software, not
+affiliated with or endorsed by OpenAI.
+
 ## Test an agent
 
 The test kit drives your agent and plays its model. It also stands in for the agent's tools

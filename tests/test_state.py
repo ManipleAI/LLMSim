@@ -56,9 +56,10 @@ def sim_on(data, **env):
 def plant_sign_in(data):
     """What a finished ChatGPT sign-in leaves on disk. Nobody signs in during a test."""
     os.makedirs(data, exist_ok=True)
-    claims = {"exp": int(time.time()) + 3600, "https://api.openai.com/auth": {"chatgpt_account_id": "acct-state"}}
-    auth = {"access_token": jwt(claims), "refresh_token": "refresh-state", "id_token": "", "account_id": "acct-state",
-            "email": "plan@example.test", "plan": "plus", "expires_at": time.time() + 3600, "signed_in_at": time.time()}
+    claims = {"exp": int(time.time()) + 3600}
+    auth = {"access_token": jwt(claims), "refresh_token": "refresh-state", "id_token": "", "client_id": "oaiapp_state",
+            "ext_agent_host_id": "urn:uuid:state", "subject": "user-state", "scopes": "openid chatgpt.tokens.use.direct",
+            "email": "plan@example.test", "plan": "plus", "expires_at": time.time() + 3600, "saved_at": time.time()}
     fd = os.open(os.path.join(data, "llmsim.chatgpt-auth.json"), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as fh:
         json.dump(auth, fh)

@@ -4,16 +4,18 @@
     python3 tests/test_chatgpt_plan.py
 
 No network, no account, no install. A stub plays both halves of OpenAI —
-the sign-in (authorize, token, revoke) and the plan backend (/responses,
-/models) — and is deliberately strict where the real one is: it checks the
-PKCE verifier against the challenge, refuses a request without store:false
-and stream:true, refuses a stale bearer token, and rotates refresh tokens.
-LLMSim is started as a subprocess pointed at it, with its own throwaway
-config and token file, so nothing here touches a real setup.
+Sign in with ChatGPT (registration, token, revoke, its published configuration
+and signing keys) and the plan's route (/v1/responses, /v1/models) — and is
+deliberately strict where the real one is: it checks the PKCE verifier against
+the challenge, signs its ID tokens with a real RSA key, issues a client id at
+registration, refuses a request without store:false and stream:true or with
+tools outside a namespace, refuses a stale bearer token, and rotates refresh
+tokens. Anything that looks like the Codex client is refused. LLMSim is started
+as a subprocess pointed at it, with its own throwaway config and token file, so
+nothing here touches a real setup.
 
-What this proves is that LLMSim speaks the contract the Codex client speaks.
-It cannot prove OpenAI still honours that contract today; only a real
-sign-in does.
+What this proves is that LLMSim speaks the contract OpenAI documents. It cannot
+prove OpenAI honours that contract today; only a real sign-in does.
 """
 
 import base64
@@ -21,6 +23,7 @@ import hashlib
 import http.client
 import json
 import os
+import random
 import socket
 import subprocess
 import sys
@@ -48,8 +51,66 @@ def b64(raw):
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
 
 
-def jwt(claims):
-    return ".".join([b64(b'{"alg":"none"}'), b64(json.dumps(claims).encode()), "sig"])
+def _is_prime(n):
+    if n % 2 == 0:
+        return n == 2
+    d, r = n - 1, 0
+    while d % 2 == 0:
+        d, r = d // 2, r + 1
+    for _ in range(12):
+        x = pow(random.randrange(2, n - 1), d, n)
+        if x in (1, n - 1):
+            continue
+        for _ in range(r - 1):
+            x = x * x % n
+            if x == n - 1:
+                break
+        else:
+            return False
+    return True
+
+
+def _prime(bits):
+    while True:
+        n = random.getrandbits(bits) | (1 << (bits - 1)) | 1
+        if _is_prime(n):
+            return n
+
+
+class RSA:
+    """A throwaway signing key, made fresh each run, so what LLMSim verifies is a real signature."""
+
+    def __init__(self, kid="stub-key"):
+        self.kid, self.e = kid, 65537
+        while True:
+            p, q = _prime(1024), _prime(1024)
+            phi = (p - 1) * (q - 1)
+            if p != q and phi % self.e:
+                break
+        self.n, self.d = p * q, pow(self.e, -1, phi)
+
+    def public(self):
+        size = (self.n.bit_length() + 7) // 8
+        return {"kid": self.kid, "kty": "RSA", "alg": "RS256", "use": "sig",
+                "n": b64(self.n.to_bytes(size, "big")), "e": b64(self.e.to_bytes(3, "big"))}
+
+    def sign(self, message):
+        size = (self.n.bit_length() + 7) // 8
+        digest = bytes.fromhex("3031300d060960864801650304020105000420") + hashlib.sha256(message).digest()
+        padded = b"\x00\x01" + b"\xff" * (size - len(digest) - 3) + b"\x00" + digest
+        return pow(int.from_bytes(padded, "big"), self.d, self.n).to_bytes(size, "big")
+
+
+def jwt(claims, key=None):
+    """Signed when given a key; an access token here is opaque to LLMSim, so it need not be."""
+    head = {"alg": "RS256", "kid": key.kid} if key else {"alg": "none"}
+    signed = b64(json.dumps(head).encode()) + "." + b64(json.dumps(claims).encode())
+    return signed + "." + (b64(key.sign(signed.encode())) if key else "sig")
+
+
+PLAN_SCOPE = "chatgpt.tokens.use.direct"
+FULL_SCOPE = "openid profile email offline_access resource.invoke " + PLAN_SCOPE
+RESOURCE = "https://api.openai.com/v1"
 
 
 # ── The stand-in for OpenAI ──────────────────────────────────────────────
@@ -57,6 +118,7 @@ def jwt(claims):
 class Stub:
     def __init__(self):
         self.port = free_port()
+        self.key = RSA()
         self.reset()
         stub = self
 
@@ -95,75 +157,152 @@ class Stub:
         self.refresh_calls = 0
         self.refresh_fails = False
         self.revoked = []
+        self.authorize_seen = []        # every /authorize query, as a dict
+        self.clients_issued = 0
+        self.known_clients = set()
+        self.client_id = None           # the client the current tokens belong to
+        self.subject = "user-abc"       # who is at the keyboard at OpenAI
+        self.grant_scope = FULL_SCOPE   # what they allow
+        self.deny = False               # they press Cancel
+        self.omit_issued_client = False
+        self.wrong_issued_client = None
+        self.bad_id_token = None        # signature, nonce, audience, issuer or expired
+        self.fail_next = None           # (status, error object) for the next /responses
+        self.fail_midstream = None      # an error object for response.failed, after some text
         self.last = None                # the last /responses request: headers + json
         self.expire_next = False        # answer the next /responses with 401, once
         self.issued = 0
         self.models_calls = 0           # how often the plan's model list was asked for
         self.models_fail = False
 
-    def mint(self):
+    def mint(self, client_id, nonce=None):
         self.issued += 1
-        auth = {"chatgpt_account_id": "acct-123", "chatgpt_plan_type": "plus"}
-        self.access_token = jwt({"exp": int(time.time()) + self.access_ttl, "n": self.issued,
-                                 "https://api.openai.com/auth": auth})
+        self.client_id = client_id
+        self.access_token = jwt({"exp": int(time.time()) + self.access_ttl, "n": self.issued, "aud": RESOURCE,
+                                 "client_id": client_id, "https://api.openai.com/auth": {"per_user_salt": "opaque"}})
         self.refresh_token = "rt-%d" % self.issued
+        now = int(time.time())
+        claims = {"iss": self.issuer, "sub": self.subject, "aud": client_id, "exp": now + 3600, "iat": now,
+                  "email": "eti@example.com", "https://api.openai.com/auth": {"chatgpt_plan_type": "plus"}}
+        if nonce:
+            claims["nonce"] = nonce
+        key = self.key
+        if self.bad_id_token == "nonce":
+            claims["nonce"] = "not-the-one"
+        elif self.bad_id_token == "audience":
+            claims["aud"] = "oaiapp_somebody_else"
+        elif self.bad_id_token == "issuer":
+            claims["iss"] = "https://evil.example"
+        elif self.bad_id_token == "expired":
+            claims["exp"] = now - 60
+        elif self.bad_id_token == "signature":
+            key = RSA.__new__(RSA)                # the same kid, and a key that is not the published one
+            key.__dict__.update(self.key.__dict__)
+            key.d = self.key.d + 2
         return {"access_token": self.access_token, "refresh_token": self.refresh_token,
-                "id_token": jwt({"email": "eti@example.com", "https://api.openai.com/auth": auth}),
-                "expires_in": self.access_ttl}
+                "id_token": jwt(claims, key), "token_type": "Bearer", "expires_in": self.access_ttl,
+                "scope": self.grant_scope}
+
+    @property
+    def issuer(self):
+        return "http://127.0.0.1:%d" % self.port
 
     def handle(self, h, method):
         parts = urllib.parse.urlsplit(h.path)
         q = urllib.parse.parse_qs(parts.query)
         path = parts.path
 
-        if path == "/oauth/authorize":
-            need = {"response_type": "code", "code_challenge_method": "S256",
-                    "codex_cli_simplified_flow": "true"}
-            for k, v in need.items():
-                if q.get(k, [""])[0] != v:
-                    return h.reply(400, {"error": "bad %s" % k})
-            if "offline_access" not in q.get("scope", [""])[0] or not q.get("state") or not q.get("client_id"):
-                return h.reply(400, {"error": "bad scope, state or client"})
-            code = "code-%d" % len(self.codes)
-            self.codes[code] = (q["code_challenge"][0], q["redirect_uri"][0])
-            back = q["redirect_uri"][0] + "?" + urllib.parse.urlencode({"code": code, "state": q["state"][0]})
-            return h.reply(302, b"", extra={"Location": back})
+        if path == "/.well-known/openid-configuration":
+            return h.reply(200, {"issuer": self.issuer, "jwks_uri": self.issuer + "/.well-known/jwks.json",
+                                 "revocation_endpoint": self.issuer + "/api/accounts/oauth/revoke"})
+        if path == "/.well-known/jwks.json":
+            return h.reply(200, {"keys": [self.key.public()]})
 
-        if path == "/oauth/token":
-            if "json" in (h.headers.get("Content-Type") or ""):
-                body = json.loads(h.body)
+        if path == "/api/accounts/authorize":
+            seen = {k: v[0] for k, v in q.items()}
+            self.authorize_seen.append(seen)
+            for wrong in ("originator", "codex_cli_simplified_flow", "id_token_add_organizations"):
+                if wrong in seen:
+                    return h.reply(400, {"error": "that is the Codex client's %s" % wrong})
+            need = {"response_type": "code", "code_challenge_method": "S256", "scope": FULL_SCOPE, "resource": RESOURCE}
+            for k, v in need.items():
+                if seen.get(k) != v:
+                    return h.reply(400, {"error": "bad %s" % k})
+            for k in ("state", "nonce", "code_challenge", "ext_agent_host_id", "redirect_uri", "client_id"):
+                if not seen.get(k):
+                    return h.reply(400, {"error": "no %s" % k})
+            if not seen["redirect_uri"].startswith("http://127.0.0.1:") or not seen["redirect_uri"].endswith("/auth/callback"):
+                return h.reply(400, {"error": "the redirect must be a 127.0.0.1 loopback"})
+            client = seen["client_id"]
+            back = {"state": seen["state"]}
+            if self.deny:
+                back["error"] = "access_denied"
+                return h.reply(302, b"", extra={"Location": seen["redirect_uri"] + "?" + urllib.parse.urlencode(back)})
+            if client == "dynamic_agent_client":
+                if not seen.get("agent_name_hint"):
+                    return h.reply(400, {"error": "a new registration needs agent_name_hint"})
+                self.clients_issued += 1
+                client = "oaiapp_%d" % self.clients_issued
+                self.known_clients.add(client)
+                if not self.omit_issued_client:
+                    back["client_id"] = client
+            else:
+                if client not in self.known_clients:
+                    return h.reply(400, {"error": "invalid_client"})
+                if seen.get("agent_name_hint"):
+                    return h.reply(400, {"error": "agent_name_hint is for a first registration only"})
+            if self.wrong_issued_client:
+                back["client_id"] = self.wrong_issued_client
+            code = "code-%d" % len(self.codes)
+            self.codes[code] = (seen["code_challenge"], seen["redirect_uri"], client, seen["nonce"])
+            back.update(code=code, scope=self.grant_scope)
+            return h.reply(302, b"", extra={"Location": seen["redirect_uri"] + "?" + urllib.parse.urlencode(back)})
+
+        if path == "/api/accounts/oauth/token":
+            if "x-www-form-urlencoded" not in (h.headers.get("Content-Type") or ""):
+                return h.reply(400, {"error": "invalid_request", "error_description": "form-encoded only"})
+            body = {k: v[0] for k, v in urllib.parse.parse_qs(h.body.decode()).items()}
+            if body.get("resource") != RESOURCE:
+                return h.reply(400, {"error": "invalid_target"})
+            if body.get("grant_type") == "refresh_token":
                 self.refresh_calls += 1
                 if self.refresh_fails:
-                    return h.reply(400, {"error": "invalid_grant", "error_description": "refresh token reused"})
-                if body.get("grant_type") != "refresh_token" or body.get("refresh_token") != self.refresh_token:
+                    return h.reply(400, {"error": "refresh_token_reused", "error_description": "refresh token reused"})
+                if "scope" in body or body.get("client_id") != self.client_id or body.get("refresh_token") != self.refresh_token:
                     return h.reply(400, {"error": "invalid_grant"})
-                return h.reply(200, self.mint())
-            body = {k: v[0] for k, v in urllib.parse.parse_qs(h.body.decode()).items()}
-            challenge, redirect = self.codes.pop(body.get("code"), (None, None))
+                return h.reply(200, self.mint(self.client_id))
+            challenge, redirect, client, nonce = self.codes.pop(body.get("code"), (None, None, None, None))
             if not challenge:
                 return h.reply(400, {"error": "invalid_grant"})
             if b64(hashlib.sha256(body.get("code_verifier", "").encode()).digest()) != challenge:
                 return h.reply(400, {"error": "invalid_grant", "error_description": "PKCE verifier mismatch"})
             if body.get("redirect_uri") != redirect or body.get("grant_type") != "authorization_code":
                 return h.reply(400, {"error": "invalid_grant", "error_description": "redirect mismatch"})
-            return h.reply(200, self.mint())
+            if body.get("client_id") != client:
+                return h.reply(400, {"error": "invalid_client"})
+            return h.reply(200, self.mint(client, nonce))
 
-        if path == "/oauth/revoke":
-            self.revoked.append(json.loads(h.body).get("token"))
-            return h.reply(200, {})
+        if path == "/api/accounts/oauth/revoke":
+            if "x-www-form-urlencoded" not in (h.headers.get("Content-Type") or ""):
+                return h.reply(400, {"error": "form-encoded only"})
+            body = {k: v[0] for k, v in urllib.parse.parse_qs(h.body.decode()).items()}
+            if body.get("client_id") != self.client_id or body.get("token_type_hint") != "refresh_token":
+                return h.reply(400, {"error": "invalid_client"})
+            self.revoked.append(body.get("token"))
+            return h.reply(200, b"")
 
-        if path == "/backend/models":
+        if path == "/v1/models":
             self.models_calls += 1
             if self.models_fail:
                 return h.reply(500, {"error": {"message": "the model list is down"}})
-            # Out of order, and with the HIDDEN model holding the lowest priority number — the trap a naive
-            # "lowest priority wins" falls into. This is what the real backend's list looks like.
+            # The hidden model comes first: the trap in taking the top of the list. The rest are in the
+            # server's own order, which is the plan's preference, and which is not alphabetical.
             return h.reply(200, {"models": [
-                {"slug": "gpt-hidden", "visibility": "hide", "priority": 0},
-                {"slug": "gpt-5.4-mini", "visibility": "list", "priority": 2},
-                {"slug": "gpt-5.4", "visibility": "list", "priority": 1}]})
+                {"slug": "gpt-hidden", "visibility": "hide", "display_name": "Hidden"},
+                {"slug": "gpt-5.4", "visibility": "list", "display_name": "GPT-5.4"},
+                {"slug": "gpt-5.4-mini", "visibility": "list", "display_name": "GPT-5.4 mini"}]})
 
-        if path == "/backend/responses":
+        if path == "/v1/responses":
             return self.responses(h)
         return h.reply(404, {"error": "no " + path})
 
@@ -173,8 +312,13 @@ class Stub:
         if self.expire_next:
             self.expire_next = False
             return h.reply(401, {"error": {"message": "token revoked"}})
-        if h.headers.get("ChatGPT-Account-ID") != "acct-123":
-            return h.reply(400, {"error": {"message": "no account header"}})
+        for codex in ("ChatGPT-Account-ID", "originator", "session_id"):
+            if h.headers.get(codex):
+                return h.reply(400, {"error": {"message": "%s is the Codex client's header" % codex}})
+        if self.fail_next:
+            status, err = self.fail_next
+            self.fail_next = None
+            return h.reply(status, {"error": err})
         req = json.loads(h.body)
         # Lower-cased: HTTP header names are case-insensitive and urllib
         # title-cases whatever it sends, so a test must not care which.
@@ -182,17 +326,33 @@ class Stub:
         # The two the real backend insists on, and the ones the brief names.
         if req.get("store") is not False or req.get("stream") is not True or not req.get("instructions"):
             return h.reply(400, {"error": {"message": "needs store:false, stream:true and instructions"}})
-        for banned in ("temperature", "max_output_tokens", "max_tokens", "top_p"):
+        for banned in ("temperature", "max_output_tokens", "max_tokens", "top_p", "background", "conversation",
+                       "max_tool_calls", "metadata", "moderation", "multi_agent", "prompt", "prompt_cache_retention",
+                       "safety_identifier", "top_logprobs", "truncation", "user", "previous_response_id"):
             if banned in req:
-                return h.reply(400, {"error": {"message": "Unsupported parameter: %s" % banned}})
+                return h.reply(400, {"error": {"code": "subscription_sharing_unsupported_capability", "param": banned,
+                                               "message": "Unsupported parameter: %s" % banned}})
+        for item in req.get("input") or []:
+            if item.get("role") == "system":
+                return h.reply(400, {"error": {"code": "subscription_sharing_unsupported_capability", "param": "input",
+                                               "message": "explicit system messages are rejected"}})
+            if item.get("type") == "function_call" and item.get("namespace") != "client_tools":
+                return h.reply(400, {"error": {"message": "that call's namespace was not declared: %s" % item.get("namespace")}})
+        for tool in req.get("tools") or []:
+            if tool.get("type") != "namespace" or not tool.get("name") or not tool.get("description") or not tool.get("tools"):
+                return h.reply(400, {"error": {"code": "subscription_sharing_unsupported_capability", "param": "tools",
+                                               "message": "function tools must be grouped in a namespace"}})
+
+        # As the real route answers: a function tool_choice is looked for at the top level, where a namespace hides it.
+        if isinstance(req.get("tool_choice"), dict):
+            return h.reply(400, {"error": {"message": "Tool choice '%s' not found in 'tools' parameter." % req["tool_choice"].get("name")}})
 
         ask = " ".join(c.get("text", "") for i in req["input"] if i.get("type") == "message"
                        and i["role"] == "user" for c in i["content"]).lower()
         answered = [i for i in req["input"] if i.get("type") == "function_call_output"]
 
         if "limit please" in ask:
-            return h.reply(429, {"error": {"type": "usage_limit_reached", "message": "plan limit",
-                                           "resets_in_seconds": 120}})
+            return h.reply(429, {"error": {"code": "subscription_sharing_usage_limit_exceeded", "message": "plan limit."}})
 
         h.send_response(200)
         h.send_header("Content-Type", "text/event-stream")
@@ -207,10 +367,10 @@ class Stub:
         sse("response.created", response={"id": "resp_1", "status": "in_progress"})
         if "break midway" in ask:
             sse("response.output_text.delta", delta="Starting, ")
-            return sse("response.failed", response={"error": {"code": "server_error", "message": "boom"}})
+            return sse("response.failed", response={"error": self.fail_midstream or {"code": "server_error", "message": "boom"}})
         if "use the tool" in ask and not answered and req.get("tools"):
-            name = req["tools"][0]["name"]
-            call = {"type": "function_call", "id": "fc_1", "call_id": "call_abc", "name": name,
+            name = req["tools"][0]["tools"][0]["name"]
+            call = {"type": "function_call", "id": "fc_1", "call_id": "call_abc", "name": name, "namespace": "client_tools",
                     "arguments": json.dumps({"city": "Paris"}), "status": "completed"}
             sse("response.output_text.delta", delta="Checking. ")
             sse("response.output_item.added", item=dict(call, arguments=""))
@@ -249,7 +409,7 @@ class Sim:
             LLMSIM_RULES=os.path.join(workdir, "rules.json"), LLMSIM_ASSERTIONS=os.path.join(workdir, "assertions.json"),
             LLMSIM_RUNS_DB=os.path.join(workdir, "runs.db"), LLMSIM_CREDENTIALS=os.path.join(workdir, "credentials.json"),
             LLMSIM_CHATGPT_ISSUER="http://127.0.0.1:%d" % stub.port,
-            LLMSIM_CHATGPT_BACKEND="http://127.0.0.1:%d/backend" % stub.port,
+            LLMSIM_CHATGPT_API="http://127.0.0.1:%d/v1" % stub.port,
             LLMSIM_CHATGPT_PORTS=callback_ports or str(self.callback_port))
         self.proc = None
 
@@ -333,7 +493,7 @@ def case_sign_in_with_pkce_and_no_secret_leaks(sim, stub):
     _, status = sim.json("GET", "/api/ui/chatgpt")
     assert status["signedIn"] and status["email"] == "eti@example.com" and status["plan"] == "plus", status
     everything = json.dumps(status) + sim.call("GET", "/api/ui/state")[2] + sim.call("GET", "/healthz")[2]
-    for secret in (stub.access_token, stub.refresh_token, "acct-123"):
+    for secret in (stub.access_token, stub.refresh_token, stub.client_id):
         assert secret not in everything, "a credential reached the console"
     assert oct(os.stat(sim.auth_path).st_mode & 0o777) == "0o600", oct(os.stat(sim.auth_path).st_mode)
 
@@ -351,7 +511,7 @@ def case_chat_completions_plain_and_streamed(sim, stub):
     assert sent["model"] == "gpt-5.4", "the plan's model answers, not the client's name"
     assert sent["instructions"] == "You are a helpful assistant." and "temperature" not in sent
     assert sent["input"] == [{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "say hello"}]}]
-    assert stub.last["headers"].get("originator") and stub.last["headers"].get("session_id")
+    assert "llmsim" in stub.last["headers"].get("user-agent", "").lower(), stub.last["headers"]
 
     status, headers, text = sim.post(CHAT, dict(ask, stream=True, stream_options={"include_usage": True}))
     out = frames(text)
@@ -369,7 +529,8 @@ def case_chat_tool_call_round_trip(sim, stub):
     call = choice["message"]["tool_calls"][0]
     assert choice["finish_reason"] == "tool_calls" and call["id"] == "call_abc", text
     assert call["function"]["name"] == "get_weather" and json.loads(call["function"]["arguments"]) == {"city": "Paris"}
-    assert stub.last["json"]["tools"][0]["name"] == "get_weather" and stub.last["json"]["tools"][0]["type"] == "function"
+    assert stub.last["json"]["tools"][0]["type"] == "namespace", stub.last["json"]["tools"]
+    assert stub.last["json"]["tools"][0]["tools"][0]["name"] == "get_weather" and stub.last["json"]["tools"][0]["tools"][0]["type"] == "function"
 
     _, _, text = sim.post(CHAT, dict(ask, stream=True))
     deltas = [d["choices"][0]["delta"] for _, d in frames(text) if d != "[DONE]" and d["choices"]]
@@ -397,7 +558,7 @@ def case_anthropic_messages(sim, stub):
     assert body["content"][1]["id"] == "call_abc" and body["content"][1]["input"] == {"city": "Paris"}
     assert body["usage"]["cache_read_input_tokens"] == 20 and body["usage"]["input_tokens"] == 30
     sent = stub.last["json"]
-    assert sent["instructions"] == "Be brief." and sent["tools"][0]["parameters"] == {"type": "object"}
+    assert sent["instructions"] == "Be brief." and sent["tools"][0]["tools"][0]["parameters"] == {"type": "object"}
 
     _, _, text = sim.post("/anthropic/v1/messages", dict(ask, stream=True), key=ANTHROPIC_KEY)
     names = [e for e, _ in frames(text)]
@@ -434,7 +595,7 @@ def case_responses_api(sim, stub):
 def case_plan_limit_and_midstream_failure(sim, stub):
     status, headers, text = sim.post(CHAT, {"model": "gpt-5", "messages": [{"role": "user", "content": "limit please"}]})
     err = json.loads(text)["error"]
-    assert status == 429 and err["type"] == "rate_limit_error" and "resets in 120s" in err["message"], text
+    assert status == 429 and err["type"] == "rate_limit_error" and "https://chatgpt.com/settings/usage" in err["message"], text
     assert headers.get("retry-after"), "a 429 with no retry-after is a dead end"
 
     status, _, text = sim.post(CHAT, {"model": "gpt-5", "stream": True,
@@ -1031,8 +1192,264 @@ def case_paste_flow_when_the_callback_port_is_taken(sim, stub):
 
 def case_sign_out_forgets_and_revokes(sim, stub):
     status, body = sim.json("POST", "/api/ui/chatgpt/logout")
-    assert status == 200 and body["revoked"] and stub.revoked, body
-    assert not os.path.exists(sim.auth_path) and body["status"]["signedIn"] is False
+    assert status == 200 and body["revoked"] and stub.revoked[-1] == stub.refresh_token, body
+    kept = json.load(open(sim.auth_path))
+    assert body["status"]["signedIn"] is False and not {"access_token", "refresh_token", "id_token"} & set(kept), kept
+    assert kept["client_id"] == stub.client_id and kept["ext_agent_host_id"], "the registration should outlive a sign-out"
+
+
+def latest(stub):
+    return stub.authorize_seen[-1]
+
+
+def asked(started):
+    """What LLMSim's sign-in URL asks OpenAI for, before anybody opens it."""
+    return {k: v[0] for k, v in urllib.parse.parse_qs(urllib.parse.urlsplit(started["url"]).query).items()}
+
+
+def fresh(sim, stub):
+    """Signed out, with no registration on file: as if LLMSim had just been installed."""
+    sim.json("POST", "/api/ui/chatgpt/logout")
+    stub.grant_scope, stub.subject, stub.deny = FULL_SCOPE, "user-abc", False
+    stub.omit_issued_client, stub.wrong_issued_client, stub.bad_id_token = False, None, None
+    sim.stop()
+    if os.path.exists(sim.auth_path):
+        os.remove(sim.auth_path)
+    sim.start()
+    sim.configure(routing={"default": "chatgpt", "models": {}})
+
+
+def case_it_signs_in_under_its_own_name_and_never_as_codex(sim, stub):
+    source = open(SERVER).read()
+    for codex in ("REMOVED_CLIENT_ID", "removed_originator", "codex_cli_simplified_flow", "backend-api/codex", "chatgpt.com/backend-api",
+                  "ChatGPT-Account-ID"):
+        assert codex not in source, "server.py still has %s" % codex
+    fresh(sim, stub)
+    sim.sign_in()
+    first = latest(stub)
+    assert first["client_id"] == "dynamic_agent_client" and first["agent_name_hint"] == "LLMSim", first
+    assert first["ext_agent_host_id"].startswith("urn:uuid:"), first
+    assert first["resource"] == RESOURCE and first["scope"] == FULL_SCOPE, first
+    assert "id_token_hint" not in first and "login_hint" not in first and "prompt" not in first, first
+    kept = json.load(open(sim.auth_path))
+    assert kept["client_id"] == "oaiapp_%d" % stub.clients_issued, kept["client_id"]
+    assert kept["subject"] == "user-abc" and kept["issuer"] == stub.issuer and PLAN_SCOPE in kept["scopes"], kept
+    assert oct(os.stat(sim.auth_path).st_mode & 0o777) == "0o600"
+    # Everything goes to the documented places, and the requests answer.
+    status, _, text = sim.post(CHAT, {"model": "gpt-5", "messages": [{"role": "user", "content": "hi"}]})
+    assert status == 200 and "Hello from the plan" in text, text
+
+
+def case_signing_in_again_comes_back_as_the_same_registration(sim, stub):
+    before = json.load(open(sim.auth_path))
+    issued = stub.clients_issued
+    sim.sign_in()
+    again = latest(stub)
+    assert again["client_id"] == before["client_id"] and stub.clients_issued == issued, again
+    assert "agent_name_hint" not in again, "the name hint is for a first registration only"
+    assert again["ext_agent_host_id"] == before["ext_agent_host_id"], "this host's id changed"
+    assert again["id_token_hint"] == before["id_token"] and again["login_hint"] == "eti@example.com", again
+    # Signed out: the same registration, without the hint a sign-out takes away.
+    sim.json("POST", "/api/ui/chatgpt/logout")
+    sim.sign_in()
+    back = latest(stub)
+    assert back["client_id"] == before["client_id"] and back["ext_agent_host_id"] == before["ext_agent_host_id"], back
+    assert "id_token_hint" not in back and back["login_hint"] == "eti@example.com", back
+
+
+def case_a_different_account_is_refused_until_it_is_asked_for(sim, stub):
+    before = json.load(open(sim.auth_path))
+    stub.subject = "somebody-else"
+    status, started = sim.json("POST", "/api/ui/chatgpt/login")
+    try:
+        urllib.request.urlopen(started["url"], timeout=10)
+        raise AssertionError("a different account was accepted")
+    except urllib.error.HTTPError as exc:
+        assert "different ChatGPT account" in exc.read().decode()
+    kept = json.load(open(sim.auth_path))
+    assert kept["refresh_token"] == before["refresh_token"] and kept["subject"] == "user-abc", "its credentials were replaced"
+    status, body = sim.json("POST", "/api/ui/chatgpt/login", {"newAccount": True})
+    assert status == 409, "another account while signed in would leave this one's grant standing: %s" % status
+    sim.json("POST", "/api/ui/chatgpt/logout")
+    status, started = sim.json("POST", "/api/ui/chatgpt/login", {"newAccount": True})
+    url = asked(started)
+    assert status == 200 and url["client_id"] == "dynamic_agent_client" and url["agent_name_hint"] == "LLMSim", url
+    assert url["ext_agent_host_id"] == before["ext_agent_host_id"], "the host is still the same host"
+    assert "login_hint" not in url, url
+    urllib.request.urlopen(started["url"], timeout=10).read()
+    kept = json.load(open(sim.auth_path))
+    assert kept["subject"] == "somebody-else" and kept["client_id"] != before["client_id"], kept
+    stub.subject = "user-abc"
+    fresh(sim, stub)
+    sim.sign_in()
+
+
+def _expect_refused(sim, stub, words):
+    before = json.dumps(json.load(open(sim.auth_path))) if os.path.exists(sim.auth_path) else None
+    _, started = sim.json("POST", "/api/ui/chatgpt/login")
+    try:
+        urllib.request.urlopen(started["url"], timeout=10)
+        raise AssertionError("accepted: wanted %r" % words)
+    except urllib.error.HTTPError as exc:
+        assert words in exc.read().decode(), words
+    return before
+
+
+def case_an_id_token_that_does_not_check_out_is_never_kept(sim, stub):
+    fresh(sim, stub)
+    for bad, words in (("signature", "signature"), ("nonce", "not from the sign-in"), ("audience", "another client"),
+                       ("issuer", "another issuer"), ("expired", "expired")):
+        stub.bad_id_token = bad
+        _expect_refused(sim, stub, words)
+        status = sim.json("GET", "/api/ui/chatgpt")[1]
+        assert status["signedIn"] is False, "signed in on a bad ID token: %s" % bad
+        kept = json.load(open(sim.auth_path))
+        assert "access_token" not in kept, "tokens were saved from a bad ID token: %s" % bad
+    stub.bad_id_token = None
+
+
+def case_a_first_sign_in_needs_the_client_id_openai_issues(sim, stub):
+    fresh(sim, stub)
+    stub.omit_issued_client = True
+    _expect_refused(sim, stub, "did not finish registering")
+    stub.omit_issued_client = False
+    stub.wrong_issued_client = "dynamic_agent_client"
+    _expect_refused(sim, stub, "did not finish registering")
+    stub.wrong_issued_client = None
+    sim.sign_in()
+    stub.wrong_issued_client = "oaiapp_other"
+    _expect_refused(sim, stub, "another registration")
+    stub.wrong_issued_client = None
+
+
+def case_declining_the_sign_in_stops_there(sim, stub):
+    fresh(sim, stub)
+    stub.deny = True
+    codes_before = stub.issued
+    _expect_refused(sim, stub, "access_denied")
+    assert stub.issued == codes_before and sim.json("GET", "/api/ui/chatgpt")[1]["signedIn"] is False
+    stub.deny = False
+
+
+def case_without_the_plan_permission_nothing_is_answered_until_it_is_given(sim, stub):
+    fresh(sim, stub)
+    stub.grant_scope = "openid profile email offline_access"
+    sim.sign_in()
+    status = sim.json("GET", "/api/ui/chatgpt")[1]
+    assert status["signedIn"] is True and status["planUsage"] is False, status
+    stub.last = None
+    code, _, text = sim.post(CHAT, {"model": "gpt-5", "messages": [{"role": "user", "content": "hi"}]})
+    assert code == 502 and "not allowed" in json.loads(text)["error"]["message"] and stub.last is None, text
+    stub.grant_scope = FULL_SCOPE
+    _, started = sim.json("POST", "/api/ui/chatgpt/login", {"consent": True})
+    assert asked(started)["prompt"] == "consent" and asked(started)["scope"] == FULL_SCOPE, asked(started)
+    urllib.request.urlopen(started["url"], timeout=10).read()
+    assert sim.json("GET", "/api/ui/chatgpt")[1]["planUsage"] is True
+    code, _, _ = sim.post(CHAT, {"model": "gpt-5", "messages": [{"role": "user", "content": "hi"}]})
+    assert code == 200
+    sim.sign_in()
+    assert "prompt" not in latest(stub), "consent must not be forced on every sign-in"
+
+
+def case_a_sign_in_from_the_codex_days_is_never_used(sim, stub):
+    fresh(sim, stub)
+    sim.stop()
+    old = {"access_token": "old-codex-access", "refresh_token": "old-codex-refresh", "id_token": "x.y.z",
+           "account_id": "acct-123", "email": "eti@example.com", "plan": "plus", "expires_at": time.time() + 3600}
+    fd = os.open(sim.auth_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        json.dump(old, fh)
+    sim.start()
+    status = sim.json("GET", "/api/ui/chatgpt")[1]
+    assert status["signedIn"] is False and status["needsSignIn"] is True and "Codex" in status["error"], status
+    stub.last, before = None, stub.refresh_calls
+    code, _, text = sim.post(CHAT, {"model": "gpt-5", "messages": [{"role": "user", "content": "hi"}]})
+    assert code == 502 and "signing in again" in json.loads(text)["error"]["message"], text
+    assert stub.last is None and stub.refresh_calls == before, "an old token was sent"
+    # Signing in again replaces it. Nothing of the old sign-in is left.
+    sim.sign_in()
+    kept = open(sim.auth_path).read()
+    assert "old-codex" not in kept and json.loads(kept)["client_id"].startswith("oaiapp_"), kept
+    assert sim.json("GET", "/api/ui/chatgpt")[1]["needsSignIn"] is False
+    # And signing out of one clears the file without ever showing the old token to OpenAI.
+    sim.json("POST", "/api/ui/chatgpt/logout")
+    sim.stop()
+    fd = os.open(sim.auth_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        json.dump(old, fh)
+    sim.start()
+    revoked = list(stub.revoked)
+    sim.json("POST", "/api/ui/chatgpt/logout")
+    assert not os.path.exists(sim.auth_path) and stub.revoked == revoked
+    assert sim.json("GET", "/api/ui/chatgpt")[1]["needsSignIn"] is False
+    sim.sign_in()
+
+
+def case_forcing_one_tool_offers_only_that_tool(sim, stub):
+    sim.configure(routing={"default": "chatgpt", "models": {}})
+    weather = {"type": "function", "function": {"name": "get_weather", "parameters": {"type": "object"}}}
+    other = {"type": "function", "function": {"name": "get_time", "parameters": {"type": "object"}}}
+    ask = {"model": "gpt-5", "tools": [other, weather], "tool_choice": {"type": "function", "function": {"name": "get_weather"}},
+           "messages": [{"role": "user", "content": "use the tool"}]}
+    status, _, text = sim.post(CHAT, ask)
+    assert status == 200, text
+    assert json.loads(text)["choices"][0]["message"]["tool_calls"][0]["function"]["name"] == "get_weather", text
+    sent = stub.last["json"]
+    assert sent["tool_choice"] == "required" and [t["name"] for t in sent["tools"][0]["tools"]] == ["get_weather"], sent
+    # Anthropic's way of saying the same thing takes the same path.
+    status, _, text = sim.post("/anthropic/v1/messages", {
+        "model": "claude-sonnet-5", "max_tokens": 50, "tool_choice": {"type": "tool", "name": "get_weather"},
+        "tools": [{"name": "get_time", "input_schema": {"type": "object"}}, {"name": "get_weather", "input_schema": {"type": "object"}}],
+        "messages": [{"role": "user", "content": "use the tool"}]}, key=ANTHROPIC_KEY)
+    assert status == 200 and stub.last["json"]["tool_choice"] == "required", text
+    assert [t["name"] for t in stub.last["json"]["tools"][0]["tools"]] == ["get_weather"], stub.last["json"]
+    # A tool that was not offered is the client's mistake, and it gets the route's own answer.
+    status, _, text = sim.post(CHAT, dict(ask, tool_choice={"type": "function", "function": {"name": "no_such_tool"}}))
+    assert status == 400 and "no_such_tool" in text, text
+
+
+def case_the_plans_own_errors_say_what_to_do(sim, stub):
+    sim.configure(routing={"default": "chatgpt", "models": {}})
+    ask = {"model": "gpt-5", "messages": [{"role": "user", "content": "hi"}]}
+    for http, code, want, words in (
+            (403, "subscription_sharing_user_not_eligible", 502, "not available for this account"),
+            (503, "subscription_sharing_usage_unavailable", 503, "Try again"),
+            (503, "subscription_sharing_user_unavailable", 503, "Try again"),
+            (400, "subscription_sharing_unsupported_capability", 400, "does not support web_search"),
+            (403, "subscription_sharing_route_not_supported", 502, "subscription_sharing_route_not_supported"),
+            (403, "chatpass_v2_scope_not_authorized", 502, "chatpass_v2_scope_not_authorized")):
+        stub.fail_next = (http, {"code": code, "message": "said by OpenAI", "param": "web_search"})
+        before = stub.refresh_calls
+        status, _, text = sim.post(CHAT, ask)
+        assert status == want and words in json.loads(text)["error"]["message"], (code, status, text)
+        assert stub.refresh_calls == before, "%s should not have refreshed the token" % code
+    # After the first word the status is gone, and the limit is reported inside the stream.
+    stub.fail_midstream = {"code": "subscription_sharing_usage_limit_exceeded", "message": "plan limit."}
+    status, _, text = sim.post(CHAT, {"model": "gpt-5", "stream": True,
+                                      "messages": [{"role": "user", "content": "break midway"}]})
+    stub.fail_midstream = None
+    assert status == 200 and "settings/usage" in text, text
+    # A pre-stream refusal in the other shape OpenAI documents.
+    original = stub.responses
+    stub.responses = lambda h: h.reply(403, {"detail": "not in a permitted region"})
+    try:
+        status, _, text = sim.post(CHAT, ask)
+    finally:
+        stub.responses = original
+    assert status == 502 and "permitted region" in json.loads(text)["error"]["message"], text
+
+
+def case_the_welcome_is_said_once(sim, stub):
+    fresh(sim, stub)
+    sim.sign_in()
+    assert sim.json("GET", "/api/ui/chatgpt")[1]["welcomed"] is False
+    assert sim.json("POST", "/api/ui/chatgpt/welcomed")[0] == 200
+    assert sim.json("GET", "/api/ui/chatgpt")[1]["welcomed"] is True
+    sim.sign_in()
+    assert sim.json("GET", "/api/ui/chatgpt")[1]["welcomed"] is True, "said again on a later sign-in"
+    sim.json("POST", "/api/ui/chatgpt/logout")
+    sim.stop(); sim.start()
+    assert sim.json("GET", "/api/ui/chatgpt")[1]["welcomed"] is True, "forgotten by a sign-out and a restart"
 
 
 CASES = [v for k, v in sorted(globals().items(), key=lambda kv: list(globals()).index(kv[0])) if k.startswith("case_")]

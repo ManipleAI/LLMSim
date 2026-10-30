@@ -119,6 +119,15 @@
                    font:inherit; font-size:13px; font-weight:500; cursor:pointer; }
   #signin button:hover { background:var(--primary-hover); }
   #signin button:disabled { opacity:.6; cursor:default; }
+  /* ── ChatGPT plan: OpenAI's approved button, its one-time word, and where to see the usage ── */
+  .cg-continue { display:inline-flex; align-items:center; gap:8px; }
+  .cg-continue img { width:16px; height:16px; display:block; }
+  #cg-welcome { position:fixed; inset:0; z-index:900; background:rgba(20,24,31,.45); display:flex; align-items:center; justify-content:center; padding:16px; }
+  #cg-welcome[hidden] { display:none; }
+  #cg-welcome > div { width:100%; max-width:440px; background:var(--surface); border-radius:12px; padding:24px; box-shadow:0 8px 24px rgba(0,0,0,.18); }
+  #cg-welcome h2 { font-size:17px; margin:0 0 8px; }
+  #cg-welcome p { font-size:13px; color:var(--muted); margin:0 0 10px; }
+  #cg-welcome .acc-actions { margin-top:16px; }
   #signin .si-foot { color:var(--faint); font-size:11.5px; text-align:center; margin:20px 0 0; }
   nav .foot .who button { width:auto; min-height:0; height:auto; margin:0; display:inline-block; font:inherit; font-size:12px; line-height:1.5;
     color:var(--chrome-fg); background:none; border:1px solid #2c3340; border-radius:5px; padding:2px 9px; cursor:pointer; }
@@ -423,6 +432,14 @@
 </style>
 </head>
 <body>
+<div id="cg-welcome" role="dialog" aria-modal="true" aria-labelledby="cg-welcome-title" hidden>
+  <div>
+    <h2 id="cg-welcome-title">You're using your ChatGPT plan</h2>
+    <p>Requests LLMSim answers on the ChatGPT plan route, whether from this console or from a client you point at it, now use your plan and count against its usage.</p>
+    <p>Keep it to your own use: nobody else's requests should reach your plan. You can manage usage in ChatGPT settings.</p>
+    <div class="acc-actions"><button class="btn" onclick="chatgptWelcomed()">Got it</button> <a href="https://chatgpt.com/settings/usage" target="_blank" rel="noopener" style="font-size:12px">Manage usage</a></div>
+  </div>
+</div>
 <div id="signin" role="dialog" aria-modal="true" aria-labelledby="si-title">
   <form id="si-form" onsubmit="signIn(event)">
     <div class="si-brand">
@@ -617,12 +634,16 @@
   <div id="cfg-park" hidden>
       <div class="card" id="chatgptcard">
         <h2>ChatGPT plan</h2>
-        <p class="help">Answer with a ChatGPT subscription instead of an API key. Sign in with OpenAI once; every model routed to the plan is then answered by it, in whichever format the client asked in.</p>
+        <p class="help">Answer with your own ChatGPT subscription instead of an API key: requests count against your plan's usage, not API billing, and you pay LLMSim nothing. Continue with ChatGPT once; every model routed to the plan is then answered by it, in whichever format the client asked in.</p>
+        <p class="help">Sign in with your own account, for your own use, on your own machine. What you do with your plan is your responsibility and OpenAI's terms apply. LLMSim is independent open-source software, not affiliated with or endorsed by OpenAI.</p>
         <div id="cg-status" style="font-size:13px; margin-bottom:10px"></div>
         <div id="cg-kept" class="note warn" hidden style="margin-bottom:10px"></div>
         <div style="display:flex; gap:9px; align-items:center; flex-wrap:wrap">
-          <button class="btn" id="cg-signin" onclick="chatgptSignIn()">Sign in with ChatGPT</button>
+          <button class="btn cg-continue" id="cg-signin" onclick="chatgptSignIn()"><img src="https://developers.openai.com/assets/siwc/sign-in-buttons/chatgpt-logo-white.svg" alt="" loading="lazy" onerror="this.remove()"><span>Continue with ChatGPT</span></button>
+          <button class="btn" id="cg-enable" onclick="chatgptSignIn({ consent: true })" hidden>Enable ChatGPT plan usage</button>
+          <button class="btn ghost" id="cg-other" onclick="chatgptSignIn({ newAccount: true })" hidden>Use another account</button>
           <button class="btn ghost" id="cg-signout" onclick="chatgptSignOut()" hidden>Sign out</button>
+          <a id="cg-usage" href="https://chatgpt.com/settings/usage" target="_blank" rel="noopener" hidden style="font-size:12px">Manage usage</a>
           <a id="cg-link" href="#" target="_blank" rel="noopener" hidden style="font-size:12px">Open the OpenAI sign-in page</a>
         </div>
         <!-- Only when nothing is listening for the redirect: LLMSim is on another
@@ -3723,7 +3744,7 @@ function renderChat() {
   } else if (r === "chatgpt") {
     kind = CG.signedIn ? "ok" : "warn";
     text = CG.signedIn
-      ? `<span class="tag plan">plan</span> Answered by the ChatGPT plan (<code>${esc(CFG.chatgpt.model || CG.default || "its own default model")}</code>), signed in as ${esc(CG.email || "a ChatGPT account")}. This spends the plan.`
+      ? `<span class="tag plan">plan</span> Using ChatGPT plan (<code>${esc(CFG.chatgpt.model || CG.default || "its own default model")}</code>), signed in as ${esc(CG.email || "a ChatGPT account")}. This counts against the plan's usage. <a href="https://chatgpt.com/settings/usage" target="_blank" rel="noopener">Manage usage</a>`
       : `<span class="tag err">not signed in</span> This model is routed to the ChatGPT plan and will fail until you sign in. ${go}`;
   } else if (r === "anthropic") {
     kind = CFG.anthropic.keySet ? "ok" : "warn";
@@ -3905,7 +3926,9 @@ function renderChatGPT() {
   if (!kept.hidden) kept.innerHTML = `This LLMSim keeps the sign-in in <code>${esc(STATE.dir)}</code>, inside its container. A restart signs it out again and forgets keys, routing and rules. Give it a volume there (<code>LLMSIM_DATA</code>) and a sign-in lasts.`;
   const line = document.getElementById("cg-status");
   if (st.signedIn) {
-    line.innerHTML = `<span class="tag plan">signed in</span> ${esc(st.email || "ChatGPT account")}${st.plan ? " · " + esc(st.plan) : ""}`;
+    line.innerHTML = st.planUsage
+      ? `<span class="tag plan">signed in</span> Using ChatGPT plan · ${esc(st.email || "ChatGPT account")}${st.plan ? " · " + esc(st.plan) : ""}`
+      : `<span class="tag err">plan usage off</span> Signed in as ${esc(st.email || "a ChatGPT account")}, but ChatGPT plan usage was not allowed, so nothing is answered with the plan.`;
   } else if (st.pending) {
     line.innerHTML = `<span class="tag">waiting</span> for you to confirm access at OpenAI${st.listening ? "" : " — nothing is listening for the redirect"}`;
   } else if (st.needsSignIn) {
@@ -3913,9 +3936,15 @@ function renderChatGPT() {
   } else {
     line.innerHTML = `<span class="tag">not signed in</span> — routes point at the plan and will fail until you do`;
   }
-  document.getElementById("cg-signin").textContent = st.signedIn ? "Sign in again" : "Sign in with ChatGPT";
-  document.getElementById("cg-signin").className = st.signedIn ? "btn ghost" : "btn";
+  document.getElementById("cg-signin").className = (st.signedIn ? "btn ghost" : "btn") + " cg-continue";
+  const logo = document.querySelector("#cg-signin img");
+  if (logo) logo.src = `https://developers.openai.com/assets/siwc/sign-in-buttons/chatgpt-logo-${st.signedIn ? "black" : "white"}.svg`;
+  // Signing in again comes back as the same account. Another one is a separate choice, and only once this one has signed out.
+  document.getElementById("cg-other").hidden = st.signedIn || !st.known;
+  document.getElementById("cg-enable").hidden = !(st.signedIn && !st.planUsage);
+  document.getElementById("cg-usage").hidden = !st.signedIn;
   document.getElementById("cg-signout").hidden = !(st.signedIn || st.needsSignIn);
+  document.getElementById("cg-welcome").hidden = !(st.signedIn && st.planUsage && !st.welcomed);
   document.getElementById("cg-paste").hidden = !(st.pending && !st.listening);
   const link = document.getElementById("cg-link");
   link.hidden = !(st.pending && CG_URL);
@@ -3941,13 +3970,19 @@ async function chatgptCall(path, body) {
   return { ok: r.ok, body: await r.json().catch(() => ({})) };
 }
 
-async function chatgptSignIn() {
+async function chatgptWelcomed() {
+  document.getElementById("cg-welcome").hidden = true;
+  CG.welcomed = true;
+  await chatgptCall("welcomed");
+}
+
+async function chatgptSignIn(how) {
   say("");
   // Opened now, on the click, and pointed at OpenAI afterwards: a window opened
   // after an await is not the result of a click as far as the browser can
   // tell, and is blocked.
   const win = window.open("about:blank", "_blank");
-  const { ok, body } = await chatgptCall("login");
+  const { ok, body } = await chatgptCall("login", how);
   if (!ok) { if (win) win.close(); return say(body.error || "could not start the sign-in", true); }
   CG_URL = body.url;
   if (win) { win.opener = null; win.location = body.url; }

@@ -4,9 +4,6 @@ __pycache__/
 cassettes/
 # Written by the console. Machine-local settings, and it holds the upstream key.
 llmsim.config.json
-# The keys to a ChatGPT subscription. Owner-only on disk, and never committed.
-llmsim.chatgpt-auth.json
-llmsim.chatgpt-auth.json.tmp
 # The kit keeps every run it sees here: what agents were asked and what they answered.
 llmsim.runs.db
 llmsim.runs.db-*

@@ -9,9 +9,8 @@ route and releases it, and everything here is about the ways that could leave a 
 LLMSim on the wrong route afterwards: a caller that never releases, one that crashes, two
 that want different things, a restart in the middle.
 
-The route that is "somewhere else" in these cases is the ChatGPT plan with nobody signed
-in. It needs no network, and a request sent there fails, which is how a case can tell which
-route answered.
+The route that is "somewhere else" in these cases is Anthropic with no key saved. It needs
+no network, and a request sent there fails, which is how a case can tell which route answered.
 """
 
 import json
@@ -32,11 +31,11 @@ def routing(sim):
 
 
 def answers(sim, model="gpt-5"):
-    """Whether the script answered: a request on the plan's route fails, since nobody is signed in."""
+    """Whether the script answered: a request on the Anthropic route fails, since no key is saved."""
     return sim.chat("hello there", model=model)[0] == 200
 
 
-def hold(sim, default="chatgpt", by="a test", **more):
+def hold(sim, default="anthropic", by="a test", **more):
     return sim.api("POST", "/api/routing/hold", dict({"default": default, "by": by}, **more))
 
 
@@ -49,20 +48,20 @@ def case_routing_is_read_and_changed_through_the_api(sim):
     clear(sim)
     r = routing(sim)
     assert (r["default"], r["effective"], r["models"], r["hold"]) == ("scripted", "scripted", {}, None), r
-    assert r["routes"] == ["scripted", "relay", "chatgpt", "anthropic"], r
-    status, body = sim.api("PUT", "/api/routing", {"default": "chatgpt", "models": {"gpt-5": "scripted", "gpt-5-mini": "chatgpt"}})
+    assert r["routes"] == ["scripted", "relay", "anthropic"], r
+    status, body = sim.api("PUT", "/api/routing", {"default": "anthropic", "models": {"gpt-5": "scripted", "gpt-5-mini": "anthropic"}})
     # a model set to what the default already is is not an override, and is not kept as one
-    assert status == 200 and (body["default"], body["models"]) == ("chatgpt", {"gpt-5": "scripted"}), body
+    assert status == 200 and (body["default"], body["models"]) == ("anthropic", {"gpt-5": "scripted"}), body
     assert answers(sim, "gpt-5") and not answers(sim, "gpt-5-mini")
-    assert sim.api("GET", "/healthz")[1]["mode"] == "chatgpt"
+    assert sim.api("GET", "/healthz")[1]["mode"] == "anthropic"
     # it is the same setting the console saves, and it is kept
-    assert sim.api("GET", "/api/ui/state")[1]["config"]["routing"] == {"default": "chatgpt", "models": {"gpt-5": "scripted"}}
-    assert json.load(open(sim.env["LLMSIM_CONFIG"]))["routing"]["default"] == "chatgpt"
+    assert sim.api("GET", "/api/ui/state")[1]["config"]["routing"] == {"default": "anthropic", "models": {"gpt-5": "scripted"}}
+    assert json.load(open(sim.env["LLMSIM_CONFIG"]))["routing"]["default"] == "anthropic"
     for bad, said in (({"default": "claude"}, "routing.default must be one of"), ({"models": {"gpt-5": "nowhere"}}, "gpt-5: must be one of"),
                       ({"models": ["gpt-5"]}, "routing.models is {model: route}"), ({"upstream": {}}, "Not understood: upstream")):
         status, body = sim.api("PUT", "/api/routing", bad)
         assert status == 400 and said in body["message"], (bad, body)
-    assert routing(sim)["default"] == "chatgpt", "a refused change changed something"
+    assert routing(sim)["default"] == "anthropic", "a refused change changed something"
     clear(sim)
 
 
@@ -72,11 +71,11 @@ def case_a_hold_changes_what_answers_and_not_what_was_chosen(sim):
     status, body = hold(sim, seconds=120)
     assert status == 200 and "goes back to scripted when released" in body["message"], body
     h = body["hold"]
-    assert (h["default"], h["by"], h["everyModel"]) == ("chatgpt", "a test", False) and 100 < h["until"] - time.time() <= 120, h
-    assert (body["default"], body["effective"]) == ("scripted", "chatgpt"), body
+    assert (h["default"], h["by"], h["everyModel"]) == ("anthropic", "a test", False) and 100 < h["until"] - time.time() <= 120, h
+    assert (body["default"], body["effective"]) == ("scripted", "anthropic"), body
     assert not answers(sim), "the hold did not change which route answers"
     health = sim.api("GET", "/healthz")[1]
-    assert health["mode"] == "chatgpt" and health["hold"]["by"] == "a test", health
+    assert health["mode"] == "anthropic" and health["hold"]["by"] == "a test", health
     assert sim.api("GET", "/api/ui/state")[1]["hold"]["id"] == h["id"]
     # what was chosen is untouched, in memory and on disk: there is nothing to put back
     assert sim.api("GET", "/api/ui/state")[1]["config"]["routing"]["default"] == "scripted"
@@ -104,7 +103,7 @@ def case_a_hold_nobody_releases_runs_out_by_itself(sim):
 
 def case_a_restart_gives_the_route_back(sim):
     clear(sim)
-    assert hold(sim, seconds=3600)[0] == 200 and routing(sim)["effective"] == "chatgpt"
+    assert hold(sim, seconds=3600)[0] == 200 and routing(sim)["effective"] == "anthropic"
     sim.restart()
     r = routing(sim)
     assert r["hold"] is None and (r["default"], r["effective"]) == ("scripted", "scripted"), r
@@ -113,9 +112,9 @@ def case_a_restart_gives_the_route_back(sim):
 
 def case_two_callers_cannot_both_hold_it(sim):
     clear(sim)
-    first = hold(sim, "chatgpt", "suite A", seconds=60)[1]["hold"]
+    first = hold(sim, "anthropic", "suite A", seconds=60)[1]["hold"]
     status, body = hold(sim, "anthropic", "suite B", seconds=60)
-    assert status == 409 and "already held on chatgpt by suite A" in body["message"] and body["hold"]["id"] == first["id"], body
+    assert status == 409 and "already held on anthropic by suite A" in body["message"] and body["hold"]["id"] == first["id"], body
     assert routing(sim)["hold"]["id"] == first["id"], "the second caller took it anyway"
     # the one who holds it may hold it again, for longer or on something else
     again = hold(sim, "anthropic", "suite A", seconds=600)[1]["hold"]
@@ -129,21 +128,21 @@ def case_two_callers_cannot_both_hold_it(sim):
 
 def case_a_hold_leaves_a_models_own_route_alone_unless_asked(sim):
     clear(sim)
-    assert sim.api("PUT", "/api/routing", {"default": "chatgpt", "models": {"gpt-5-mini": "chatgpt", "gpt-5": "scripted"}})[0] == 200
-    assert sim.api("PUT", "/api/routing", {"default": "scripted", "models": {"gpt-5-mini": "chatgpt"}})[0] == 200
+    assert sim.api("PUT", "/api/routing", {"default": "anthropic", "models": {"gpt-5-mini": "anthropic", "gpt-5": "scripted"}})[0] == 200
+    assert sim.api("PUT", "/api/routing", {"default": "scripted", "models": {"gpt-5-mini": "anthropic"}})[0] == 200
     assert answers(sim, "gpt-5") and not answers(sim, "gpt-5-mini")
     assert hold(sim, "scripted", "a test")[0] == 200
     assert not answers(sim, "gpt-5-mini"), "a hold on the default route moved a model that has a route of its own"
     held = hold(sim, "scripted", "a test", everyModel=True)[1]["hold"]
     assert held["everyModel"] is True and answers(sim, "gpt-5-mini") and answers(sim, "gpt-5")
     sim.api("DELETE", "/api/routing/hold/" + held["id"])
-    assert not answers(sim, "gpt-5-mini") and routing(sim)["models"] == {"gpt-5-mini": "chatgpt"}
+    assert not answers(sim, "gpt-5-mini") and routing(sim)["models"] == {"gpt-5-mini": "anthropic"}
     clear(sim)
 
 
 def case_what_a_hold_refuses(sim):
     clear(sim)
-    for body, said in (({"default": "nowhere", "by": "x"}, "default must be one of scripted, relay, chatgpt, anthropic"),
+    for body, said in (({"default": "nowhere", "by": "x"}, "default must be one of scripted, relay, anthropic"),
                        ({"by": "x"}, "default must be one of"), ({"default": "scripted"}, "by says who is holding it"),
                        ({"default": "scripted", "by": "  "}, "by says who is holding it"), ({"default": "scripted", "by": "x" * 81}, "by says who is holding it"),
                        ({"default": "scripted", "by": "x", "everyModel": "yes"}, "everyModel is true or false"),

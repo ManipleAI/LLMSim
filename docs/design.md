@@ -133,7 +133,7 @@ One page, served by the same process, no build step and no dependency. It is thr
 |---|---|
 | **Simulate a model** | Playground, Answer rules, Models, Faults, Record and replay, Traffic (*Live*, *Captured*, *Assertions*), Model checks |
 | **Test agents** | Dashboard; Agents, Scenarios, Datasets; Test runs, Results, Experiments; the stand-ins an agent talks to; Judges, Review queue, Variations |
-| **Settings** | Where answers come from; ChatGPT plan, Anthropic API, Upstream; Connect a client; Capture and identity; Credentials; Storage and status |
+| **Settings** | Where answers come from; Anthropic API, Upstream; Connect a client; Capture and identity; Credentials; Storage and status |
 
 Where answers come from is shown on every page, because it decides what every other page does. It used to be one screen among nine, and the first thing anybody testing against a real-model default had to discover was that their script was not what answered.
 
@@ -298,147 +298,6 @@ fall back to the script: a demo that silently serves canned answers looks
 like it is working and proves nothing. `LLMSIM_UPSTREAM_FALLBACK=1` opts
 into the other behaviour.
 
-## A third mode: a ChatGPT subscription
-
-Relay answers with a real model through an API key. This answers with one
-through a **ChatGPT plan** — the person signs in with OpenAI, and every model
-routed to it is answered by their subscription, in whichever format the
-client asked in.
-
-```
-client (Chat Completions | Anthropic Messages | Responses)
-        │  canon_request()
-        ▼
-CanonicalRequest ── chatgpt_payload() ──▶ POST {backend}/responses
-        ▲                                   store:false, stream:true
-        │                                          │
- encoders ◀── CanonicalEvents ◀── chatgpt_events() ┘
- (the client's own wire format, whole or streamed)
-```
-
-The middle is the one format the plan backend speaks. Every client format
-goes in and out through the same two seams, so a fourth client format is one
-translator rather than another copy of the whole path.
-
-**To use it:** Routing → *ChatGPT plan* → **Sign in with ChatGPT**. A tab opens
-at OpenAI; confirm access, and the console flips to *signed in*. Then pick
-the route — as the default, or per model on the Models page — and choose the
-plan model (the picker lists what the plan actually offers).
-
-**The plan model is the plan's own choice unless you make one.** Which models an
-account may use differs by plan and changes over time, so no name is built in —
-the first one, `gpt-5.4`, was a guess that an account without it was refused on.
-Left blank, LLMSim asks the plan for its list and uses its first *visible* model by
-the plan's own priority (hidden models are never picked for you, though you may
-name one). The list is cached for ten minutes and dropped on sign-in and sign-out.
-If nothing is chosen and the list cannot be read, the request fails and says so
-rather than guessing. A model you choose always wins. A config saved while
-`gpt-5.4` was the built-in default is read as "not chosen".
-
-```
-curl localhost:8099/openai/v1/chat/completions \
-  -H "Authorization: Bearer sk-llmsim-000000000000000000000000" \
-  -d '{"model":"claude-sonnet-5","messages":[{"role":"user","content":"hi"}]}'
-```
-
-**What crosses the seam.** Text, system prompts, tool declarations, tool calls
-and their results, images, JSON-schema output and reasoning effort all
-translate, and tool-call ids round-trip so an agent loop works. Sampling
-controls — `max_tokens`, `temperature`, `top_p`, `stop` — are *not sent*,
-because the plan's route rejects them; each request that carried one logs
-which were dropped. Usage is the plan's own, cache hits included. A tool call
-is passed on whole when the route finishes it, not argument-fragment by
-fragment, so streamed text is live but a streamed call arrives in one piece.
-Anthropic's `message_start` carries zero input tokens, since they are not
-known until the end; the real figures are on `message_delta`.
-
-**How the sign-in works.** It is OpenAI's Sign in with ChatGPT for open-source
-and local apps. The first sign-in asks for `dynamic_agent_client` with LLMSim's
-own name as `agent_name_hint`, and the person approves it on OpenAI's page.
-OpenAI then issues a client id for that account, which is what every later
-sign-in, token and refresh uses. Each host has one opaque `ext_agent_host_id`,
-written down before OpenAI first hears it. There is no LLMSim account, secret or
-key of anybody's behind any of this.
-
-The ID token is verified before anything is kept: RS256 against OpenAI's
-published keys (written out with the standard library, which has big integers
-and hashes but no RSA), then issuer, audience, expiry and nonce. A returning
-sign-in that comes back as another account is refused, so its credentials are
-never replaced by accident. A token response without `chatgpt.tokens.use.direct`
-is a sign-in that may not spend the plan: no request goes out, and the console
-offers to ask again with `prompt=consent`.
-
-The redirect must land on `127.0.0.1`, on `1455` or `1457`: LLMSim listens there,
-on loopback only, for the length of the sign-in. If it is running on another
-machine, or another tool holds the port, the console asks you to paste the
-address the browser ended up on instead. The `state` is checked, a code is
-single-use, and a request from another site's origin cannot start, finish or
-cancel a sign-in.
-
-Requests go to `POST https://api.openai.com/v1/responses` with the access token
-as a bearer token. The route takes function tools only inside a namespace, so a
-client's tools travel in one, `client_tools`, which the client never sees. It
-cannot find a tool by name inside a namespace, so a client forcing one tool gets
-that tool offered alone with `tool_choice: "required"`.
-
-A file from before this, when the route signed in as the Codex client, has
-tokens and no client id. Those tokens are never sent anywhere: the console says
-to sign in again, and that replaces the file.
-
-Tokens live in `llmsim.chatgpt-auth.json` — created owner-only, replaced
-atomically, gitignored — and are never sent to the console, which is told only
-whether somebody is signed in and as whom. The access token is refreshed
-before it lapses, one refresh at a time because the refresh token rotates; if
-it is refused for good, LLMSim stops asking and says *sign in again* rather than
-retrying on every request. *Sign out* asks OpenAI to revoke the refresh token and
-forgets the tokens, keeping only the registration so the next sign-in comes back
-as the same one; if the revoke fails it says so, and the grant can be removed in
-ChatGPT's settings.
-
-**Failures are the client's own.** A reached plan limit is a **429** in the
-vendor's envelope, with a `retry-after` and where to manage usage, and no reset
-time unless OpenAI gives one, since an app's own limit may be the one reached. A
-request the route does not support is a 400 naming what; usage that cannot be
-checked just now is a 503; an unreachable or refusing route is a 502. None of them
-moves to another way of paying. A 401 from
-OpenAI is *not* passed on as one — it would tell a gateway its own key was
-wrong and send somebody to fix the wrong thing. After the first byte the
-status is already sent, so a failure is reported inside the stream in that
-format's error form. As with relay, nothing silently falls back to the
-script; *Answer here if the plan cannot be reached* is opt-in.
-
-| Variable | Default | |
-|---|---|---|
-| `LLMSIM_CHATGPT_MODEL` | *(empty)* | The plan model that seeds the setting; empty means the plan's own default, and the console wins after that. |
-| `LLMSIM_CHATGPT_AUTH` | `llmsim.chatgpt-auth.json` | Where the tokens are kept. |
-| `LLMSIM_CHATGPT_PORTS` | `1455,1457` | The redirect ports to try. |
-| `LLMSIM_CHATGPT_ISSUER` / `_API` | OpenAI's | Overridden by the tests to point at a stand-in. |
-
-**Read this before turning it on.** Signed in, this holds a subscription:
-anyone who can reach the port can spend it, through the vendor routes with their
-published keys, even when the console needs a sign-in. Keep it on your own
-machine: OpenAI's terms say requests must come from a runtime only you control,
-that another person's activity must not reach your plan, and that a plan is for the
-app you connected it to, not general API access for other tools. LLMSim passes on
-the requests of the agent you point at it, for testing that agent. Whether that use
-fits is OpenAI's to say, not this file's. Each person answers for their own plan,
-and usage counts against its own limits.
-
-**What is and is not verified.** `tests/test_chatgpt_plan.py` runs the whole
-route against a stand-in for OpenAI — no network, no account — and checks the
-contract strictly: the PKCE verifier against its challenge, a real RSA signature
-on the ID token, registration and the issued client id, `store:false`,
-`stream:true`, tools in a namespace, rotating refresh tokens, a revoked token
-refreshed once and retried, a dead one not retried, tool-call round trips in
-all three formats, every failure path, and that nothing of the Codex client is
-left. That proves LLMSim speaks the
-contract it read. It cannot prove OpenAI still honours it today; only a real
-sign-in does, and the first one is the real test.
-
-```
-python3 tests/test_chatgpt_plan.py
-```
-
 ## Recording a session, and replaying it exactly
 
 Scripted answers are written by hand, and relayed ones differ every time. A
@@ -515,7 +374,7 @@ next run, or the console, does.
 
 **The functional cases are exempt.** The cases on *Functional tests* check a
 *caller* against the script's rules. LLMSim answers them from the script whatever
-the default route is — a relay or the ChatGPT plan would spend something and say
+the default route is — a relay or a real model would spend something and say
 something else, and the cases would fail — and leaves them out of any recording,
 so they neither pollute a cassette nor fail a replay. The marker is a header the
 runner sets on its own requests, honoured only from this machine.
@@ -525,8 +384,8 @@ with their arguments and their ids, and the token counts the route reported.
 Not the request: a harness request is megabytes of system prompt and file
 contents, none of it needed to answer the next identical one. An answer can
 still quote one, so a cassette is written owner-only to `cassettes/` and is not
-committed. Whatever route produced the answer — the script, a relay, the ChatGPT
-plan — is kept, so the usual way to make one is to record a session through the
+committed. Whatever route produced the answer — the script, a relay, a real
+model — is kept, so the usual way to make one is to record a session through the
 plan and replay it for free from then on. A refusal, a rate limit or a failure
 is never recorded as an answer.
 
@@ -670,7 +529,7 @@ turn (`"fault": {…}`), or as a *fault rule* with a `match`, `probability`, `ev
 | `malformed_tool_args` | arguments that are not valid JSON (`truncated`, `not_json`, `array`, `empty`) |
 | `unknown_tool`, `empty`, `huge` | call a tool nobody declared; a 200 that says nothing; an answer of N bytes |
 
-Faults apply on **every route** — scripted, relay, the ChatGPT plan, a replay — since a
+Faults apply on **every route** — scripted, relay, Anthropic, a replay — since a
 fault is about how the vendor misbehaves, not who answered. `status` and `drop` happen
 *before* anything is spent upstream, so injecting one never costs a call. A recording
 keeps the real answer, not the fault. LLMSim's own functional cases are never faulted.
@@ -749,7 +608,7 @@ real one.
 
 ```
 python3 tests/test_behaviors.py        # 44 cases: identity, captures, rules, faults, assertions, runs, the guide
-python3 tests/test_chatgpt_plan.py     # 38 cases: the ChatGPT route, recording, replay
+python3 tests/test_sessions.py         # 20 cases: recording, replay, the console's chat
 ```
 
 ## Testing a system of agents

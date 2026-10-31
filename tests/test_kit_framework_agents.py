@@ -7,7 +7,7 @@ Such an agent calls its model with whatever LLMSim it is pointed at, runs its to
 itself, and is often run on an LLMSim whose default route is somebody's real model. Each case
 here is something that went wrong testing a real LangGraph agent on such an LLMSim:
 
-- the scenario's script was ignored, because the default route was a ChatGPT plan, and the
+- the scenario's script was ignored, because the default route was a real model, and the
   run still called itself simulated;
 - a model that fails once could only be had by changing every run's faults;
 - what the agent's own tools returned was seen nowhere;
@@ -60,11 +60,11 @@ def timeline(sim, result):
     return sim.api("GET", "/api/runs/%s/timeline" % result["run"])[1]["events"]
 
 
-# The default route in these cases is the ChatGPT plan with nobody signed in: a request that
+# The default route in these cases is Anthropic with no key saved: a request that
 # reaches it fails, which is how a case tells the script from a real model without a network.
 
 def case_a_runs_own_script_answers_it_whatever_the_default_route(sim):
-    default_route(sim, "chatgpt")
+    default_route(sim, "anthropic")
     try:
         result = run(sim, scenario(sim))
         assert result["verdict"] == "pass", result
@@ -77,13 +77,13 @@ def case_a_runs_own_script_answers_it_whatever_the_default_route(sim):
 
 
 def case_what_the_script_does_not_answer_goes_where_routing_says_and_the_run_says_so(sim):
-    default_route(sim, "chatgpt")
+    default_route(sim, "anthropic")
     try:
         sc = scenario(sim, turns=[{"say": "Something the script has no rule for"}], checks=[{"type": "answer", "contains": "x"}])
         result = run(sim, sc)
-        assert result["model"]["answered"]["routes"] == {"chatgpt": 1}, result["model"]
+        assert result["model"]["answered"]["routes"] == {"anthropic": 1}, result["model"]
         assert result["model"]["answered"]["by"] == "a real model"
-        assert any("answered by a real model (chatgpt), not the script" in w for w in result.get("warnings", [])), result.get("warnings")
+        assert any("answered by a real model (anthropic), not the script" in w for w in result.get("warnings", [])), result.get("warnings")
         # asked to, the run refuses such a request instead, and says why
         refused = run(sim, dict(sc, model={"rules": SCRIPT, "unmatched": "refuse"}))
         assert refused["verdict"] == "fail" and refused["model"]["answered"] == {"routes": {"refused": 1}, "by": "nothing"}, refused["model"]

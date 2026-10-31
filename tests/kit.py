@@ -36,7 +36,6 @@ class Sim:
         self.workdir = workdir or self.tmp.name
         self.env = dict(os.environ, LLMSIM_PORT=str(self.port), LLMSIM_CONFIG=os.path.join(self.workdir, "config.json"),
                         LLMSIM_SUITE=os.path.join(self.workdir, "suite.json"), LLMSIM_CASSETTES=os.path.join(self.workdir, "cassettes"),
-                        LLMSIM_CHATGPT_AUTH=os.path.join(self.workdir, "auth.json"),
                         LLMSIM_RULES=os.path.join(self.workdir, "rules.json"), LLMSIM_ASSERTIONS=os.path.join(self.workdir, "assertions.json"),
                         LLMSIM_RUNS_DB=os.path.join(self.workdir, "runs.db"),
                         LLMSIM_CREDENTIALS=os.path.join(self.workdir, "credentials.json"),

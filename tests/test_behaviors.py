@@ -19,7 +19,7 @@ import time
 import urllib.parse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from test_chatgpt_plan import Sim, Stub, frames, OPENAI_KEY, ANTHROPIC_KEY  # noqa: E402
+from test_sessions import Sim, Stub, frames, OPENAI_KEY, ANTHROPIC_KEY  # noqa: E402
 
 CHAT = "/openai/v1/chat/completions"
 
@@ -690,19 +690,19 @@ def case_a_scripted_turn_can_carry_its_own_fault(sim):
 def case_faults_apply_on_every_route_and_cost_nothing_upstream(sim, stub=None):
     reset(sim)
     clear_faults(sim)
-    sim.sign_in()
+    sim.connect()
     api(sim, "POST", "/api/sessions/stop")
-    sim.configure(routing={"default": "scripted", "models": {"gpt-5": "chatgpt"}}, chatgpt={"model": "gpt-5.4"})
+    sim.configure(routing={"default": "scripted", "models": {"gpt-5": "anthropic"}})
     stub_ = sim.stub
     stub_.last = None
-    fid = add_fault(sim, match={"route": "chatgpt"}, fault={"type": "status", "status": 503, "message": "down"})
+    fid = add_fault(sim, match={"route": "anthropic"}, fault={"type": "status", "status": 503, "message": "down"})
     got = raw_post(sim, CHAT, {"model": "gpt-5", "messages": [{"role": "user", "content": "hello there"}]})
     assert got["status"] == 503 and stub_.last is None, "a status fault still spent an upstream call"
     api(sim, "DELETE", "/api/faults/" + fid)
-    # a stream fault reaches a streamed plan answer, which is passed through event by event
-    fid = add_fault(sim, match={"route": "chatgpt"}, fault={"type": "abort_stream", "after": 1})
+    # a stream fault reaches a real model's streamed answer, which is passed through event by event
+    fid = add_fault(sim, match={"route": "anthropic"}, fault={"type": "abort_stream", "after": 1})
     got = raw_post(sim, CHAT, STREAM_ASK)
-    assert stub_.last is not None and "[DONE]" not in got["text"], "a stream fault did not reach a streamed plan answer"
+    assert stub_.last is not None and "[DONE]" not in got["text"], "a stream fault did not reach a real model's streamed answer"
     clear_faults(sim)
     sim.configure(routing={"default": "scripted", "models": {}})
 

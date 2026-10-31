@@ -182,7 +182,7 @@ FLOWS = [
          agent={"use": "langgraph-local-plain", "name": "langgraph"}, model={"claim": {"model": "gpt-5-nano"}}),
 
     # ── strict: nothing the script does not cover reaches a real model ───────
-    flow("lg-strict-script", "Every model call is the script's, and one it has no rule for would be refused, not sent to ChatGPT",
+    flow("lg-strict-script", "Every model call is the script's, and one it has no rule for would be refused, not sent to a real model",
          [rule("sum", {"contains": "sum"}, call("run_python", code="print(sum(range(11)))"), say("The sum is {{tool_output}}."))],
          ["What is the sum of 0 to 10?"],
          [answer(regex=r"The sum is exit code 0\s+55"), path("strict", "run_python")], tags=["strict"],

@@ -119,15 +119,6 @@
                    font:inherit; font-size:13px; font-weight:500; cursor:pointer; }
   #signin button:hover { background:var(--primary-hover); }
   #signin button:disabled { opacity:.6; cursor:default; }
-  /* ── ChatGPT plan: OpenAI's approved button, its one-time word, and where to see the usage ── */
-  .cg-continue { display:inline-flex; align-items:center; gap:8px; }
-  .cg-continue img { width:16px; height:16px; display:block; }
-  #cg-welcome { position:fixed; inset:0; z-index:900; background:rgba(20,24,31,.45); display:flex; align-items:center; justify-content:center; padding:16px; }
-  #cg-welcome[hidden] { display:none; }
-  #cg-welcome > div { width:100%; max-width:440px; background:var(--surface); border-radius:12px; padding:24px; box-shadow:0 8px 24px rgba(0,0,0,.18); }
-  #cg-welcome h2 { font-size:17px; margin:0 0 8px; }
-  #cg-welcome p { font-size:13px; color:var(--muted); margin:0 0 10px; }
-  #cg-welcome .acc-actions { margin-top:16px; }
   #signin .si-foot { color:var(--faint); font-size:11.5px; text-align:center; margin:20px 0 0; }
   nav .foot .who button { width:auto; min-height:0; height:auto; margin:0; display:inline-block; font:inherit; font-size:12px; line-height:1.5;
     color:var(--chrome-fg); background:none; border:1px solid #2c3340; border-radius:5px; padding:2px 9px; cursor:pointer; }
@@ -432,14 +423,6 @@
 </style>
 </head>
 <body>
-<div id="cg-welcome" role="dialog" aria-modal="true" aria-labelledby="cg-welcome-title" hidden>
-  <div>
-    <h2 id="cg-welcome-title">You're using your ChatGPT plan</h2>
-    <p>Requests LLMSim answers on the ChatGPT plan route, whether from this console or from a client you point at it, now use your plan and count against its usage.</p>
-    <p>Keep it to your own use: nobody else's requests should reach your plan. You can manage usage in ChatGPT settings.</p>
-    <div class="acc-actions"><button class="btn" onclick="chatgptWelcomed()">Got it</button> <a href="https://chatgpt.com/settings/usage" target="_blank" rel="noopener" style="font-size:12px">Manage usage</a></div>
-  </div>
-</div>
 <div id="signin" role="dialog" aria-modal="true" aria-labelledby="si-title">
   <form id="si-form" onsubmit="signIn(event)">
     <div class="si-brand">
@@ -517,7 +500,6 @@
   <div class="navspace" data-space="settings" hidden>
   <div class="group">Models</div>
   <button data-view="routing" onclick="show('routing')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3v6a6 6 0 0 0 6 6h6M15 12l3 3-3 3M6 21v-3"/></svg><span>Where answers come from</span><span class="n" id="n-routing"></span></button>
-  <button data-view="chatgpt" onclick="show('chatgpt')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span>ChatGPT plan</span></button>
   <button data-view="anthropic" onclick="show('anthropic')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 7l-6 14M9 7l6 14M7 3h10"/></svg><span>Anthropic API</span></button>
   <button data-view="upstream" onclick="show('upstream')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20V5M6 11l6-6 6 6"/></svg><span>Upstream</span></button>
   <div class="group">Clients</div>
@@ -584,7 +566,7 @@
   <!-- ── Routing ────────────────────────────────────────────────────── -->
   <section class="view" id="v-routing" hidden>
     <div class="head">
-      <div><h1>Where answers come from</h1><p>Whether answers are made up here, from your rules, or come from a real model: an upstream, a ChatGPT plan, or Anthropic's API. Each of those is set up on its own page.</p></div>
+      <div><h1>Where answers come from</h1><p>Whether answers are made up here, from your rules, or come from a real model: an upstream or Anthropic's API. Each of those is set up on its own page.</p></div>
     </div>
     <div class="body">
       <div class="card">
@@ -593,7 +575,6 @@
         <div class="seg" role="group" aria-label="Default route">
           <button id="def-scripted" onclick="setDefault('scripted')" aria-pressed="false">No upstream — answer here</button>
           <button id="def-relay" onclick="setDefault('relay')" aria-pressed="false">Upstream — relay</button>
-          <button id="def-chatgpt" onclick="setDefault('chatgpt')" aria-pressed="false">ChatGPT plan</button>
           <button id="def-anthropic" onclick="setDefault('anthropic')" aria-pressed="false">Anthropic API</button>
         </div>
         <div id="held" class="note warn" hidden></div>
@@ -632,49 +613,6 @@
        where one does: under Default on Routing, or under a model's own route on
        the Models page. One card each, so a half-typed field is never in two places. -->
   <div id="cfg-park" hidden>
-      <div class="card" id="chatgptcard">
-        <h2>ChatGPT plan</h2>
-        <p class="help">Answer with your own ChatGPT subscription instead of an API key: requests count against your plan's usage, not API billing, and you pay LLMSim nothing. Continue with ChatGPT once; every model routed to the plan is then answered by it, in whichever format the client asked in.</p>
-        <p class="help">Sign in with your own account, for your own use, on your own machine. What you do with your plan is your responsibility and OpenAI's terms apply. LLMSim is independent open-source software, not affiliated with or endorsed by OpenAI.</p>
-        <div id="cg-status" style="font-size:13px; margin-bottom:10px"></div>
-        <div id="cg-kept" class="note warn" hidden style="margin-bottom:10px"></div>
-        <div style="display:flex; gap:9px; align-items:center; flex-wrap:wrap">
-          <button class="btn cg-continue" id="cg-signin" onclick="chatgptSignIn()"><img src="https://developers.openai.com/assets/siwc/sign-in-buttons/chatgpt-logo-white.svg" alt="" loading="lazy" onerror="this.remove()"><span>Continue with ChatGPT</span></button>
-          <button class="btn" id="cg-enable" onclick="chatgptSignIn({ consent: true })" hidden>Enable ChatGPT plan usage</button>
-          <button class="btn ghost" id="cg-other" onclick="chatgptSignIn({ newAccount: true })" hidden>Use another account</button>
-          <button class="btn ghost" id="cg-signout" onclick="chatgptSignOut()" hidden>Sign out</button>
-          <a id="cg-usage" href="https://chatgpt.com/settings/usage" target="_blank" rel="noopener" hidden style="font-size:12px">Manage usage</a>
-          <a id="cg-link" href="#" target="_blank" rel="noopener" hidden style="font-size:12px">Open the OpenAI sign-in page</a>
-        </div>
-        <!-- Only when nothing is listening for the redirect: LLMSim is on another
-             machine than this browser, so the redirect lands on a page that cannot
-             load. Its address bar is what carries the code. -->
-        <div id="cg-paste" hidden style="margin-top:12px">
-          <label for="cg-redirect">After you confirm, the browser lands on a page that will not load. Paste its address here.</label>
-          <input id="cg-redirect" class="mono" type="text" placeholder="http://127.0.0.1:1455/auth/callback?code=…&state=…">
-          <div style="margin-top:10px"><button class="btn" onclick="chatgptPaste()">Finish sign-in</button></div>
-        </div>
-        <div id="cg-msg" style="font-size:12px; margin-top:8px"></div>
-
-        <div class="row" style="margin-top:14px">
-          <div><label for="cg-model">Plan model <span class="hint">· leave blank for the plan's own default</span></label>
-            <input id="cg-model" class="mono" type="text" list="cg-models" placeholder="the plan's own default">
-            <datalist id="cg-models"></datalist></div>
-        </div>
-        <label for="cg-instr">System prompt when the client sends none</label>
-        <textarea id="cg-instr" style="min-height:54px" placeholder="You are a helpful assistant."></textarea>
-        <label style="display:flex; align-items:center; gap:8px; margin-top:14px; color:var(--ink)">
-          <input id="cg-fallback" type="checkbox" style="width:auto"> Answer here if the plan cannot be reached
-        </label>
-        <div style="margin-top:14px; display:flex; gap:9px; align-items:center">
-          <button class="btn" onclick="saveChatGPT()">Save</button>
-          <span id="cg-saved" style="font-size:12px"></span>
-        </div>
-        <div class="note warn">
-          Anyone who can reach this port can spend this plan. Until now nothing here was worth taking; signed in, something is. Keep it on your own machine or a network you trust. Usage counts against the plan's own limits, and a limit reached comes back as a 429.
-        </div>
-      </div>
-
       <div class="card" id="anthropiccard">
         <h2>Anthropic API</h2>
         <p class="help">Answer with a real Claude model, by API key. Every model routed here is answered by it, in whichever format the client asked in, tools and streaming included.</p>
@@ -1079,10 +1017,6 @@
   </section>
 
   <!-- ── Settings: one page per model connection ────────────────────────── -->
-  <section class="view" id="v-chatgpt" hidden>
-    <div class="head"><div><h1>ChatGPT plan</h1><p>Answer with a ChatGPT subscription. Whether it is used is set under Where answers come from.</p></div></div>
-    <div class="body"><div id="cfg-own-chatgpt"></div></div>
-  </section>
   <section class="view" id="v-anthropic" hidden>
     <div class="head"><div><h1>Anthropic API</h1><p>Answer with a real Claude model, billed to an API key. Whether it is used is set under Where answers come from.</p></div></div>
     <div class="body"><div id="cfg-own-anthropic"></div></div>
@@ -1216,7 +1150,6 @@
 let CFG = null, MODELS = {}, ALL = [], REQS = [], SINCE = 0, VIEW = "overview", PICKED = null, RULES = [];
 // The default route may be held on something else for a while, by a test that needs it. What was chosen is not changed.
 let HOLD = null, STATE = null;
-let CG = { signedIn: false }, CG_URL = null, CG_LISTED = false;
 let CHAT = { turns: [], busy: false, abort: null };
 let SESS = { mode: "off", cassettes: [], settings: {} };
 let CASE = null, PLAN = null, RUN = null, RUNNING = false;
@@ -1262,7 +1195,7 @@ function show(v) {
   for (const s of document.querySelectorAll(".view")) s.hidden = s.id !== "v-" + v;
   for (const b of document.querySelectorAll("nav button[data-view]")) b.setAttribute("aria-current", b.dataset.view === key);
   renderSpaces();
-  if (CFG) { renderDetail(); placeCards(); renderChatGPT(); renderChat(); renderSessions(); renderStatus(); }
+  if (CFG) { renderDetail(); placeCards(); renderChat(); renderSessions(); renderStatus(); }
   pageEntered(v);
 }
 
@@ -1280,13 +1213,13 @@ async function load() {
   }
   document.getElementById("dot").className = "dot";
   document.getElementById("conn").textContent = "connected";
-  CFG = s.config; MODELS = s.models; ALL = s.allModels; CG = s.chatgpt || CG; SESS = s.session || SESS; RULES = s.rules || RULES;
+  CFG = s.config; MODELS = s.models; ALL = s.allModels; SESS = s.session || SESS; RULES = s.rules || RULES;
   HOLD = s.hold || null;
   STATE = s.state || null;
   for (const row of s.requests) { REQS.unshift(row); SINCE = Math.max(SINCE, row.n); }
   if (REQS.length > 300) REQS.length = 300;
   if (!PICKED) PICKED = ALL[0];
-  renderChrome(); renderOverview(); renderList(); renderDetail(); renderRouting(); renderChatGPT(); renderChat(); renderSessions(); renderLogs(); renderTests();
+  renderChrome(); renderOverview(); renderList(); renderDetail(); renderRouting(); renderChat(); renderSessions(); renderLogs(); renderTests();
 }
 
 // The state poll repaints every panel every 1.5 seconds, which is right for
@@ -1323,7 +1256,6 @@ const PUBLISHED = {
 const ROUTE_MEANS = {
   scripted: ["Scripted", "Answers are made up here, from your rules. Nothing is called and nothing is spent."],
   relay: ["Upstream", "Requests are relayed to one real model."],
-  chatgpt: ["ChatGPT plan", "Requests are answered by a ChatGPT subscription."],
   anthropic: ["Anthropic API", "Requests are answered by a real Claude model, billed to an API key."],
 };
 function copyBtn(text) { return `<button class="copy" onclick="copyText('${esc(text)}'); this.textContent='Copied'; setTimeout(() => this.textContent='Copy', 1200)">Copy</button>`; }
@@ -1336,12 +1268,8 @@ function renderOverview() {
   const stats = [];
   stats.push({ k: "Answers come from", v: mode, d: means + (routed ? ` ${routed} model${routed === 1 ? " is" : "s are"} set differently.` : "")
     + (HOLD ? ` Held there by ${HOLD.by} for now; your own choice, ${routeName(CFG.routing.default)}, comes back by itself.` : ""), go: "routing", warn: !!HOLD });
-  if (STATE && !STATE.kept) stats.push({ k: "Settings kept", v: "Until a restart", d: `Sign-ins, keys, routing and rules are in ${STATE.dir}, inside this container. Mount a volume there.`, go: "routing", warn: true });
-  if (d === "chatgpt" || Object.values(CFG.routing.models).includes("chatgpt")) {
-    stats.push(CG.signedIn
-      ? { k: "ChatGPT plan", v: "Signed in", d: "Requests on this route spend the plan.", go: "routing" }
-      : { k: "ChatGPT plan", v: "Not signed in", d: "Requests on this route fail until someone signs in.", go: "routing", warn: true });
-  } else if (d === "anthropic" || Object.values(CFG.routing.models).includes("anthropic")) {
+  if (STATE && !STATE.kept) stats.push({ k: "Settings kept", v: "Until a restart", d: `Keys, routing and rules are in ${STATE.dir}, inside this container. Mount a volume there.`, go: "routing", warn: true });
+  if (d === "anthropic" || Object.values(CFG.routing.models).includes("anthropic")) {
     stats.push(CFG.anthropic.keySet
       ? { k: "Anthropic API", v: "Key stored", d: "Requests on this route are billed to it.", go: "routing" }
       : { k: "Anthropic API", v: "No key", d: "Requests on this route fail until one is saved.", go: "routing", warn: true });
@@ -1377,7 +1305,7 @@ const HOME = [
     [["dashboard", "See what passes and fails", "Every scenario's last run, and why it failed"], ["lab/agents", "Add an agent to test", "Salesforce, SAP, ServiceNow, Azure Foundry or your own"],
      ["lab/scenarios", "Write a test", "On a canvas, as a form or as JSON"], ["lab/results", "Read a run", "Every step it took, in order"]]],
   ["settings", "Settings", "Where answers come from, the model connections, how clients reach LLMSim, and what it keeps.",
-    [["routing", "Decide where answers come from", "Your rules, an upstream, a ChatGPT plan or Anthropic"], ["chatgpt", "Sign in to a ChatGPT plan", "Answer with a subscription"],
+    [["routing", "Decide where answers come from", "Your rules, an upstream or Anthropic"], ["anthropic", "Connect a real model", "An Anthropic or upstream key"],
      ["connect", "Connect a client", "Base URLs and keys"], ["capture", "Decide what is kept", "Capture, identity and who may send requests"]]],
 ];
 function renderHome() {
@@ -1392,8 +1320,7 @@ function renderHome() {
 function renderStatus() {
   if (!CFG) return;
   const d = HOLD ? HOLD.default : CFG.routing.default, [name] = ROUTE_MEANS[d] || [d];
-  const how = d === "chatgpt" ? (CG.signedIn ? ["signed in", "ok"] : ["not signed in", "warn"])
-    : d === "anthropic" ? (CFG.anthropic.keySet ? ["key stored", "ok"] : ["no key", "warn"])
+  const how = d === "anthropic" ? (CFG.anthropic.keySet ? ["key stored", "ok"] : ["no key", "warn"])
     : d === "relay" ? (CFG.upstream.url ? [CFG.upstream.model || "set", "ok"] : ["no address", "warn"])
     : ["your rules", ""];
   const r = document.getElementById("sb-route");
@@ -1428,7 +1355,7 @@ function accessRender(message, bad) {
     <div class="card"><h2>Sign-in ${ACC.on ? tagFor("set", "on") : tagFor("err", "off")}</h2>
       ${ACC.on
         ? `<p class="help" style="margin:0">The console asks for a sign-in${pw.set ? " as <b>" + esc(ACC.user) + "</b>" : " (no password is set, so only the key gets in)"}, and <code>/api/…</code> needs that sign-in or the API key. A sign-in lasts ${esc(String(ACC.sessionDays))} days.</p>`
-        : `<div class="note warn" style="margin:0">Anyone who can reach this port can use the console and the whole API, and spend a signed-in plan or a saved key. Set a password below to require a sign-in.</div>`}
+        : `<div class="note warn" style="margin:0">Anyone who can reach this port can use the console and the whole API, and spend a saved key. Set a password below to require a sign-in.</div>`}
       ${needCurrent ? `<label for="acc-current">Your current password <span class="hint">· needed to change any of this</span></label><input id="acc-current" type="password" autocomplete="current-password">` : ""}
       <div id="acc-note" class="note" ${message ? "" : "hidden"} style="${bad ? "background:var(--primary-tint);color:var(--primary-hover)" : "background:var(--green-tint);color:var(--green)"}">${esc(message || "")}</div>
     </div>
@@ -1503,7 +1430,7 @@ function renderAbout() {
   if (!el || !CFG) return;
   const st = STATE || {}, kept = st.kept !== false;
   el.innerHTML = `<div class="card"><h2>Where it keeps what it is told</h2>
-      <p class="help">Sign-ins, keys, routing, your rules, the suite, runs and recordings are kept in one folder.</p>
+      <p class="help">Keys, routing, your rules, the suite, runs and recordings are kept in one folder.</p>
       <p class="mono" style="margin:0 0 8px">${esc(st.dir || "beside server.py")}</p>
       ${kept ? `<div class="note ok" style="margin:0">Kept across restarts.</div>` : `<div class="note warn" style="margin:0">This folder is inside a container and is not a volume: a restart signs out and forgets the rest. Mount a volume there (<code>LLMSIM_DATA</code>).</div>`}</div>
     <div class="card"><h2>What it is serving</h2><table class="sess-table">
@@ -1573,12 +1500,12 @@ async function dashRunAll() {
 //
 // A card is shown only for the route being looked at: under Default on the
 // Routing page, or under a model's own route on its page. Nothing else — a
-// ChatGPT form beside "No upstream" is a setting for something that is not
+// connection form beside "No upstream" is a setting for something that is not
 // selected. The cards are moved rather than duplicated, so ids stay unique and
 // a half-typed field is never in two places.
 function parkCards() {
   const park = document.getElementById("cfg-park");
-  for (const id of ["chatgptcard", "anthropiccard", "upstreamcard"]) {
+  for (const id of ["anthropiccard", "upstreamcard"]) {
     const card = document.getElementById(id);
     if (card && card.parentNode !== park) park.appendChild(card);
   }
@@ -1588,12 +1515,12 @@ function placeCards() {
   const onModel = VIEW === "models" && PICKED;
   // On a model's page the settings shown are for a route chosen for that
   // model. One left on the default says so and points at Routing: the whole
-  // plan or upstream form under every one of seventy models read as seventy
+  // upstream form under every one of seventy models read as seventy
   // places to change one setting.
   const route = onModel ? (CFG.routing.models[PICKED] || "") : CFG.routing.default;
-  const own = { chatgpt: "chatgpt", anthropic: "anthropic", upstream: "relay" }[VIEW];
+  const own = { anthropic: "anthropic", upstream: "relay" }[VIEW];
   const home = document.getElementById(own ? "cfg-own-" + VIEW : onModel ? "cfg-slot" : "cfg-home");
-  for (const [id, wants] of [["chatgptcard", "chatgpt"], ["anthropiccard", "anthropic"], ["upstreamcard", "relay"]]) {
+  for (const [id, wants] of [["anthropiccard", "anthropic"], ["upstreamcard", "relay"]]) {
     const card = document.getElementById(id);
     // On its own Settings page a connection is always shown; elsewhere only for the route being looked at.
     const shown = !!home && (own ? own === wants : route === wants && (onModel || VIEW === "routing"));
@@ -1603,8 +1530,8 @@ function placeCards() {
 }
 
 function routeOf(m) { return CFG.routing.models[m] || CFG.routing.default; }
-const routeName = (r) => ({ relay: "upstream", chatgpt: "ChatGPT plan", anthropic: "Anthropic API" }[r] || "no upstream");
-const routeTag = (r) => `<span class="tag ${({ relay: "relay", chatgpt: "plan", anthropic: "plan", replay: "replay" })[r] || ""}">${({ relay: "up", chatgpt: "plan", anthropic: "claude", replay: "replay" })[r] || "local"}</span>`;
+const routeName = (r) => ({ relay: "upstream", anthropic: "Anthropic API" }[r] || "no upstream");
+const routeTag = (r) => `<span class="tag ${({ relay: "relay", anthropic: "plan", replay: "replay" })[r] || ""}">${({ relay: "up", anthropic: "claude", replay: "replay" })[r] || "local"}</span>`;
 
 function renderList() {
   const q = (document.getElementById("filter").value || "").toLowerCase();
@@ -1639,7 +1566,6 @@ function renderDetail() {
         <button onclick="setRoute('${esc(m)}','')" aria-pressed="${r === ""}">Default (${esc(routeName(CFG.routing.default))})</button>
         <button onclick="setRoute('${esc(m)}','scripted')" aria-pressed="${r === "scripted"}">No upstream</button>
         <button onclick="setRoute('${esc(m)}','relay')" aria-pressed="${r === "relay"}">Upstream</button>
-        <button onclick="setRoute('${esc(m)}','chatgpt')" aria-pressed="${r === "chatgpt"}">ChatGPT plan</button>
         <button onclick="setRoute('${esc(m)}','anthropic')" aria-pressed="${r === "anthropic"}">Anthropic API</button>
       </div>
       ${r === "" ? `<p class="help" style="margin:12px 0 0">It follows the default route, <b>${esc(routeName(CFG.routing.default))}</b>. <a href="#routing" onclick="show('routing'); return false">That route's settings are on Routing.</a></p>` : ""}
@@ -1675,7 +1601,6 @@ function renderRouting() {
   placeCards();
   document.getElementById("def-scripted").setAttribute("aria-pressed", d === "scripted");
   document.getElementById("def-relay").setAttribute("aria-pressed", d === "relay");
-  document.getElementById("def-chatgpt").setAttribute("aria-pressed", d === "chatgpt");
   document.getElementById("def-anthropic").setAttribute("aria-pressed", d === "anthropic");
   renderAnthropic();
   const held = document.getElementById("held");
@@ -1726,7 +1651,7 @@ async function post(body, flash) {
   if (!r.ok) { if (el) { el.textContent = out.error || "could not save"; el.style.color = "var(--primary)"; } return; }
   CFG = out.config;
   if (el) { el.textContent = "saved"; el.style.color = "var(--green)"; setTimeout(() => (el.textContent = ""), 1800); }
-  renderChrome(); renderList(); renderDetail(); renderRouting(); renderChatGPT();
+  renderChrome(); renderList(); renderDetail(); renderRouting();
 }
 
 const setDefault = (d) => post({ routing: { default: d } });
@@ -3128,7 +3053,7 @@ function variationsGenerate() {
     <div class="frow"><div class="f"><label>Dataset</label><select id="vg-dataset">${REF.datasets.map((d) => `<option>${esc(d)}</option>`).join("")}</select></div>
       <div class="f"><label>Case</label><input type="text" id="vg-item" class="mono" placeholder="the case's id"></div>
       <div class="f"><label>Of each kind</label><input type="number" id="vg-count" class="mono" value="2" min="1" max="10"></div></div>
-    <div style="margin-top:12px; display:flex; gap:9px; align-items:center"><button class="btn ghost" onclick="variationsAsk()">Propose variations</button><span class="fh" style="margin:0">It needs a model that really answers: the ChatGPT plan or an upstream, not the script.</span></div></details>`;
+    <div style="margin-top:12px; display:flex; gap:9px; align-items:center"><button class="btn ghost" onclick="variationsAsk()">Propose variations</button><span class="fh" style="margin:0">It needs a model that really answers: an upstream or Anthropic's API, not the script.</span></div></details>`;
 }
 async function variationsAsk() {
   const r = await REST("POST", "/api/variations/generate", { dataset: document.getElementById("vg-dataset").value, item: document.getElementById("vg-item").value.trim(), count: Number(document.getElementById("vg-count").value) || 2 });
@@ -3639,7 +3564,7 @@ function renderSessions() {
   el("sess-status").innerHTML =
     st.mode === "record" ? `<span class="tag rec">recording</span> to <b>${esc(st.name)}</b> — everything answered from now on is kept`
     : st.mode === "replay" ? `<span class="tag replay">replaying</span> <b>${esc(st.name)}</b> — recorded questions get their recorded answers`
-    : `<span class="tag">idle</span> Name a recording, press Start, then run the session. Every answer that comes back — from the script, a relay or the ChatGPT plan — is kept.`;
+    : `<span class="tag">idle</span> Name a recording, press Start, then run the session. Every answer that comes back — from the script, a relay or a real model — is kept.`;
 
   let live = "";
   if (st.mode === "record") {
@@ -3741,11 +3666,6 @@ function renderChat() {
     text = `<span class="tag replay">replay</span> Replaying <code>${esc(SESS.name)}</code>: a question it recorded gets the recorded answer, whatever this model is routed to.`;
   } else if ((CFG.responses || {})[m]) {
     text = `This model has a fixed answer set on its page, which wins over everything else. ${go}`;
-  } else if (r === "chatgpt") {
-    kind = CG.signedIn ? "ok" : "warn";
-    text = CG.signedIn
-      ? `<span class="tag plan">plan</span> Using ChatGPT plan (<code>${esc(CFG.chatgpt.model || CG.default || "its own default model")}</code>), signed in as ${esc(CG.email || "a ChatGPT account")}. This counts against the plan's usage. <a href="https://chatgpt.com/settings/usage" target="_blank" rel="noopener">Manage usage</a>`
-      : `<span class="tag err">not signed in</span> This model is routed to the ChatGPT plan and will fail until you sign in. ${go}`;
   } else if (r === "anthropic") {
     kind = CFG.anthropic.keySet ? "ok" : "warn";
     text = CFG.anthropic.keySet
@@ -3908,119 +3828,6 @@ async function chatSend() {
 }
 
 function chatClear() { if (CHAT.abort) CHAT.abort.abort(); CHAT.turns = []; renderChat(); }
-
-
-// ── ChatGPT plan ──────────────────────────────────────────────────────────
-const say = (text, bad) => {
-  const el = document.getElementById("cg-msg");
-  el.textContent = text || ""; el.style.color = bad ? "var(--primary)" : "var(--green)";
-};
-
-function renderChatGPT() {
-  if (!CFG || !CFG.chatgpt) return;
-  const plan = CFG.chatgpt, st = CG, live = document.activeElement ? document.activeElement.id : "";
-  placeCards();
-  if (document.getElementById("chatgptcard").parentNode.id === "cfg-park") return;
-  const kept = document.getElementById("cg-kept");
-  kept.hidden = !STATE || STATE.kept;
-  if (!kept.hidden) kept.innerHTML = `This LLMSim keeps the sign-in in <code>${esc(STATE.dir)}</code>, inside its container. A restart signs it out again and forgets keys, routing and rules. Give it a volume there (<code>LLMSIM_DATA</code>) and a sign-in lasts.`;
-  const line = document.getElementById("cg-status");
-  if (st.signedIn) {
-    line.innerHTML = st.planUsage
-      ? `<span class="tag plan">signed in</span> Using ChatGPT plan · ${esc(st.email || "ChatGPT account")}${st.plan ? " · " + esc(st.plan) : ""}`
-      : `<span class="tag err">plan usage off</span> Signed in as ${esc(st.email || "a ChatGPT account")}, but ChatGPT plan usage was not allowed, so nothing is answered with the plan.`;
-  } else if (st.pending) {
-    line.innerHTML = `<span class="tag">waiting</span> for you to confirm access at OpenAI${st.listening ? "" : " — nothing is listening for the redirect"}`;
-  } else if (st.needsSignIn) {
-    line.innerHTML = `<span class="tag err">sign in again</span> ${esc(st.error || "the stored sign-in no longer works")}`;
-  } else {
-    line.innerHTML = `<span class="tag">not signed in</span> — routes point at the plan and will fail until you do`;
-  }
-  document.getElementById("cg-signin").className = (st.signedIn ? "btn ghost" : "btn") + " cg-continue";
-  const logo = document.querySelector("#cg-signin img");
-  if (logo) logo.src = `https://developers.openai.com/assets/siwc/sign-in-buttons/chatgpt-logo-${st.signedIn ? "black" : "white"}.svg`;
-  // Signing in again comes back as the same account. Another one is a separate choice, and only once this one has signed out.
-  document.getElementById("cg-other").hidden = st.signedIn || !st.known;
-  document.getElementById("cg-enable").hidden = !(st.signedIn && !st.planUsage);
-  document.getElementById("cg-usage").hidden = !st.signedIn;
-  document.getElementById("cg-signout").hidden = !(st.signedIn || st.needsSignIn);
-  document.getElementById("cg-welcome").hidden = !(st.signedIn && st.planUsage && !st.welcomed);
-  document.getElementById("cg-paste").hidden = !(st.pending && !st.listening);
-  const link = document.getElementById("cg-link");
-  link.hidden = !(st.pending && CG_URL);
-  if (CG_URL) link.href = CG_URL;
-  if (!st.pending) CG_URL = null;
-  if (st.error && !st.needsSignIn && !st.signedIn) say(st.error, true);
-  if (st.signedIn && !CG_LISTED) { CG_LISTED = true; chatgptModels(); }
-  if (!st.signedIn) CG_LISTED = false;
-  if (live !== "cg-model") {
-    const box = document.getElementById("cg-model");
-    box.value = plan.model || "";
-    // Blank is a choice, and the plan's pick is shown rather than hidden behind it.
-    box.placeholder = st.default ? "auto — currently " + st.default : "the plan's own default";
-  }
-  if (live !== "cg-instr") document.getElementById("cg-instr").value = plan.instructions || "";
-  if (live !== "cg-fallback") document.getElementById("cg-fallback").checked = !!plan.fallback;
-}
-
-async function chatgptCall(path, body) {
-  const r = await fetch(api("/api/ui/chatgpt/" + path), {
-    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body || {}),
-  });
-  return { ok: r.ok, body: await r.json().catch(() => ({})) };
-}
-
-async function chatgptWelcomed() {
-  document.getElementById("cg-welcome").hidden = true;
-  CG.welcomed = true;
-  await chatgptCall("welcomed");
-}
-
-async function chatgptSignIn(how) {
-  say("");
-  // Opened now, on the click, and pointed at OpenAI afterwards: a window opened
-  // after an await is not the result of a click as far as the browser can
-  // tell, and is blocked.
-  const win = window.open("about:blank", "_blank");
-  const { ok, body } = await chatgptCall("login", how);
-  if (!ok) { if (win) win.close(); return say(body.error || "could not start the sign-in", true); }
-  CG_URL = body.url;
-  if (win) { win.opener = null; win.location = body.url; }
-  say(win ? "" : "The browser blocked the new tab. Use the link below.");
-  load();
-}
-
-async function chatgptPaste() {
-  const { ok, body } = await chatgptCall("complete", { redirect: document.getElementById("cg-redirect").value });
-  say(body.message || (ok ? "signed in" : "could not finish"), !ok);
-  if (ok) document.getElementById("cg-redirect").value = "";
-  load();
-}
-
-async function chatgptSignOut() {
-  const { body } = await chatgptCall("logout");
-  say(body.revoked ? "Signed out, and OpenAI was told to revoke the grant."
-    : "Signed out here. OpenAI could not be reached to revoke the grant; it can be removed in ChatGPT's settings.");
-  load();
-}
-
-async function chatgptModels() {
-  try {
-    const r = await fetch(api("/api/ui/chatgpt/models"));
-    const out = await r.json();
-    if (!r.ok) return;
-    document.getElementById("cg-models").innerHTML = (out.models || []).map((m) => `<option value="${esc(m)}">`).join("");
-    if (out.default) CG.default = out.default;
-  } catch { /* the list is a convenience; the field still takes a typed name */ }
-}
-
-const saveChatGPT = () => post({
-  chatgpt: {
-    model: document.getElementById("cg-model").value.trim(),
-    instructions: document.getElementById("cg-instr").value.trim(),
-    fallback: document.getElementById("cg-fallback").checked,
-  },
-}, "cg-saved");
 
 
 // ── Test Execution ────────────────────────────────────────────────────────

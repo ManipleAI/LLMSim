@@ -483,7 +483,7 @@ SCENARIOS = [
         ["are you awake?"], [answer(regex="(?i)here|could not|stopped|^$")], tags=["model", "model-faults"],
         model={"faults": [{"name": "empty-once", "fault": {"type": "empty"}, "limit": 1}]}),
 
-    scn("cap-model-cassette-record", "Recording: a real model (ChatGPT) answers, and every answer is kept",
+    scn("cap-model-cassette-record", "Recording: a real model answers, and every answer is kept",
         {"use": "langgraph-local", "name": "langgraph"}, None,
         ["In one short sentence, what is a haiku?"], [answer(regex="(?i)poe|syllable|three lines")], tags=["model", "record", "real-model"],
         model={"cassette": "lg-haiku", "mode": "record"}),

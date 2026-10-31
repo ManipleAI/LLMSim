@@ -56,7 +56,7 @@ def validate(spec):
 def denied_files():
     host = core.host
     paths = [credentials.path(), store().path, store().path + "-wal", store().path + "-shm"]
-    for attr in ("CONFIG_PATH", "CHATGPT_AUTH_PATH", "RULES_PATH", "SUITE_PATH"):
+    for attr in ("CONFIG_PATH", "RULES_PATH", "SUITE_PATH"):
         if getattr(host, attr, None):
             paths.append(getattr(host, attr))
     return paths

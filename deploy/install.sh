@@ -5,15 +5,15 @@
 #
 # On k3d rather than k3s: K3D_CLUSTER=<name> NAMESPACE=... ./deploy/install.sh
 #
-# What LLMSim writes for itself (the ChatGPT sign-in, keys, routing, your rules,
+# What LLMSim writes for itself (keys, routing, your rules,
 # runs) lives on the volume llmsim-data, so installing again, a new image or a
 # restarted pod keeps it. An LLMSim installed before that volume existed kept
 # all of it inside its container; this carries it over once, so nobody has to
-# sign in again.
+# set it up again.
 set -euo pipefail
 NS=${NAMESPACE:-default}
 HERE=$(cd "$(dirname "$0")/.." && pwd)
-STATE='llmsim.config.json llmsim.chatgpt-auth.json llmsim.credentials.json llmsim.rules.json llmsim.assertions.json llmsim.tests.json llmsim.runs.db llmsim.runs.db-wal cassettes evaluators'
+STATE='llmsim.config.json llmsim.credentials.json llmsim.rules.json llmsim.assertions.json llmsim.tests.json llmsim.runs.db llmsim.runs.db-wal cassettes evaluators'
 
 docker build -q -t llmsim:dev "$HERE"
 if command -v k3s >/dev/null 2>&1; then
@@ -74,7 +74,7 @@ spec:
       persistentVolumeClaim: { claimName: llmsim-data }
 YAML
   kubectl -n "$NS" wait --for=condition=Ready pod/llmsim-seed --timeout=3m >/dev/null
-  if kubectl -n "$NS" exec llmsim-seed -- sh -c 'cd /data && ls llmsim.config.json llmsim.chatgpt-auth.json llmsim.credentials.json llmsim.rules.json llmsim.assertions.json >/dev/null 2>&1'; then
+  if kubectl -n "$NS" exec llmsim-seed -- sh -c 'cd /data && ls llmsim.config.json llmsim.credentials.json llmsim.rules.json llmsim.assertions.json >/dev/null 2>&1'; then
     echo "the volume already holds LLMSim's state; the container's copy is not used"
   else
     kubectl -n "$NS" exec -i llmsim-seed -- sh -c 'cd /data && rm -f llmsim.runs.db llmsim.runs.db-wal llmsim.runs.db-shm && umask 077 && tar xf -' < "$CARRY"

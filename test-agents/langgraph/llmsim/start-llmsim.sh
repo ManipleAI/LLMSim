@@ -24,12 +24,7 @@ if [ -f .env ]; then                                            # a real model f
     "$upstream" "$MODEL_API_KEY" "${MODEL_NAME:-gpt-5-nano}" > "$envfile"
 fi
 docker rm -f llmsim-agents >/dev/null 2>&1 || true
-# The ChatGPT sign-in sends the browser back to 127.0.0.1:<port>/auth/callback on this Mac. 1455 is
-# often taken (Codex, or an ssh tunnel to another LLMSim), so this one listens on 1457, the other
-# port the sign-in allows, published from the container.
-SIGNIN_PORT="${LLMSIM_AGENTS_SIGNIN_PORT:-1457}"
-docker run -d --name llmsim-agents --restart unless-stopped -p "127.0.0.1:$PORT:8099" -p "127.0.0.1:$SIGNIN_PORT:$SIGNIN_PORT" \
-  -e LLMSIM_CHATGPT_PORTS="$SIGNIN_PORT" -e LLMSIM_CHATGPT_BIND=0.0.0.0 -v llmsim-agents-data:/data \
+docker run -d --name llmsim-agents --restart unless-stopped -p "127.0.0.1:$PORT:8099" -v llmsim-agents-data:/data \
   -v "$PWD/llmsim/kit:/kit:ro" -e LLMSIM_EVALUATORS=/kit/evaluators -e LLMSIM_ALLOW_PROCESS=1 \
   --env-file "$envfile" --add-host host.docker.internal:host-gateway llmsim:test-agents >/dev/null
 for _ in $(seq 1 30); do curl -fsS -o /dev/null -m 2 "http://127.0.0.1:$PORT/healthz" && break; sleep 1; done

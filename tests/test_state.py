@@ -3,10 +3,9 @@
 
     python3 tests/test_state.py
 
-Signing in to a ChatGPT plan, saving an Anthropic key, routing a model, writing a rule: each
-is something a person did once and expects to stay done. In a container all of it used to
-live beside the code, inside the image's filesystem, so every restart and every new image
-started from nothing and the first anybody heard of it was the sign-in screen again.
+Saving an Anthropic key, routing a model, writing a rule: each is something a person did once
+and expects to stay done. In a container all of it used to live beside the code, inside the
+image's filesystem, so every restart and every new image started from nothing.
 
 LLMSIM_DATA names the one directory LLMSim writes to. These cases start LLMSim with nothing
 but that, restart it, and check everything comes back; check that a file's own variable
@@ -27,7 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from kit import Sim, run_cases  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PER_FILE = ("LLMSIM_CONFIG", "LLMSIM_SUITE", "LLMSIM_CASSETTES", "LLMSIM_CHATGPT_AUTH", "LLMSIM_RULES",
+PER_FILE = ("LLMSIM_CONFIG", "LLMSIM_SUITE", "LLMSIM_CASSETTES", "LLMSIM_RULES",
             "LLMSIM_ASSERTIONS", "LLMSIM_RUNS_DB", "LLMSIM_CREDENTIALS", "LLMSIM_EVALUATORS", "LLMSIM_DATA",
             "KUBERNETES_SERVICE_HOST")
 ANTHROPIC_KEY = "sk-ant-api03-state-test-0000000000000000"
@@ -36,10 +35,6 @@ RULE = {"name": "kept-rule", "when": {"contains": "is my rule still here"}, "tur
 
 def b64(raw):
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
-
-
-def jwt(claims):
-    return ".".join([b64(b'{"alg":"none"}'), b64(json.dumps(claims).encode()), "sig"])
 
 
 def sim_on(data, **env):
@@ -53,30 +48,16 @@ def sim_on(data, **env):
     return sim
 
 
-def plant_sign_in(data):
-    """What a finished ChatGPT sign-in leaves on disk. Nobody signs in during a test."""
-    os.makedirs(data, exist_ok=True)
-    claims = {"exp": int(time.time()) + 3600}
-    auth = {"access_token": jwt(claims), "refresh_token": "refresh-state", "id_token": "", "client_id": "oaiapp_state",
-            "ext_agent_host_id": "urn:uuid:state", "subject": "user-state", "scopes": "openid chatgpt.tokens.use.direct",
-            "email": "plan@example.test", "plan": "plus", "expires_at": time.time() + 3600, "saved_at": time.time()}
-    fd = os.open(os.path.join(data, "llmsim.chatgpt-auth.json"), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as fh:
-        json.dump(auth, fh)
-
-
 def case_everything_a_person_set_comes_back_after_a_restart(_sim):
     with tempfile.TemporaryDirectory() as tmp:
         data = os.path.join(tmp, "nested", "data")          # not there yet: LLMSim makes it
-        plant_sign_in(data)
         sim = sim_on(data).start()
         try:
             health = sim.api("GET", "/healthz")[1]
             assert health["state"] == {"dir": data, "kept": True}, health["state"]
-            assert health["chatgpt"]["signedIn"] is True, health["chatgpt"]
             # what a person does in the console, and through the API
             status, out = sim.api("POST", "/api/ui/config", {
-                "routing": {"default": "chatgpt", "models": {"grok-4.5": "scripted"}},
+                "routing": {"default": "anthropic", "models": {"grok-4.5": "scripted"}},
                 "anthropic": {"key": ANTHROPIC_KEY, "auth": "api_key"}})
             assert status == 200, out
             assert sim.api("POST", "/api/rules", {"rule": RULE})[0] == 200
@@ -89,20 +70,19 @@ def case_everything_a_person_set_comes_back_after_a_restart(_sim):
             sim.restart()
 
             health = sim.api("GET", "/healthz")[1]
-            assert health["chatgpt"]["signedIn"] is True, "the ChatGPT sign-in did not survive a restart"
             assert health["anthropic"]["keySet"] is True, "the Anthropic key did not survive a restart"
-            assert health["mode"] == "chatgpt" and "kept-rule" in health["rules"], health
+            assert health["mode"] == "anthropic" and "kept-rule" in health["rules"], health
             routing = sim.api("GET", "/api/routing")[1]
-            assert (routing["default"], routing["models"]) == ("chatgpt", {"grok-4.5": "scripted"}), routing
+            assert (routing["default"], routing["models"]) == ("anthropic", {"grok-4.5": "scripted"}), routing
             assert [c["label"] for c in sim.api("GET", "/api/credentials")[1]["credentials"]] == ["agent-token"]
             assert sim.api("GET", "/api/agents/kept-agent")[0] == 200, "a saved agent did not survive a restart"
         finally:
             sim.stop()
         kept = sorted(os.listdir(data))
-        for name in ("llmsim.config.json", "llmsim.chatgpt-auth.json", "llmsim.rules.json", "llmsim.credentials.json", "llmsim.runs.db"):
+        for name in ("llmsim.config.json", "llmsim.rules.json", "llmsim.credentials.json", "llmsim.runs.db"):
             assert name in kept, (name, kept)
         # the files with keys in them are the owner's alone, wherever they are kept
-        for name in ("llmsim.chatgpt-auth.json", "llmsim.credentials.json"):
+        for name in ("llmsim.credentials.json",):
             mode = stat.S_IMODE(os.stat(os.path.join(data, name)).st_mode)
             assert mode == 0o600, (name, oct(mode))
 
@@ -112,7 +92,7 @@ def case_nothing_is_written_beside_the_code_when_a_data_directory_is_named(_sim)
     with tempfile.TemporaryDirectory() as data:
         sim = sim_on(data).start()
         try:
-            sim.api("POST", "/api/ui/config", {"routing": {"default": "scripted", "models": {"gpt-5": "chatgpt"}}})
+            sim.api("POST", "/api/ui/config", {"routing": {"default": "scripted", "models": {"gpt-5": "anthropic"}}})
             sim.api("POST", "/api/rules", {"rule": RULE})
             assert sim.api("POST", "/api/sessions/record", {"name": "state-test"})[0] == 200
             sim.chat("is my rule still here")
@@ -129,11 +109,11 @@ def case_a_files_own_variable_still_wins(_sim):
         data, elsewhere = os.path.join(tmp, "data"), os.path.join(tmp, "config-here.json")
         sim = sim_on(data, LLMSIM_CONFIG=elsewhere).start()
         try:
-            sim.api("POST", "/api/ui/config", {"routing": {"default": "chatgpt", "models": {}}})
+            sim.api("POST", "/api/ui/config", {"routing": {"default": "anthropic", "models": {}}})
             sim.api("POST", "/api/rules", {"rule": RULE})
         finally:
             sim.stop()
-        assert json.load(open(elsewhere))["routing"]["default"] == "chatgpt"
+        assert json.load(open(elsewhere))["routing"]["default"] == "anthropic"
         assert "llmsim.config.json" not in os.listdir(data) and "llmsim.rules.json" in os.listdir(data)
 
 
@@ -155,7 +135,7 @@ def case_a_container_with_no_volume_says_it_will_forget(_sim):
             sim.stop()
         assert "is inside this container" in proc.stderr.read().decode(), "the log does not say it"
         page = open(os.path.join(ROOT, "ui.html")).read()
-        assert 'id="cg-kept"' in page and "STATE = s.state || null" in page, "the console does not say it"
+        assert "!STATE.kept" in page and "STATE = s.state || null" in page, "the console does not say it"
         assert 'k: "Settings kept"' in page
 
 
@@ -179,7 +159,7 @@ def case_the_image_compose_file_and_cluster_put_it_on_a_volume(_sim):
     # person makes, since any first start writes a run database and the sample suite by itself
     seed = install.index("name: llmsim-seed"); start = install.index('apply -f "$HERE/deploy/k8s.yaml"')
     assert seed < start, "the volume is seeded after the new LLMSim has started"
-    assert "ls llmsim.config.json llmsim.chatgpt-auth.json llmsim.credentials.json llmsim.rules.json llmsim.assertions.json" in install
+    assert "ls llmsim.config.json llmsim.credentials.json llmsim.rules.json llmsim.assertions.json" in install
 
 
 if __name__ == "__main__":

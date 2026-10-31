@@ -39,8 +39,8 @@ spec:
           env:
             - { name: LLMSIM_PORT, value: "8099" }
             - { name: LLMSIM_SCRIPT, value: /script/responses.json }
-            # The ChatGPT sign-in, keys, routing, rules and runs: on the
-            # volume, so a restart or a new image does not sign it out.
+            # Keys, routing, rules and runs: on the volume, so a restart
+            # or a new image keeps them.
             - { name: LLMSIM_DATA, value: /data }
           ports:
             - { name: http, containerPort: 8099 }

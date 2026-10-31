@@ -39,10 +39,10 @@ cp .env.llmsim.example .env.llmsim && ./run.sh .env.llmsim          # the team, 
 
 That LLMSim is apart from any other on purpose: these tests save agents, stubs, mocks and faults,
 and hold the route while they run. Its state is on the Docker volume `llmsim-agents-data`, so a
-rebuild keeps its scenarios, results and any ChatGPT sign-in. `llmsim/kit/` is mounted into it:
+rebuild keeps its scenarios and results. `llmsim/kit/` is mounted into it:
 the code checks (`evaluators/`) and the program the process driver runs (`bin/ask-agent.py`).
 
-For the tests that want a real model, give that LLMSim an upstream or sign it in to ChatGPT. The
+For the tests that want a real model, give that LLMSim an upstream or an Anthropic key. The
 launcher sets its upstream from `.env` when there is one (copy `.env.example`: an Azure AI
 Foundry endpoint and key). `./run.sh` alone runs the assistant on that real model, on :8770, to
 chat with.
@@ -86,7 +86,6 @@ with a real model writing the answer, a real model end to end, an injection and 
 | Port | What |
 |---|---|
 | 18110 | This folder's LLMSim (`llmsim/start-llmsim.sh`) |
-| 1457 | Its ChatGPT sign-in callback |
 | 8770 | The assistant on its real model (`./run.sh`) |
 | 8771 | The team, on LLMSim (`./run.sh .env.llmsim`) |
 | 8772 | The assistant on its real model, reporting spans to LLMSim (`./run.sh .env.otel`, from `.env.otel.example`) |

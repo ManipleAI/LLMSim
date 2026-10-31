@@ -8,7 +8,7 @@ COPY testkit ./testkit
 COPY docs/guide.html ./docs/guide.html
 
 ENV LLMSIM_PORT=8099
-# What LLMSim writes for itself (the ChatGPT sign-in, keys, routing, your
+# What LLMSim writes for itself (keys, routing, your
 # rules, runs) goes here, and only here. Mount a volume on it and a new
 # container picks up where the old one stopped; without one, Docker still gives
 # it an anonymous volume, so a restart of the same container keeps it too.

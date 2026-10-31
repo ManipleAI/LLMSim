@@ -1,4 +1,4 @@
-# Where LLMSim keeps what it writes: the ChatGPT sign-in, keys, routing, your
+# Where LLMSim keeps what it writes: keys, routing, your
 # rules, the suite, runs and recordings. Kept apart from deploy/k8s.yaml on
 # purpose. That file is applied on every install; this one is created once and
 # then left alone, since a claim cannot be changed in place and deleting it

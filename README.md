@@ -51,7 +51,7 @@ Nothing leaves your machine unless you route it to a real model on purpose.
   tool calls that are not JSON, unknown tools, huge bodies. Each one is seeded, so a failing
   run fails the same way again.
 - **Record once, replay for free.** Send a run to a real model (Anthropic's API, any
-  OpenAI-compatible upstream, or a ChatGPT plan), record it, and replay it offline.
+  OpenAI-compatible upstream), record it, and replay it offline.
 - **Every request kept.** See what was sent, which rule answered it, and which credential
   arrived, then make assertions about it, such as "no card number reaches the model".
 - **Stand-ins for the agent's world.** Mock MCP tool servers, mock REST backends (including
@@ -174,16 +174,7 @@ curl -X POST localhost:8099/api/sessions/replay -d '{"name": "login-flow"}'
 ```
 
 You choose where answers come from under **Settings**, for all models or one model at a
-time: your rules, an OpenAI- or Anthropic-compatible upstream, Anthropic's API, or a ChatGPT
-plan.
-
-**Using a ChatGPT plan.** Press **Continue with ChatGPT** and sign in with your own account:
-requests count against your plan's usage, not API billing. It uses OpenAI's own
-[Sign in with ChatGPT](https://openai.com/policies/sign-in-with-chatgpt-terms/), under
-LLMSim's own name. Use it for yourself, on your own machine: what you do with your plan is
-your responsibility and OpenAI's terms apply, including that nobody else's requests may reach
-it. LLMSim ships with nobody's credentials, and it is independent open-source software, not
-affiliated with or endorsed by OpenAI.
+time: your rules, an OpenAI- or Anthropic-compatible upstream, or Anthropic's API.
 
 ## Test an agent
 
@@ -311,7 +302,7 @@ NAMESPACE=llmsim ./deploy/install.sh
 
 ### Where it keeps things
 
-Your rules, runs, saved keys, routing and any sign-in are kept in one directory: beside
+Your rules, runs, saved keys and routing are kept in one directory: beside
 `server.py`, or wherever `LLMSIM_DATA` points. The Docker image, `compose.yml` and
 `deploy/install.sh` put it on a volume, so a restart or a new image keeps it.
 
@@ -357,7 +348,7 @@ LLMSIM_ADMIN_PASSWORD='choose one' LLMSIM_API_KEY='llmsim-…' python3 server.py
   `LLMSIM_API_KEY`.
 - **What an agent calls stays open**, because an agent under test cannot sign in: the
   vendors' routes, which take their own keys, and the test kit's stand-ins. If LLMSim
-  answers with a real model (a saved Anthropic key, an upstream or a ChatGPT plan), also set
+  answers with a real model (a saved Anthropic key or an upstream), also set
   `LLMSIM_OPENAI_KEY`, `LLMSIM_ANTHROPIC_KEY` and `LLMSIM_DEEPSEEK_KEY` to keys of your own.
 
 Even with it on, put LLMSim behind HTTPS before you expose it beyond a network you trust.

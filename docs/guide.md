@@ -106,7 +106,6 @@ Every request takes one **route**. The default applies to every model, and one m
 |---|---|---|
 | Scripted | A rule you wrote, or a shipped one | Nothing. Nothing leaves the machine. |
 | Upstream (relay) | One real model behind an API key | That model's price |
-| ChatGPT plan | A ChatGPT subscription you sign in to | The plan's usage |
 | Anthropic API | A real Claude model, by API key | That model's price, billed to the key |
 | Replay | A recording of an earlier run | Nothing |
 
@@ -171,7 +170,7 @@ One page at `/ui`, in three spaces, by what you came to do. Every page has an ad
 | Page | What it is for |
 |---|---|
 | **Where answers come from** | The default route, the models set differently, a hold, and how strictly the vendors are imitated |
-| **ChatGPT plan**, **Anthropic API**, **Upstream** | Each real model LLMSim can answer with, set up on its own page |
+| **Anthropic API**, **Upstream** | Each real model LLMSim can answer with, set up on its own page |
 | **Connect a client** | Each vendor's address and key, and how a test keeps its requests apart |
 | **Capture and identity** | What is kept of each request, redaction, how callers are told apart, and who may send requests |
 | **Credentials** | What the test kit signs in to agents with |
@@ -237,7 +236,7 @@ To make a single model answer the same thing every time, or fail, set it on that
 
 ### When the default route is a real model
 
-A rule answers on the scripted route. If this LLMSim's default route is a ChatGPT plan, an upstream or the Anthropic API, a test's rule never fires: the request goes to the real model. A test that needs the script does not change the setting. It **holds** the default route for as long as it needs, and releases it:
+A rule answers on the scripted route. If this LLMSim's default route is an upstream or the Anthropic API, a test's rule never fires: the request goes to the real model. A test that needs the script does not change the setting. It **holds** the default route for as long as it needs, and releases it:
 
 ```bash
 curl -X POST localhost:8099/api/routing/hold -d '{"default": "scripted", "seconds": 600, "by": "my test suite"}'
@@ -383,7 +382,6 @@ curl -X POST localhost:8099/api/sessions/stop   -d '{"run": "r1"}'     # hits, m
 | Route | Answers come from | Set it up |
 |---|---|---|
 | Upstream | One model behind an API key | Routing → Upstream: URL, model and key |
-| ChatGPT plan | Your ChatGPT subscription | Settings → ChatGPT plan → Continue with ChatGPT |
 | Anthropic API | A real Claude model | Routing → Anthropic API: key and model |
 
 The usual pattern: record a session through a real model once, then replay it for every later test run.
@@ -407,24 +405,6 @@ LLMSIM_ANTHROPIC_UPSTREAM_KEY=sk-ant-… LLMSIM_ANTHROPIC_UPSTREAM_MODEL=claude-
 The client's `temperature` or `top_p`, stop sequences, tools and tool choice are passed on. `response_format`, `reasoning_effort`, `seed` and the penalties are not, and the log says so when one is dropped.
 
 > **It takes a key, not a Claude sign-in.** Anthropic does not permit a tool to offer Claude sign-in or to route requests through Free, Pro or Max plan credentials, so a subscription cannot be used on this route. Use an API key from the Claude Console or from a cloud provider.
-
-### ChatGPT plan
-
-Answer with your own ChatGPT subscription instead of an API key. Requests count against your plan's usage, not API billing, and when the plan's limit is reached they stop: nothing moves to another way of paying. OpenAI describes this for Plus and Pro plans.
-
-**Your own account, for your own use, on your own machine.** Each person signs in with their own ChatGPT. LLMSim ships with nobody's credentials, and what you do with your plan is your responsibility. [OpenAI's Sign in with ChatGPT terms](https://openai.com/policies/sign-in-with-chatgpt-terms/) apply, including that nobody else's requests may reach your plan. LLMSim is independent open-source software, not affiliated with or endorsed by OpenAI.
-
-**Signing in.** Press **Continue with ChatGPT** under Settings → ChatGPT plan. It is OpenAI's own Sign in with ChatGPT: LLMSim registers under its own name, you approve it on OpenAI's page, and OpenAI issues a client id for your account that LLMSim keeps. Signing in again comes back as the same account. To change account, sign out and choose **Use another account**. If you did not allow plan usage, **Enable ChatGPT plan usage** asks again.
-
-The redirect lands on `127.0.0.1:1455` on the machine LLMSim runs on. On your own machine that just works. When LLMSim runs somewhere else, the console asks you to paste the address your browser ended up on instead.
-
-**What the route can do.** OpenAI's route takes streamed requests with nothing stored, so a client that asks for a whole answer gets the stream collected for it. `temperature`, `top_p`, `max_tokens` and `stop` are not sent. Function tools work. Image generation, file search and code interpreter are not available on this route, and audio input is not accepted.
-
-**If you signed in with an earlier LLMSim:** that sign-in was made as the Codex client and is no longer used. The console says to sign in again, and doing so replaces it. To remove the old grant at OpenAI, disconnect it in ChatGPT settings.
-
-> **Once you sign in, LLMSim holds a real subscription.** It listens on every network interface, and the vendors' routes take keys that are published, so anyone who can reach the port can spend the plan. Keep it on your own machine. [Require a sign-in](#require-a-sign-in) and set vendor keys of your own if the port can be reached from anywhere else.
-
-The sign-in is kept in `llmsim.chatgpt-auth.json` beside the server, readable only by its owner. **Sign out** revokes it at OpenAI and removes the tokens. A container with no volume loses it on restart and goes back to scripted answers.
 
 ## Model checks
 
@@ -604,7 +584,7 @@ An agent built with LangGraph, LangChain or a framework like them calls its mode
 
 `claim` is a condition, in the language rules use. While the run lasts, a model call that names no run and satisfies it is the run's. One run claims at a time. On a shared LLMSim the condition is what keeps other people's calls out of your test.
 
-**The script answers what it covers.** A run's own rules answer its requests whatever the default route is. What they do not cover goes where Routing says, so a scenario can script the steps that matter and let a real model write the rest. `"unmatched": "refuse"` refuses those requests instead, so a simulated run can never quietly reach a real model. Every result says what answered, as `model.answered`, `{"routes": {"scripted": 2, "chatgpt": 1}, "by": "the script and a real model"}`, and warns when a simulated run was answered by a real one.
+**The script answers what it covers.** A run's own rules answer its requests whatever the default route is. What they do not cover goes where Routing says, so a scenario can script the steps that matter and let a real model write the rest. `"unmatched": "refuse"` refuses those requests instead, so a simulated run can never quietly reach a real model. Every result says what answered, as `model.answered`, `{"routes": {"scripted": 2, "anthropic": 1}, "by": "the script and a real model"}`, and warns when a simulated run was answered by a real one.
 
 **Its own tools are seen.** A tool that runs inside the agent is seen when its result comes back to the model: LLMSim puts it on the timeline once, after the model call that asked for it, with what it returned. `path` with `"source": "agent"` judges those calls. `"source": "tools"` is still only what LLMSim's own mocks received, a separate layer: an agent's `fetch_url` that reaches a mock backend is one call of each.
 
@@ -847,7 +827,7 @@ These are what a client calls. Prefix any of them with `/run/<run>` or `/run/<ru
 | Method and path | Does |
 |---|---|
 | `GET /api/routing` | `default` and `models` as they are kept, `effective` (the default route in force now), `routes`, and the `hold` if there is one |
-| `PUT /api/routing` | Change what is kept. Body `{default?, models?}`; a route is `scripted`, `relay`, `chatgpt` or `anthropic`. |
+| `PUT /api/routing` | Change what is kept. Body `{default?, models?}`; a route is `scripted`, `relay` or `anthropic`. |
 | `POST /api/routing/hold` | Hold the default route for a while without changing what is kept. Body `{default, by, seconds?, everyModel?}`; `seconds` is 1 to 3600 and 300 if left out. Answers `409` if someone else holds it. |
 | `DELETE /api/routing/hold/<id>` | Release that hold. Releasing one that already ended is not an error. |
 | `DELETE /api/routing/hold` | Release whatever hold is in force |
@@ -985,7 +965,7 @@ The mocks themselves are served under a run: `/run/<run>/agent/<name>/mcp/<id>`,
 
 ### The console's own routes
 
-The console uses a few routes of its own under `/api/ui/`: the state it polls, saving the routing, running the functional tests, the chat box, and the ChatGPT sign-in. They follow the console and can change with it. A script should use the routes above.
+The console uses a few routes of its own under `/api/ui/`: the state it polls, saving the routing, running the functional tests and the chat box. They follow the console and can change with it. A script should use the routes above.
 
 ## Configuration
 
@@ -995,7 +975,7 @@ Set these in the environment before starting `server.py`.
 |---|---|---|
 | `LLMSIM_PORT` | `8099` | The port |
 | `LLMSIM_SCRIPT` | `responses.json` | The shipped rules |
-| `LLMSIM_DATA` | Beside `server.py` | The one directory everything below is kept in, unless its own variable names another place: the ChatGPT sign-in, keys, routing, your rules, the suite, runs, credentials and recordings |
+| `LLMSIM_DATA` | Beside `server.py` | The one directory everything below is kept in, unless its own variable names another place: keys, routing, your rules, the suite, runs, credentials and recordings |
 | `LLMSIM_RULES` | `llmsim.rules.json` | Your rules |
 | `LLMSIM_CONFIG` | `llmsim.config.json` | Routing, fixed answers and settings, as the console saves them |
 | `LLMSIM_SUITE` | `llmsim.tests.json` | The functional test cases |
@@ -1007,9 +987,6 @@ Set these in the environment before starting `server.py`.
 | `LLMSIM_UPSTREAM_FALLBACK` | off | Answer here when the upstream cannot be reached |
 | `LLMSIM_ANTHROPIC_UPSTREAM_KEY`, `LLMSIM_ANTHROPIC_UPSTREAM_MODEL` | none | The key and model the Anthropic API route uses |
 | `LLMSIM_ANTHROPIC_UPSTREAM`, `LLMSIM_ANTHROPIC_UPSTREAM_AUTH` | Anthropic's API, `api_key` | Its base URL, and `bearer` for a gateway's token |
-| `LLMSIM_CHATGPT_AUTH` | `llmsim.chatgpt-auth.json` | Where the ChatGPT sign-in is kept |
-| `LLMSIM_CHATGPT_PORTS`, `LLMSIM_CHATGPT_BIND` | `1455,1457`, `127.0.0.1` | Where the sign-in's redirect is listened for. In a container: `LLMSIM_CHATGPT_BIND=0.0.0.0` and the port published, `-p 127.0.0.1:1457:1457` |
-| `LLMSIM_CHATGPT_MODEL` | The plan's own choice | The plan model to use |
 | `LLMSIM_RUNS_DB` | `llmsim.runs.db` | Where the test kit keeps runs |
 | `LLMSIM_CREDENTIALS` | `llmsim.credentials.json` | Where the test kit keeps credentials |
 | `LLMSIM_EVALUATORS` | `evaluators/` | Where code evaluators are read from |
@@ -1018,25 +995,25 @@ Set these in the environment before starting `server.py`.
 
 ### What to commit
 
-Commit `llmsim.rules.json`, `llmsim.tests.json`, `llmsim.assertions.json` and the recordings you rely on. Never commit `llmsim.config.json`, `llmsim.chatgpt-auth.json`, `llmsim.credentials.json` or `llmsim.runs.db`: they hold an upstream or Anthropic key, a sign-in, credentials and what runs said.
+Commit `llmsim.rules.json`, `llmsim.tests.json`, `llmsim.assertions.json` and the recordings you rely on. Never commit `llmsim.config.json`, `llmsim.credentials.json` or `llmsim.runs.db`: they hold an upstream or Anthropic key, a sign-in, credentials and what runs said.
 
 ### In a container
 
-Everything LLMSim writes for itself goes in one directory, `LLMSIM_DATA`: the ChatGPT sign-in, the Anthropic and upstream keys, routing, your rules, the suite, runs, credentials and recordings. Beside `server.py` by default, so a checkout keeps all of it where it always has. A file's own variable, such as `LLMSIM_CONFIG`, still wins over the directory.
+Everything LLMSim writes for itself goes in one directory, `LLMSIM_DATA`: the Anthropic and upstream keys, routing, your rules, the suite, runs, credentials and recordings. Beside `server.py` by default, so a checkout keeps all of it where it always has. A file's own variable, such as `LLMSIM_CONFIG`, still wins over the directory.
 
-In a container that directory is `/data`, and it needs a volume, or a restart signs out of the ChatGPT plan and forgets the rest. Every way LLMSim ships gives it one:
+In a container that directory is `/data`, and it needs a volume, or a restart forgets all of it. Every way LLMSim ships gives it one:
 
 - `Dockerfile` sets `LLMSIM_DATA=/data` and declares it a volume. `docker run -v llmsim-data:/data …` keeps it across new containers.
 - `compose.yml` mounts the named volume `llmsim-data`, so `docker compose down` and `up` keep it.
-- `deploy/install.sh` installs LLMSim in a Kubernetes namespace as `http://llmsim.<namespace>.svc:8099`, with its state on the claim `llmsim-data` (`deploy/k8s-data.yaml`). The claim is created once and never re-applied, and the deployment is `Recreate`, so one LLMSim at a time writes to it. An LLMSim installed before the claim existed held everything inside its container: the installer copies that onto the claim once, unless the claim already holds state, so nobody has to sign in again.
+- `deploy/install.sh` installs LLMSim in a Kubernetes namespace as `http://llmsim.<namespace>.svc:8099`, with its state on the claim `llmsim-data` (`deploy/k8s-data.yaml`). The claim is created once and never re-applied, and the deployment is `Recreate`, so one LLMSim at a time writes to it. An LLMSim installed before the claim existed held everything inside its container: the installer copies that onto the claim once, unless the claim already holds state, so nobody has to set it up again.
 
-If LLMSim runs in a container whose directory is not a volume, it says so: in its log when it starts, in `/healthz` (`"state": {"dir": "/data", "kept": false}`), and on the console's overview and ChatGPT plan card.
+If LLMSim runs in a container whose directory is not a volume, it says so: in its log when it starts, in `/healthz` (`"state": {"dir": "/data", "kept": false}`), and on the console's overview.
 
 The sign-in is read when LLMSim starts. Copying a sign-in file into a running LLMSim does nothing until it restarts.
 
 ## Limits
 
-- Unless a sign-in is required, anyone who can reach the port can use everything here, and can spend a signed-in ChatGPT plan or a saved Anthropic key. Even with one, the vendors' routes take their own keys, which are published unless you set your own. There is one console user.
+- Unless a sign-in is required, anyone who can reach the port can use everything here, and can spend a saved Anthropic key. Even with one, the vendors' routes take their own keys, which are published unless you set your own. There is one console user.
 - Captured requests are held in memory only.
 - An assertion that passes over a request too large to keep whole says so in `warnings`.
 - A streamed answer from a real model is passed through event by event, so only the stream faults can reach it.

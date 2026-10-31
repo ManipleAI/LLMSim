@@ -54,7 +54,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
-from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # The agent test kit (scenarios, mocks, a kept timeline of every run). It is a package
 # beside this file; a copy of the server without it is the simulator it always was.
@@ -93,12 +93,11 @@ except ImportError:  # pragma: no cover — the server must run without its kit
             def trace_run(_header): return None
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-# Everything LLMSim writes for itself goes in one directory: the ChatGPT
-# sign-in, the keys and routing the console saves, your rules, the suite, the
+# Everything LLMSim writes for itself goes in one directory: the keys and routing the console saves, your rules, the suite, the
 # runs, the recordings. Beside the code by default, so a checkout keeps working
 # exactly as it always has. LLMSIM_DATA moves the lot, which is what a
 # container wants: point it at a volume and a pod that is replaced or restarted
-# comes back signed in. A file's own variable (LLMSIM_CONFIG, ...) still wins.
+# comes back as it was. A file's own variable (LLMSIM_CONFIG, ...) still wins.
 DATA_DIR = os.path.abspath(os.environ.get("LLMSIM_DATA") or HERE)
 PORT = int(os.environ.get("LLMSIM_PORT", "8099"))
 SCRIPT_PATH = os.environ.get("LLMSIM_SCRIPT", os.path.join(HERE, "responses.json"))
@@ -365,27 +364,6 @@ DEFAULTS = {
         {"id": "quick", "name": "Quick check (no slow case)",
          "testIds": ["codegen", "plan-first", "rate-limited"]},
     ],
-    # A third route, "chatgpt": a real model answered by a ChatGPT subscription
-    # the person signs in with. Nothing secret lives here — the tokens are in
-    # their own owner-only file — so this block is safe to show the console.
-    #
-    #   model         the one plan model that answers every model routed here,
-    #                 whatever name the client asked for (as relay does). Empty
-    #                 means the plan's own first choice, read from the plan: which
-    #                 models an account may use differs by plan and changes over
-    #                 time, so a name written here goes stale.
-    #   instructions  sent when the client supplied no system prompt; the plan
-    #                 backend refuses a request that has none
-    #   fallback      answer from the script when the plan cannot be reached
-    # How a replay treats a request the recording cannot answer.
-    #
-    #   onMiss   "fail" answers 404 and says what was missing, so a run that
-    #            has wandered off its recording is loud rather than quietly
-    #            talking to something else; "route" lets that request take its
-    #            normal route instead.
-    #   strict   also require the last message to match the recording. Off by
-    #            default because it is usually tool output, which carries
-    #            timestamps and never repeats.
     "session": {"onMiss": "fail", "strict": False},
     # What each request was, kept in memory so it can be looked at and asserted on.
     #
@@ -415,14 +393,8 @@ DEFAULTS = {
     # a condition holds. `paused` stops all of them at once without deleting any.
     "faults": [],
     "chaos": {"paused": False},
-    "chatgpt": {
-        "model": os.environ.get("LLMSIM_CHATGPT_MODEL", ""),
-        "instructions": "You are a helpful assistant.",
-        "fallback": False,
-    },
-    # A fourth route, "anthropic": a real Claude model, by API key. The same
-    # shape as the ChatGPT plan route — any client format in, that format out —
-    # with a key in place of a sign-in. See "Anthropic: a real Claude model".
+    # A third route, "anthropic": a real Claude model, by API key. Any client
+    # format in, that format out. See "Anthropic: a real Claude model".
     "anthropic": {
         "url": os.environ.get("LLMSIM_ANTHROPIC_UPSTREAM", "https://api.anthropic.com").rstrip("/"),
         "key": os.environ.get("LLMSIM_ANTHROPIC_UPSTREAM_KEY", ""),
@@ -473,6 +445,9 @@ def _write_json(path, data):
     os.replace(tmp, path)          # atomic, so a crash never leaves half a file
 
 
+ROUTES = ("scripted", "relay", "anthropic")
+
+
 def load_config():
     config = _merge(DEFAULTS, _read_json(CONFIG_PATH, "config") or {})
     # The suite file wins where it exists. An older config that still carries
@@ -483,13 +458,11 @@ def load_config():
         for key in SUITE_KEYS:
             if isinstance(suite.get(key), list):
                 config[key] = suite[key]
-    # gpt-5.4 was this file's built-in guess at a plan model, written into every
-    # config that was saved while it was the default, and a ChatGPT account does
-    # not offer it. Nobody chose it, so it is not a choice to keep: it becomes
-    # "the plan's own default" like a fresh install. A model somebody did choose
-    # is anything else and is left alone.
-    if config.get("chatgpt", {}).get("model") == "gpt-5.4":
-        config["chatgpt"]["model"] = ""
+    # A config saved with a route this LLMSim does not have answers from the script, not with an error on every request.
+    routing = config["routing"]
+    if routing.get("default") not in ROUTES:
+        routing["default"] = "scripted"
+    routing["models"] = {m: r for m, r in routing.get("models", {}).items() if r in ROUTES}
     return config
 
 
@@ -550,11 +523,8 @@ def public_config():
     return out
 
 
-ROUTES = ("scripted", "relay", "chatgpt", "anthropic")
-
-
 def route_for(model):
-    """scripted, relay, chatgpt or anthropic, for this model.
+    """scripted, relay or anthropic, for this model.
 
     A named model wins over the default, and a relay route with no upstream
     URL configured is scripted — saying "relay" while having nowhere to relay
@@ -574,7 +544,7 @@ def route_for(model):
 # ── A route held for a while ──────────────────────────────────────────────
 #
 # The default route is somebody's standing choice: this LLMSim answers with a
-# ChatGPT plan, say. A test that scripts the model needs the script to answer
+# real model, say. A test that scripts the model needs the script to answer
 # while it runs, and nothing else about that choice to change. Rewriting the
 # setting and writing it back afterwards is how that was done, by hand, and it
 # has one way to go wrong that matters: a run that is killed between the two
@@ -959,7 +929,7 @@ def _self_request(provider, model, messages, tools=None, timeout=180):
     headers["content-type"] = "application/json"
     # Says whose request this is. The functional cases check a CALLER against
     # the script's rules, so they must be answered by the script — not by a relay
-    # or a ChatGPT plan that would spend something and say something else — and
+    # or a real model that would spend something and say something else — and
     # they are no part of any session being recorded or replayed.
     headers["X-LLMSim-Internal"] = "1"
 
@@ -1887,74 +1857,9 @@ def chunked(text, size):
         return
 
 
-# ── ChatGPT plan: a third route ──────────────────────────────────────────
-#
-# Scripted answers here, one real model through an API key (relay), and now a
-# real model through a ChatGPT *subscription*: the person signs in with
-# OpenAI once, and every model routed to "chatgpt" is answered by their plan.
-#
-#     client (Chat Completions | Anthropic Messages | Responses)
-#         │   canon_request()
-#         ▼
-#     CanonicalRequest ── chatgpt_payload() ──▶ POST {api}/responses
-#         ▲                                        store:false, stream:true
-#         │                                        │
-#     encoders ◀── CanonicalEvents ◀── chatgpt_events()
-#     (the client's own wire format, streamed or whole)
-#
-# The middle is the one format the plan's route speaks. Every client format
-# goes in and comes out through the same two seams, so a fourth client format
-# is one translator rather than another copy of the whole path.
-#
-# The sign-in is OpenAI's own Sign in with ChatGPT for open-source and local
-# apps (developers.openai.com/siwc, with its terms at
-# openai.com/policies/sign-in-with-chatgpt-terms). LLMSim signs in under its own
-# name: the first sign-in registers it with the person's account, and OpenAI
-# issues a client id that is theirs and kept here. There is no LLMSim account
-# behind it and no key of anybody's in this repository. Each person signs in
-# with their own ChatGPT, and the requests count against their own plan.
-#
-# The redirect has to land on 127.0.0.1, which is why there is a paste-the-URL
-# fallback for a LLMSim that is not on the same machine as the browser. The
-# issuer and the API can be overridden by environment variable, and the tests do
-# exactly that to run against a stub.
+# ── What every real model's route shares ──────────────────────────────────
 
-CHATGPT_ISSUER = os.environ.get("LLMSIM_CHATGPT_ISSUER", "https://auth.openai.com").rstrip("/")
-CHATGPT_API = os.environ.get("LLMSIM_CHATGPT_API", "https://api.openai.com/v1").rstrip("/")
-# What the requests are for: the same value OpenAI's sign-in, token and refresh calls all take.
-CHATGPT_RESOURCE = "https://api.openai.com/v1"
-CHATGPT_APP_NAME = "LLMSim"
-# Sent only until OpenAI has issued this person's own client id. Never saved, never used for a token.
-CHATGPT_REGISTER_CLIENT = "dynamic_agent_client"
-# The permission that lets requests count against the plan. Without it there is a sign-in but no answers.
-CHATGPT_PLAN_SCOPE = "chatgpt.tokens.use.direct"
-CHATGPT_SCOPE = "openid profile email offline_access resource.invoke " + CHATGPT_PLAN_SCOPE
-CHATGPT_USAGE_URL = "https://chatgpt.com/settings/usage"
-# This route takes a client's function tools only inside a namespace, and what comes back names both.
-# The client never sees it: a call it gets back has its own tool's name.
-CHATGPT_TOOL_NAMESPACE = "client_tools"
-CHATGPT_PORTS = tuple(int(p) for p in os.environ.get("LLMSIM_CHATGPT_PORTS", "1455,1457").split(","))
-# Where the sign-in's redirect is listened for. This machine only, normally. In a container the
-# browser is outside it, so the port has to be published and the listener has to take connections
-# from beyond the container's own loopback: LLMSIM_CHATGPT_BIND=0.0.0.0, with -p 127.0.0.1:1457:1457.
-CHATGPT_BIND = os.environ.get("LLMSIM_CHATGPT_BIND", "127.0.0.1")
-CHATGPT_AUTH_PATH = os.environ.get("LLMSIM_CHATGPT_AUTH", os.path.join(DATA_DIR, "llmsim.chatgpt-auth.json"))
-CHATGPT_USER_AGENT = "LLMSim/0.1 (+https://github.com/ManipleAI/LLMSim)"
-CHATGPT_REFRESH_WINDOW = 300          # refresh when the access token has under five minutes left
-CHATGPT_LOGIN_TTL = 600               # a started sign-in is abandoned after ten minutes
-
-CHATGPT_LOCK = threading.RLock()
-CHATGPT = {
-    "auth": None,       # the stored tokens; never leaves this process
-    "registration": {},  # who signed in here before: this host's id, the client id OpenAI issued, the account
-    "made_as_codex": False,  # the file holds a sign-in from before this route had its own name
-    "dead": False,      # the refresh token was refused for good — sign in again
-    "pending": None,    # a sign-in that has been started and not finished
-    "error": None,      # the last thing that went wrong, for the console to say
-}
-
-
-class ChatGPTError(Exception):
+class ModelRouteError(Exception):
     """A failure to report in the client's own error envelope."""
 
     def __init__(self, status, kind, message):
@@ -1962,633 +1867,30 @@ class ChatGPTError(Exception):
         self.status, self.kind, self.message = status, kind, message
 
 
-class ChatGPTAuthError(ChatGPTError):
-    def __init__(self, message, permanent=False):
-        ChatGPTError.__init__(self, 502, "upstream_error", message)
-        self.permanent = permanent
-
-
-# -- tokens: where they live, and how they are read --------------------------
-
-def _b64url(raw):
-    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
-
-
-def _jwt_part(token, index):
-    part = token.split(".")[index]
-    return base64.urlsafe_b64decode(part + "=" * (-len(part) % 4))
-
-
-def _jwt_claims(token):
-    """A JWT's payload, not verified. Only for reading an access token's expiry."""
-    try:
-        return json.loads(_jwt_part(token, 1))
-    except Exception:
-        return {}
-
-
-# What is kept once a person has signed in, signed out or not: enough to come back as the same registration.
-_REGISTRATION_FIELDS = ("ext_agent_host_id", "client_id", "issuer", "subject", "email", "welcomed")
-
-
-def _load_chatgpt_auth():
-    """Read the file into CHATGPT.
-
-    A file from before this route had its own name has tokens and no client id.
-    Those were issued to the Codex client, so they are never sent anywhere: the
-    console says to sign in again, and that sign-in replaces the file.
-    """
-    try:
-        with open(CHATGPT_AUTH_PATH) as fh:
-            data = json.load(fh)
-    except FileNotFoundError:
-        return
-    except Exception as exc:
-        log("could not read %s: %s" % (CHATGPT_AUTH_PATH, exc))
-        return
-    if data.get("access_token") and not data.get("client_id"):
-        CHATGPT["made_as_codex"] = True
-        CHATGPT["error"] = "This sign-in was made the old way, as the Codex client. Continue with ChatGPT to sign in as LLMSim."
-        return
-    CHATGPT["registration"] = {k: data[k] for k in _REGISTRATION_FIELDS if k in data}
-    if data.get("access_token") and data.get("refresh_token"):
-        CHATGPT["auth"] = data
-
-
-def _save_chatgpt_auth():
-    """Owner-only, and written whole or not at all.
-
-    These are the keys to a person's subscription. The file is created 0600
-    before anything is written to it, and replaced atomically so a refresh
-    that is interrupted cannot leave half a token behind.
-    """
-    record = dict(CHATGPT["auth"] or {}, **CHATGPT["registration"])
-    if not record:
-        try:
-            os.remove(CHATGPT_AUTH_PATH)
-        except FileNotFoundError:
-            pass
-        return
-    tmp = CHATGPT_AUTH_PATH + ".tmp"
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as fh:
-        json.dump(record, fh)
-    os.replace(tmp, CHATGPT_AUTH_PATH)
-    CHATGPT["made_as_codex"] = False
-
-
-def _auth_from_tokens(tokens, previous=None, verified=None):
-    """What to keep from a token response. A refresh may omit the id_token and
-    the scope and rotates the refresh token; whatever is missing is carried over.
-
-    verified is the checked ID token at a sign-in. A refresh's own ID token is
-    only kept, for the next sign-in to hint with."""
-    previous = previous or {}
-    access = tokens.get("access_token")
-    if not access:
-        raise ChatGPTAuthError("OpenAI answered without an access token.")
-    claims = verified or {}
-    ours = claims.get("https://api.openai.com/auth") or {}
-    expires = tokens.get("expires_in") or (_jwt_claims(access).get("exp") or time.time() + 3600) - time.time()
-    return {
-        "access_token": access,
-        "refresh_token": tokens.get("refresh_token") or previous.get("refresh_token"),
-        "id_token": tokens.get("id_token") or previous.get("id_token") or "",
-        "token_type": tokens.get("token_type") or previous.get("token_type") or "Bearer",
-        "scopes": tokens.get("scope") or previous.get("scopes") or "",
-        "plan": ours.get("chatgpt_plan_type") or previous.get("plan") or "",
-        "expires_at": time.time() + float(expires),
-        "saved_at": time.time(),
-    }
-
-
-def _plan_usage_granted(auth):
-    return CHATGPT_PLAN_SCOPE in ((auth or {}).get("scopes") or "").split()
-
-
-# -- the ID token: who signed in, checked before anything is kept -------------
-
-def _oidc_config():
-    """OpenAI's published sign-in configuration: where its keys and revocation live."""
-    try:
-        with urllib.request.urlopen(urllib.request.Request(
-                CHATGPT_ISSUER + "/.well-known/openid-configuration",
-                headers={"Accept": "application/json", "User-Agent": CHATGPT_USER_AGENT}), timeout=30) as resp:
-            config = json.loads(resp.read())
-    except Exception as exc:
-        raise ChatGPTAuthError("Could not read OpenAI's sign-in configuration: %s" % exc)
-    if config.get("issuer") != CHATGPT_ISSUER:
-        raise ChatGPTAuthError("OpenAI's sign-in configuration names another issuer: %s" % config.get("issuer"))
-    return config
-
-
-def _rs256_valid(message, signature, n, e):
-    """RSASSA-PKCS1-v1_5 with SHA-256, which is all an RS256 signature is. Written
-    out because the standard library has big integers and hashes but no RSA."""
-    size = (n.bit_length() + 7) // 8
-    if len(signature) != size:
-        return False
-    # The DER prefix that says "SHA-256" in RFC 8017, then the digest.
-    digest = bytes.fromhex("3031300d060960864801650304020105000420") + hashlib.sha256(message).digest()
-    if size < len(digest) + 11:
-        return False
-    expected = b"\x00\x01" + b"\xff" * (size - len(digest) - 3) + b"\x00" + digest
-    return hmac.compare_digest(pow(int.from_bytes(signature, "big"), e, n).to_bytes(size, "big"), expected)
-
-
-def _verified_id_token(id_token, client_id, nonce):
-    """The ID token's claims, once its signature, issuer, audience, expiry and nonce
-    are all as they must be. Raises ChatGPTAuthError otherwise, and nothing is kept."""
-    def _b64_int(text):
-        return int.from_bytes(base64.urlsafe_b64decode(text + "=" * (-len(text) % 4)), "big")
-
-    try:
-        header = json.loads(_jwt_part(id_token, 0))
-        claims = json.loads(_jwt_part(id_token, 1))
-        signature = _jwt_part(id_token, 2)
-        signed = id_token.rsplit(".", 1)[0].encode()
-    except Exception:
-        raise ChatGPTAuthError("OpenAI's ID token could not be read.")
-    if header.get("alg") != "RS256":
-        raise ChatGPTAuthError("OpenAI's ID token is signed in a way LLMSim does not accept: %s" % header.get("alg"))
-    try:
-        with urllib.request.urlopen(urllib.request.Request(
-                _oidc_config()["jwks_uri"], headers={"User-Agent": CHATGPT_USER_AGENT}), timeout=30) as resp:
-            keys = json.loads(resp.read()).get("keys") or []
-    except ChatGPTAuthError:
-        raise
-    except Exception as exc:
-        raise ChatGPTAuthError("Could not read OpenAI's signing keys: %s" % exc)
-    key = next((k for k in keys if k.get("kid") == header.get("kid") and k.get("kty") == "RSA"), None)
-    if not key or not _rs256_valid(signed, signature, _b64_int(key["n"]), _b64_int(key["e"])):
-        raise ChatGPTAuthError("The signature on OpenAI's ID token did not check out.")
-    audience = claims.get("aud")
-    audience = audience if isinstance(audience, list) else [audience]
-    if claims.get("iss") != CHATGPT_ISSUER:
-        raise ChatGPTAuthError("OpenAI's ID token names another issuer: %s" % claims.get("iss"))
-    if client_id not in audience:
-        raise ChatGPTAuthError("OpenAI's ID token is for another client.")
-    if not isinstance(claims.get("exp"), (int, float)) or claims["exp"] < time.time():
-        raise ChatGPTAuthError("OpenAI's ID token has expired.")
-    if not hmac.compare_digest(str(claims.get("nonce") or ""), nonce):
-        raise ChatGPTAuthError("OpenAI's ID token is not from the sign-in LLMSim started.")
-    if not claims.get("sub"):
-        raise ChatGPTAuthError("OpenAI's ID token does not say who signed in.")
-    return claims
-
-
-def _oauth_error_text(raw):
-    """What OpenAI said went wrong, in a sentence, from whatever shape it used."""
-    try:
-        body = json.loads(raw)
-    except Exception:
-        return raw[:200].decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw)[:200]
-    err = body.get("error")
-    if isinstance(err, dict):
-        return err.get("message") or err.get("code") or json.dumps(err)[:200]
-    if err:
-        return "%s%s" % (err, ": " + body["error_description"] if body.get("error_description") else "")
-    return body.get("message") or body.get("detail") or json.dumps(body)[:200]
-
-
-def _chatgpt_token_request(payload):
-    req = urllib.request.Request(
-        CHATGPT_ISSUER + "/api/accounts/oauth/token", data=urllib.parse.urlencode(payload).encode(),
-        headers={"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json",
-                 "User-Agent": CHATGPT_USER_AGENT})
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            return json.loads(resp.read())
-    except urllib.error.HTTPError as exc:
-        text = _oauth_error_text(exc.read())
-        # 400/401/403 from the token endpoint are an answer, not an outage: the
-        # grant is spent, revoked or wrong, and asking again will not change it.
-        raise ChatGPTAuthError("OpenAI refused the token request (%d): %s" % (exc.code, text),
-                               permanent=exc.code in (400, 401, 403))
-    except Exception as exc:
-        raise ChatGPTAuthError("Could not reach OpenAI to sign in: %s" % exc)
-
-
-def chatgpt_access(force=False):
-    """The access token, refreshed first if it is about to lapse."""
-    with CHATGPT_LOCK:
-        auth = CHATGPT["auth"]
-        if CHATGPT["made_as_codex"]:
-            raise ChatGPTAuthError("The ChatGPT plan needs signing in again, as LLMSim. Continue with ChatGPT on the ChatGPT plan page.",
-                                   permanent=True)
-        if not auth:
-            raise ChatGPTAuthError("The ChatGPT plan is not signed in. Sign in on the ChatGPT plan page.")
-        if CHATGPT["dead"]:
-            raise ChatGPTAuthError("The ChatGPT sign-in has expired. Sign in again on the ChatGPT plan page.", permanent=True)
-        if not _plan_usage_granted(auth):
-            # No inference on this path, and no other billing to fall to: the person said no, or has not said yes.
-            raise ChatGPTAuthError("ChatGPT plan usage was not allowed at sign-in. Enable it on the ChatGPT plan page.")
-        if force or auth["expires_at"] - time.time() < CHATGPT_REFRESH_WINDOW:
-            try:
-                tokens = _chatgpt_token_request({
-                    "grant_type": "refresh_token", "client_id": CHATGPT["registration"]["client_id"],
-                    "refresh_token": auth["refresh_token"], "resource": CHATGPT_RESOURCE})
-                CHATGPT["auth"] = auth = _auth_from_tokens(tokens, auth)
-                _save_chatgpt_auth()
-                CHATGPT["error"] = None
-                log("chatgpt: access token refreshed")
-            except ChatGPTAuthError as exc:
-                if exc.permanent:
-                    # Stop asking. A spent refresh token asked for again on
-                    # every request is a lockout dressed up as a retry.
-                    CHATGPT["dead"] = True
-                    exc = ChatGPTAuthError("The ChatGPT sign-in could not be renewed (%s). Sign in again on the ChatGPT plan page."
-                                           % exc.message.split(": ", 1)[-1], permanent=True)
-                CHATGPT["error"] = exc.message
-                raise exc
-        return auth["access_token"]
-
-
-# -- signing in ---------------------------------------------------------------
-
-def _stop_pending_login():
-    """Abandon a started sign-in.
-
-    Releasing the listening port is asynchronous on purpose: this is also
-    called from inside the callback handler, which runs on the listener's own
-    thread, and waiting for that thread to finish from inside it would wait
-    forever. Whoever wants the port next waits for it instead.
-    """
-    pending = CHATGPT["pending"]
-    CHATGPT["pending"] = None
-    if pending:
-        if pending.get("timer"):
-            pending["timer"].cancel()
-        server = pending.get("listener")
-        if server:
-            def stop():
-                # shutdown() waits for the serve loop to leave; closing the
-                # socket before it has is closing it under a select().
-                server.shutdown()
-                server.server_close()
-            threading.Thread(target=stop, daemon=True).start()
-
-
-def _callback_page(ok, message):
-    colour, title = ("#1a7f4b", "Signed in") if ok else ("#b42318", "Sign-in did not finish")
-    return ("<!doctype html><meta charset=utf-8><title>LLMSim</title><body style=\"font:16px -apple-system,system-ui,sans-serif;"
-            "max-width:30rem;margin:15vh auto;padding:0 1rem\"><h1 style=\"color:%s\">%s</h1><p>%s</p>"
-            "<p style=\"color:#666\">You can close this tab and go back to LLMSim.</p>" % (colour, title, message)).encode()
-
-
-class _CallbackHandler(BaseHTTPRequestHandler):
-    """The one URL OpenAI sends the browser back to."""
-
-    def log_message(self, fmt, *args):
-        pass
-
-    def do_GET(self):
-        parts = urllib.parse.urlsplit(self.path)
-        if parts.path != "/auth/callback":
-            self.send_response(404)
-            self.end_headers()
-            return
-        query = urllib.parse.parse_qs(parts.query)
-        ok, message = chatgpt_finish_login(
-            (query.get("code") or [""])[0], (query.get("state") or [""])[0],
-            (query.get("error_description") or query.get("error") or [""])[0],
-            (query.get("client_id") or [""])[0])
-        page = _callback_page(ok, message)
-        self.send_response(200 if ok else 400)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(page)))
-        self.send_header("Connection", "close")
-        self.end_headers()
-        self.wfile.write(page)
-
-
-def _start_callback_listener(release_wait=1.5):
-    """Listen on the port OpenAI will redirect to, on loopback only.
-
-    Returns (server, port). The server is None when neither port could be had
-    — another tool may be signing in on one of them — in which case the
-    console falls back to asking for the redirected URL to be pasted.
-
-    release_wait is how long to keep trying before deciding the port belongs
-    to somebody else. It is always allowed, not only after an abandoned
-    sign-in, because the ways of getting here — clicking Sign in twice, or
-    signing out and straight back in — all find the port still held for a
-    moment, and without the wait each quietly downgrades itself to the paste
-    flow. The cost is that a port held by something else shows the paste box a second and a half later.
-    """
-    deadline = time.time() + release_wait
-    while True:
-        for port in CHATGPT_PORTS:
-            try:
-                server = HTTPServer((CHATGPT_BIND, port), _CallbackHandler)
-            except OSError:
-                continue
-            threading.Thread(target=lambda: server.serve_forever(poll_interval=0.05), daemon=True).start()
-            return server, port
-        if time.time() >= deadline:
-            return None, CHATGPT_PORTS[0]
-        time.sleep(0.05)
-
-
-def chatgpt_begin_login(new_account=False, consent=False):
-    """Start a sign-in. The same registration comes back the same way, under the client id
-    OpenAI issued it; new_account registers afresh, and consent asks again for the plan."""
-    with CHATGPT_LOCK:
-        _stop_pending_login()
-        verifier, state, nonce = _b64url(os.urandom(64)), _b64url(os.urandom(32)), _b64url(os.urandom(32))
-        listener, port = _start_callback_listener()
-        redirect_uri = "http://127.0.0.1:%d/auth/callback" % port
-        saved = {} if new_account else CHATGPT["registration"]
-        # One id for this host, written down before OpenAI first hears it. Opaque: it says nothing about anybody.
-        host_id = CHATGPT["registration"].get("ext_agent_host_id") or "urn:uuid:%s" % uuid.uuid4()
-        if CHATGPT["registration"].get("ext_agent_host_id") != host_id or CHATGPT["made_as_codex"]:
-            CHATGPT["registration"]["ext_agent_host_id"] = host_id
-            _save_chatgpt_auth()
-        client_id = saved.get("client_id")
-        params = {
-            "client_id": client_id or CHATGPT_REGISTER_CLIENT,
-            "ext_agent_host_id": host_id,
-            "response_type": "code",
-            "redirect_uri": redirect_uri,
-            "scope": CHATGPT_SCOPE,
-            "resource": CHATGPT_RESOURCE,
-            "state": state,
-            "nonce": nonce,
-            "code_challenge": _b64url(hashlib.sha256(verifier.encode()).digest()),
-            "code_challenge_method": "S256",
-        }
-        if not client_id:
-            params["agent_name_hint"] = CHATGPT_APP_NAME
-        else:
-            if (CHATGPT["auth"] or {}).get("id_token"):
-                params["id_token_hint"] = CHATGPT["auth"]["id_token"]
-            if saved.get("email"):
-                params["login_hint"] = saved["email"]
-        if consent:
-            params["prompt"] = "consent"
-        url = CHATGPT_ISSUER + "/api/accounts/authorize?" + urllib.parse.urlencode(params)
-        timer = threading.Timer(CHATGPT_LOGIN_TTL, lambda: _expire_login(state))
-        timer.daemon = True
-        timer.start()
-        CHATGPT["pending"] = {"state": state, "verifier": verifier, "nonce": nonce, "redirect_uri": redirect_uri,
-                              "client_id": client_id, "subject": saved.get("subject"),
-                              "listener": listener, "timer": timer, "started": time.time()}
-        CHATGPT["error"] = None
-        log("chatgpt: sign-in started (%s)" % ("listening on 127.0.0.1:%d" % port if listener else "no callback port free — paste flow"))
-        return {"url": url, "listening": listener is not None, "redirectUri": redirect_uri}
-
-
-def _expire_login(state):
-    with CHATGPT_LOCK:
-        pending = CHATGPT["pending"]
-        if pending and pending["state"] == state:
-            _stop_pending_login()
-            CHATGPT["error"] = "The sign-in was not finished in time."
-
-
-def chatgpt_finish_login(code, state, error="", issued_client=""):
-    """Turn what the browser brought back into stored tokens. (ok, message)"""
-    with CHATGPT_LOCK:
-        pending = CHATGPT["pending"]
-        # Compared in constant time and only against a sign-in this process
-        # started: the state is what stops somebody else's redirect being
-        # accepted as ours.
-        if not pending or not hmac.compare_digest(pending["state"], state or ""):
-            return False, "That sign-in is not the one LLMSim started, or it has expired. Start again from the console."
-        _stop_pending_login()          # a code is single-use; never let it be replayed
-
-    def refuse(message):
-        CHATGPT["error"] = message
-        return False, message
-
-    if error:
-        return refuse("OpenAI declined the sign-in: %s" % error)
-    if not code:
-        return refuse("The redirect carried no code.")
-    client_id = pending["client_id"]
-    if not client_id:
-        # A first sign-in is not finished until OpenAI has issued this registration its own id.
-        if not issued_client or issued_client == CHATGPT_REGISTER_CLIENT:
-            return refuse("OpenAI did not finish registering LLMSim with this account. Start again from the console.")
-        client_id = issued_client
-    elif issued_client and issued_client != client_id:
-        return refuse("That sign-in came back for another registration. Start again from the console.")
-    try:
-        tokens = _chatgpt_token_request({
-            "grant_type": "authorization_code", "client_id": client_id, "code": code,
-            "code_verifier": pending["verifier"], "redirect_uri": pending["redirect_uri"],
-            "resource": CHATGPT_RESOURCE})
-        claims = _verified_id_token(tokens.get("id_token") or "", client_id, pending["nonce"])
-        if pending["subject"] and claims["sub"] != pending["subject"]:
-            raise ChatGPTAuthError("That is a different ChatGPT account from the one signed in here. To change account, sign out and choose Use another account.")
-        auth = _auth_from_tokens(tokens, verified=claims)
-    except ChatGPTAuthError as exc:
-        return refuse(exc.message)
-    profile = claims.get("https://api.openai.com/profile") or {}
-    email = claims.get("email") or profile.get("email") or ""
-    with CHATGPT_LOCK:
-        welcomed = CHATGPT["registration"].get("welcomed") if pending["client_id"] else False
-        CHATGPT["registration"] = {"ext_agent_host_id": CHATGPT["registration"].get("ext_agent_host_id"),
-                                   "client_id": client_id, "issuer": CHATGPT_ISSUER, "subject": claims["sub"],
-                                   "email": email, "welcomed": bool(welcomed)}
-        CHATGPT["auth"], CHATGPT["dead"], CHATGPT["error"] = auth, False, None
-        _save_chatgpt_auth()
-        _forget_plan_models()
-    log("chatgpt: signed in as %s (%s)" % (email or "unknown", auth["plan"] or "unknown plan"))
-    if not _plan_usage_granted(auth):
-        return True, "Signed in, but ChatGPT plan usage was not allowed, so nothing is answered with the plan yet. You can enable it from the console."
-    return True, "LLMSim can now answer with %s's ChatGPT plan." % (email or "your")
-
-
-def chatgpt_complete_by_paste(text):
-    """The same sign-in, finished from a pasted redirect URL, for when the
-    browser is not on the machine LLMSim is running on."""
-    text = (text or "").strip()
-    query = urllib.parse.urlsplit(text).query if "://" in text else text.lstrip("?")
-    found = urllib.parse.parse_qs(query)
-    return chatgpt_finish_login((found.get("code") or [""])[0], (found.get("state") or [""])[0],
-                                (found.get("error_description") or found.get("error") or [""])[0],
-                                (found.get("client_id") or [""])[0])
-
-
-def chatgpt_logout():
-    """Stop, ask OpenAI to revoke the refresh token, and forget the tokens here.
-
-    Who signed in stays, as OpenAI asks: the next sign-in on this host comes
-    back as the same registration. The revoke is best effort and says so: if
-    it fails the person is told the grant may still stand at OpenAI, where it
-    can be removed from settings.
-    """
-    with CHATGPT_LOCK:
-        auth, CHATGPT["auth"], CHATGPT["dead"], CHATGPT["error"] = CHATGPT["auth"], None, False, None
-        client_id = CHATGPT["registration"].get("client_id")
-        was_codex = CHATGPT["made_as_codex"]
-        _stop_pending_login()
-        # A sign-in from before has nothing to come back as, and can only be revoked in ChatGPT's settings.
-        _save_chatgpt_auth()
-        if was_codex and not CHATGPT["registration"]:
-            CHATGPT["made_as_codex"] = False
-        _forget_plan_models()
-    revoked = False
-    if auth:
-        for attempt in (0, 1):
-            try:
-                req = urllib.request.Request(
-                    _oidc_config()["revocation_endpoint"],
-                    data=urllib.parse.urlencode({"token": auth["refresh_token"], "token_type_hint": "refresh_token",
-                                                 "client_id": client_id}).encode(),
-                    headers={"Content-Type": "application/x-www-form-urlencoded", "User-Agent": CHATGPT_USER_AGENT})
-                with urllib.request.urlopen(req, timeout=15):
-                    revoked = True
-                break
-            except urllib.error.HTTPError as exc:
-                log("chatgpt: revoke did not go through: %s" % exc)
-                if exc.code < 500:
-                    break
-            except Exception as exc:
-                log("chatgpt: revoke did not go through: %s" % exc)
-            if attempt == 0:
-                time.sleep(1)
-    log("chatgpt: signed out (revoked at OpenAI: %s)" % revoked)
-    return {"ok": True, "revoked": revoked}
-
-
-def chatgpt_welcomed():
-    """The one-time word about using the plan has been read. Not said again."""
-    with CHATGPT_LOCK:
-        if CHATGPT["registration"]:
-            CHATGPT["registration"]["welcomed"] = True
-            _save_chatgpt_auth()
-    return {"ok": True}
-
-
 def state_store():
     """Where LLMSim keeps what it writes, and whether that outlives it.
 
     On a machine it does. In a container it does only if the directory is a
-    volume: otherwise the next restart starts from nothing, signed out of the
-    ChatGPT plan, with no keys, no routing and none of your rules. Said out
-    loud, because the first anybody hears of it otherwise is the sign-in
-    screen again."""
+    volume: otherwise the next restart starts from nothing, with no keys, no
+    routing and none of your rules. Said out loud, because the first anybody
+    hears of it otherwise is an empty console."""
     contained = os.path.exists("/.dockerenv") or bool(os.environ.get("KUBERNETES_SERVICE_HOST"))
     return {"dir": DATA_DIR, "kept": not contained or os.path.ismount(DATA_DIR)}
 
 
-def chatgpt_status():
-    """What the console may know. Never a token, never the client id."""
-    with CHATGPT_LOCK:
-        auth, pending, reg = CHATGPT["auth"], CHATGPT["pending"], CHATGPT["registration"]
-        return {
-            "signedIn": bool(auth) and not CHATGPT["dead"],
-            "needsSignIn": (bool(auth) and CHATGPT["dead"]) or CHATGPT["made_as_codex"],
-            "planUsage": bool(auth) and _plan_usage_granted(auth),
-            "welcomed": bool(reg.get("welcomed")),
-            # Somebody signed in here before: signing in again comes back as them, unless they choose otherwise.
-            "known": bool(reg.get("client_id")),
-            "email": reg.get("email") or "",
-            "plan": (auth or {}).get("plan") or "",
-            "expiresAt": (auth or {}).get("expires_at"),
-            "pending": bool(pending),
-            "listening": bool(pending and pending.get("listener")),
-            "redirectUri": pending["redirect_uri"] if pending else None,
-            "error": CHATGPT["error"],
-            "default": _plan_default_known(),
-        }
-
-
-# The plan lists the models an account may use, each with a `visibility` ("list"
-# or "hide"), best first. Which models those are
-# differs by plan and by month — the built-in default of gpt-5.4 was a guess, and
-# an account that does not offer it was refused on its first request. So the
-# default is the plan's own first visible choice, read from the plan.
-PLAN_MODELS = {"rows": None, "at": 0.0}
-PLAN_MODELS_TTL = 600           # seconds; the list changes rarely and every request would otherwise ask
-
-
-def _plan_rows(refresh=False):
-    """The plan's own list of models, as OpenAI sends it. Cached briefly."""
-    with CHATGPT_LOCK:
-        if not refresh and PLAN_MODELS["rows"] is not None and time.time() - PLAN_MODELS["at"] < PLAN_MODELS_TTL:
-            return PLAN_MODELS["rows"]
-    req = urllib.request.Request(CHATGPT_API + "/models", headers=_chatgpt_headers(chatgpt_access(), stream=False))
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            body = json.loads(resp.read())
-    except urllib.error.HTTPError as exc:
-        raise _chatgpt_http_error(exc)
-    except Exception as exc:
-        raise ChatGPTError(502, "upstream_error", "Could not list the plan's models: %s" % exc)
-    rows = [m for m in (body.get("models") or body.get("data") if isinstance(body, dict) else body) or []
-            if isinstance(m, dict) and (m.get("slug") or m.get("id"))]
-    with CHATGPT_LOCK:
-        PLAN_MODELS.update(rows=rows, at=time.time())
-    return rows
-
-
-def _forget_plan_models():
-    """A different sign-in may be a different plan, and so a different list."""
-    with CHATGPT_LOCK:
-        PLAN_MODELS.update(rows=None, at=0.0)
-
-
-def _slug(row):
-    return row.get("slug") or row.get("id")
-
-
-def _ranked(rows):
-    """Slugs, the plan's visible choices first and in its own order, then the rest.
-
-    Hidden models are not offered by the plan's own clients, so they are never
-    chosen for you — but they are not refused, and a person may name one.
-    """
-    def key(row):
-        priority = row.get("priority")
-        # Python's sort keeps equal rows as they came, which is the order OpenAI sent them in.
-        return (row.get("visibility") not in (None, "list"), priority if isinstance(priority, (int, float)) else 10 ** 6)
-    return [_slug(m) for m in sorted(rows, key=key)]
-
-
-def plan_default(rows):
-    """The model the plan itself would pick: its first visible one."""
-    visible = [m for m in rows if m.get("visibility") in (None, "list")]
-    return _ranked(visible)[0] if visible else None
-
-
-def plan_model():
-    """The model to ask for: the one that was chosen, else the plan's default.
-
-    Raises ChatGPTError when nothing was chosen and the plan's list cannot be
-    read, saying so — not guessing a name that may be refused.
-    """
-    chosen = CONFIG["chatgpt"]["model"]
-    if chosen:
-        return chosen
-    try:
-        default = plan_default(_plan_rows())
-    except ChatGPTError as exc:
-        # Say which step failed and what to do. "ChatGPT refused the request"
-        # would send somebody looking at their prompt.
-        raise ChatGPTError(exc.status if exc.status == 429 else 502, exc.kind,
-                           "No plan model is chosen, and the plan's own list of models could not be read, so there is "
-                           "nothing to pick from (%s). Choose a model on the Routing page." % exc.message)
-    if not default:
-        raise ChatGPTError(502, "upstream_error", "No plan model is chosen and the plan lists no model to pick one from. "
-                           "Choose one on the Routing page.")
-    return default
-
-
-def chatgpt_models():
-    """(slugs, default): what this plan offers, best first, and what it would pick."""
-    rows = _plan_rows(refresh=True)
-    return _ranked(rows), plan_default(rows)
-
-
-def _plan_default_known():
-    """The default if the list is already in hand — for the status the console polls, which must not make a request."""
-    with CHATGPT_LOCK:
-        rows = PLAN_MODELS["rows"]
-    return plan_default(rows) if rows else None
-
+# ── Real models: one request and one stream, whatever the client spoke ───────
+#
+#     client (Chat Completions | Anthropic Messages | Responses)
+#         │   canon_request()
+#         ▼
+#     CanonicalRequest ── the route's payload ──▶ the real model
+#         ▲                                        │
+#         │                                        │
+#     encoders ◀── CanonicalEvents ◀── the route's stream reader
+#     (the client's own wire format, streamed or whole)
+#
+# Every client format goes in and comes out through the same two seams, so
+# another client format is one translator rather than a copy of the whole path.
 
 # -- the canonical request ----------------------------------------------------
 #
@@ -2630,7 +1932,7 @@ def _canon_tool(name, description, parameters):
             "parameters": parameters if isinstance(parameters, dict) else {"type": "object", "properties": {}}}
 
 
-# Sampling controls the plan's route does not take. Sent anyway they are a
+# Sampling controls not every real model takes. Sent anyway they are a
 # 400, and a client that always sends temperature would never get an answer.
 _UNSUPPORTED = ("max_tokens", "max_completion_tokens", "max_output_tokens", "temperature",
                 "top_p", "stop", "stop_sequences", "presence_penalty", "frequency_penalty", "seed", "n")
@@ -2778,142 +2080,6 @@ def canon_request(shape, body):
     return {"anthropic": canon_from_anthropic, "responses": canon_from_responses}.get(shape, canon_from_chat)(body)
 
 
-# -- the adapter: canonical request in, the plan's request out -----------------
-
-def _responses_input(items):
-    """Canonical items as Responses `input`, runs of user text and images
-    merged into one message the way a person sent them."""
-    out = []
-    for item in items:
-        kind = item["kind"]
-        if kind in ("text", "image") and (kind == "image" or item["role"] == "user"):
-            part = ({"type": "input_text", "text": item["text"]} if kind == "text"
-                    else {"type": "input_image", "image_url": item["url"]})
-            last = out[-1] if out else None
-            if last and last.get("role") == "user" and last.get("type") == "message":
-                last["content"].append(part)
-            else:
-                out.append({"type": "message", "role": "user", "content": [part]})
-        elif kind == "text":
-            out.append({"type": "message", "role": "assistant",
-                        "content": [{"type": "output_text", "text": item["text"]}]})
-        elif kind == "call":
-            out.append({"type": "function_call", "call_id": item["call_id"], "namespace": CHATGPT_TOOL_NAMESPACE,
-                        "name": item["name"], "arguments": item["arguments"]})
-        elif kind == "result":
-            out.append({"type": "function_call_output", "call_id": item["call_id"], "output": item["output"]})
-    return out
-
-
-def chatgpt_payload(canon, model):
-    """POST {api}/responses, with store:false and stream:true.
-
-    store:false because this route keeps no conversation for this caller to
-    resume — every request carries its whole history, which is also what all
-    three client formats already do. stream:true because that is the only mode
-    it serves; a non-streaming client is answered by collecting the stream, not
-    by asking for something else. Everything else the route refuses is not sent:
-    this is built from the canonical request, not copied from the client's.
-    """
-    payload = {
-        "model": model,
-        "instructions": "\n\n".join(s for s in canon["system"] if s) or CONFIG["chatgpt"]["instructions"],
-        "input": _responses_input(canon["items"]),
-        "store": False,
-        "stream": True,
-    }
-    if canon["tools"]:
-        tools, choice = canon["tools"], canon["tool_choice"]
-        if isinstance(choice, dict):
-            # The route cannot find a tool by name inside a namespace, so forcing one is
-            # offering only that one and requiring a call, which comes to the same thing.
-            only = [t for t in tools if t["name"] == choice["name"]]
-            tools, choice = (only, "required") if only else (tools, {"type": "function", "name": choice["name"]})
-        payload["tools"] = [{"type": "namespace", "name": CHATGPT_TOOL_NAMESPACE,
-                             "description": "The tools this client offers.",
-                             "tools": [dict(type="function", strict=False, **t) for t in tools]}]
-        payload["tool_choice"] = choice
-        payload["parallel_tool_calls"] = canon["parallel"]
-    if canon["effort"]:
-        payload["reasoning"] = {"effort": canon["effort"]}
-    if canon["text_format"]:
-        payload["text"] = {"format": canon["text_format"]}
-    return payload
-
-
-def _chatgpt_headers(token, stream=True):
-    return {
-        "Authorization": "Bearer " + token,
-        "x-client-request-id": str(uuid.uuid4()),
-        "User-Agent": CHATGPT_USER_AGENT,
-        "Content-Type": "application/json",
-        "Accept": "text/event-stream" if stream else "application/json",
-    }
-
-
-def _plan_error(code, message, param=None):
-    """What one of the plan route's own error codes means here, or None for any other code.
-    Each stops the answer: OpenAI never moves a request to another billing path, and neither does this."""
-    if code == "subscription_sharing_usage_limit_exceeded":
-        # Not "the plan is empty" and no reset time: an app's own limit can be the one that was reached.
-        return ChatGPTError(429, "rate_limit_error", "The ChatGPT plan's usage limit for this app was reached: %s "
-                            "Manage usage at %s" % (message, CHATGPT_USAGE_URL))
-    if code == "subscription_sharing_user_not_eligible":
-        return ChatGPTError(502, "upstream_error", "ChatGPT plan usage is not available for this account, workspace or policy: " + message)
-    if code in ("subscription_sharing_usage_unavailable", "subscription_sharing_user_unavailable"):
-        return ChatGPTError(503, "upstream_error", "ChatGPT could not check this plan's usage just now. Try again shortly: " + message)
-    if code == "subscription_sharing_unsupported_capability":
-        return ChatGPTError(400, "invalid_request_error", "The ChatGPT plan's route does not support %s: %s"
-                            % (param or "part of this request", message))
-    if code in ("subscription_sharing_route_not_supported", "subscription_sharing_invalid_user",
-                "chatpass_v2_scope_not_authorized", "chatpass_v2_invalid_authorization_context"):
-        return ChatGPTError(502, "upstream_error", "ChatGPT refused this sign-in's request (%s): %s" % (code, message))
-    return None
-
-
-def _chatgpt_http_error(exc):
-    """An upstream HTTP failure, as the client's own."""
-    raw = exc.read()[:4000]
-    message = _oauth_error_text(raw)
-    try:
-        err = (json.loads(raw) or {}).get("error")
-        if isinstance(err, dict):
-            known = _plan_error(err.get("code"), message, err.get("param"))
-            if known:
-                return known
-            if err.get("resets_in_seconds"):
-                message += " (resets in %ds)" % int(err["resets_in_seconds"])
-    except Exception:
-        pass
-    if exc.code == 429:
-        return ChatGPTError(429, "rate_limit_error", "The ChatGPT plan's limit was reached: " + message)
-    if exc.code in (400, 404, 413, 422):
-        return ChatGPTError(400, "invalid_request_error", "ChatGPT rejected the request: " + message)
-    if exc.code == 503:
-        return ChatGPTError(503, "upstream_error", "ChatGPT plan usage is unavailable just now: " + message)
-    # 401 and 403 are LLMSim's credential failing, not the caller's, so they
-    # are not passed on as one: a 401 here would tell a gateway its own key
-    # was wrong and send somebody off to fix the wrong thing.
-    return ChatGPTError(502, "upstream_error", "ChatGPT refused the request (%d): %s" % (exc.code, message))
-
-
-def chatgpt_open(payload):
-    """Open the upstream stream. Raises ChatGPTError before any byte is sent
-    to the client, so a failure can still be an honest HTTP status."""
-    body = json.dumps(payload).encode()
-    for attempt in (0, 1):
-        req = urllib.request.Request(CHATGPT_API + "/responses", data=body,
-                                     headers=_chatgpt_headers(chatgpt_access(force=attempt == 1)), method="POST")
-        try:
-            return urllib.request.urlopen(req, timeout=180)
-        except urllib.error.HTTPError as exc:
-            if exc.code == 401 and attempt == 0:
-                continue          # the token was revoked or rotated under us: refresh once and retry
-            raise _chatgpt_http_error(exc)
-        except Exception as exc:
-            raise ChatGPTError(502, "upstream_error", "Could not reach ChatGPT: %s" % exc)
-
-
 # -- canonical events: what the route says, in the order it says it -----------
 #
 #   ("text", str)                                  a piece of the answer
@@ -2924,70 +2090,7 @@ def chatgpt_open(payload):
 # argument-fragment by fragment. No client acts on half a call, and the
 # fragments are the most format-specific thing in all three wire formats.
 
-def _failure_from(ev):
-    resp = ev.get("response") or {}
-    err = resp.get("error") or ev.get("error") or {}
-    code = err.get("code") or err.get("type") or ""
-    message = err.get("message") or json.dumps(err or ev)[:300]
-    known = _plan_error(code, message, err.get("param"))
-    if known:
-        return known
-    if code in ("rate_limit_exceeded", "usage_limit_reached", "insufficient_quota"):
-        return ChatGPTError(429, "rate_limit_error", "The ChatGPT plan's limit was reached: " + message)
-    if code in ("context_length_exceeded", "invalid_prompt", "invalid_request_error"):
-        return ChatGPTError(400, "invalid_request_error", message)
-    return ChatGPTError(502, "upstream_error", "ChatGPT failed: " + message)
-
-
-def chatgpt_events(resp):
-    saw_text, calls = False, 0
-    for raw in resp:
-        line = raw.decode("utf-8", "replace").strip()
-        if not line.startswith("data:"):
-            continue
-        chunk = line[5:].strip()
-        if not chunk or chunk == "[DONE]":
-            continue
-        try:
-            ev = json.loads(chunk)
-        except json.JSONDecodeError:
-            continue
-        kind = ev.get("type")
-        if kind in ("response.output_text.delta", "response.refusal.delta"):
-            if ev.get("delta"):
-                saw_text = True
-                yield "text", ev["delta"]
-        elif kind == "response.output_item.done":
-            item = ev.get("item") or {}
-            if item.get("type") == "function_call":
-                calls += 1
-                yield "call", {"id": item.get("call_id") or rand_id("call_", 20), "name": item.get("name") or "",
-                               "arguments": _args_text(item.get("arguments"))}
-            elif item.get("type") == "message" and not saw_text:
-                text = "".join(c.get("text", "") for c in item.get("content") or [] if isinstance(c, dict))
-                if text:
-                    saw_text = True
-                    yield "text", text
-        elif kind in ("response.completed", "response.incomplete"):
-            done = ev.get("response") or {}
-            usage = done.get("usage") or {}
-            cut = (done.get("incomplete_details") or {}).get("reason") == "max_output_tokens"
-            yield "end", {
-                "reason": "tool_calls" if calls else ("length" if cut else "stop"),
-                "usage": {
-                    "input": usage.get("input_tokens", 0),
-                    "output": usage.get("output_tokens", 0),
-                    "cached": (usage.get("input_tokens_details") or {}).get("cached_tokens", 0),
-                    "reasoning": (usage.get("output_tokens_details") or {}).get("reasoning_tokens", 0),
-                },
-            }
-            return
-        elif kind in ("response.failed", "error"):
-            raise _failure_from(ev)
-    raise ChatGPTError(502, "upstream_error", "ChatGPT closed the stream before the answer was finished.")
-
-
-def _collect(events, plan, who="ChatGPT"):
+def _collect(events, plan, who):
     """The whole answer as the {text, tool_calls} turn the script produces, so
     a client that did not ask for a stream is served by the builders every
     other route already uses."""
@@ -3214,7 +2317,7 @@ class _ResponsesEnc:
             "failed", self.output, error={"code": exc.kind, "message": exc.message})})]
 
 
-def chatgpt_encoder(shape, model, body):
+def model_route_encoder(shape, model, body):
     if shape == "anthropic":
         return _AnthropicEnc(model)
     if shape == "responses":
@@ -3224,8 +2327,7 @@ def chatgpt_encoder(shape, model, body):
 
 # ── Anthropic: a real Claude model, by API key ───────────────────────────
 #
-# The ChatGPT route answers with a subscription somebody signed in to. This
-# one answers with Anthropic's API and a key: the same two seams, a canonical
+# This route answers with Anthropic's API and a key: two seams, a canonical
 # request in and canonical events out, so a client speaking any of the three
 # formats is answered in its own, tools and streaming included.
 #
@@ -3238,7 +2340,7 @@ def chatgpt_encoder(shape, model, body):
 # x-api-key; or, for a gateway that stands in front of the API, whatever token
 # that gateway issues, sent as Authorization: Bearer.
 
-class AnthropicError(ChatGPTError):
+class AnthropicError(ModelRouteError):
     pass
 
 
@@ -3309,7 +2411,7 @@ def _anthropic_image(url):
 def anthropic_payload(canon, model, body):
     """Canonical request → POST /v1/messages, always streamed.
 
-    Streamed whatever the client asked, for the reason the plan route does it:
+    Streamed whatever the client asked:
     one way to read the answer, and a client that wanted it whole is served by
     collecting the stream. A long answer asked for whole would otherwise be
     refused by the API for being long.
@@ -3433,8 +2535,7 @@ _ANTHROPIC_STOP = {"end_turn": "stop", "stop_sequence": "stop", "tool_use": "too
 def anthropic_events(resp):
     """Anthropic's stream as the canonical events the encoders take.
 
-    A tool call is passed on when its block closes, whole, the way the plan
-    route does it: the argument fragments are the most format-specific thing
+    A tool call is passed on when its block closes, whole: the argument fragments are the most format-specific thing
     in the stream, and no client acts on half a call.
     """
     blocks, usage, reason, calls = {}, {"input": 0, "output": 0, "cached": 0, "reasoning": 0}, None, 0
@@ -3491,7 +2592,7 @@ def anthropic_events(resp):
 # ── Sessions: record a conversation once, replay it exactly ───────────────
 #
 # The scripted route answers from rules somebody wrote, and the relay and
-# plan routes answer from a real model that says something different each
+# Anthropic routes answer from a real model that says something different each
 # time. A session recording is the third thing: capture what a real run of an
 # agent was told, once, and from then on answer that same run with exactly
 # those words — offline, free, identical every time. It is the cassette idea
@@ -5547,7 +4648,7 @@ REST_AREAS["routing"] = _rest_routing
 #                        — whichever requests the condition selects, as often as
 #                        the gates allow
 #
-# Rules apply on EVERY route — scripted, relay, the ChatGPT plan, a replay — since
+# Rules apply on EVERY route — scripted, relay, Anthropic, a replay — since
 # a fault is about how the vendor misbehaves, not about who answered. A rule's
 # randomness is seeded, so a chaotic run can be run again and do the same thing.
 #
@@ -5870,7 +4971,7 @@ VIEW_FIELDS = {
     "lastToolOutput": "what the last tool printed", "userText": "everything a person said", "assistantText": "everything the model said so far",
     "allText": "every message, concatenated", "tools": "the tools the agent declared (a list)", "turn": "turns already taken",
     "messageCount": "messages in the request", "model": "the model asked for", "provider": "anthropic, openai or deepseek",
-    "route": "scripted, relay, chatgpt, anthropic or replay", "rule": "which rule answered", "stream": "whether it streamed",
+    "route": "scripted, relay, anthropic or replay", "rule": "which rule answered", "stream": "whether it streamed",
     "status": "the HTTP status of the answer", "fault": "the fault injected, if any",
     "response.text": "what was answered", "response.toolNames": "the tools the answer called (a list)",
     "response.usage.input": "tokens in", "response.usage.output": "tokens out", "response.error": "the error, if any",
@@ -6221,7 +5322,6 @@ class Handler(BaseHTTPRequestHandler):
             "allModels": known,
             "rules": [r.get("name") for r, _ in all_rules()],
             "runs": RESULTS["runs"][:5],
-            "chatgpt": chatgpt_status(),
             "session": session_status(),
             "hold": route_hold(),
             "state": state_store(),
@@ -6368,16 +5468,6 @@ class Handler(BaseHTTPRequestHandler):
             for k, v in (body["fidelity"] or {}).items():
                 if k in CONFIG["fidelity"]:
                     CONFIG["fidelity"][k] = bool(v)
-
-        plan = body.get("chatgpt") or {}
-        for field, limit in (("model", 100), ("instructions", 2000)):
-            if field in plan:
-                value = str(plan[field] or "").strip()[:limit]
-                # An empty model is a choice — the plan's own default — not an
-                # omission; an empty prompt keeps the stored one, as it always did.
-                CONFIG["chatgpt"][field] = value if field == "model" else (value or CONFIG["chatgpt"][field])
-        if "fallback" in plan:
-            CONFIG["chatgpt"]["fallback"] = bool(plan["fallback"])
 
         claude = body.get("anthropic")
         if isinstance(claude, dict):
@@ -6592,9 +5682,6 @@ class Handler(BaseHTTPRequestHandler):
                         since = 0
             return self.send_json(200, self.ui_state(since))
 
-        if path == "/api/ui/chatgpt":
-            return self.send_json(200, chatgpt_status())
-
         if path == "/api/sessions" or path.startswith("/api/sessions/"):
             return self.session_api("GET", path, None, urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query))
 
@@ -6608,13 +5695,6 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 return self.send_json(200, {"models": anthropic_models()})
             except AnthropicError as exc:
-                return self.send_json(exc.status, {"error": exc.message})
-
-        if path == "/api/ui/chatgpt/models":
-            try:
-                models, default = chatgpt_models()
-                return self.send_json(200, {"models": models, "default": default})
-            except ChatGPTError as exc:
                 return self.send_json(exc.status, {"error": exc.message})
 
         if path == "/api/ui/suite":
@@ -6646,7 +5726,6 @@ class Handler(BaseHTTPRequestHandler):
                 "upstream": ({"model": CONFIG["upstream"]["model"],
                               "format": CONFIG["upstream"]["format"],
                               "fallback": CONFIG["upstream"]["fallback"]} if relaying() else None),
-                "chatgpt": {"signedIn": chatgpt_status()["signedIn"], "model": CONFIG["chatgpt"]["model"] or "auto"},
                 "anthropic": {"keySet": bool(CONFIG["anthropic"]["key"]), "model": CONFIG["anthropic"]["model"] or "the client's"},
                 "session": {"mode": SESSION["mode"], "name": SESSION["name"]},
                 "rules": [r.get("name") for r, _ in all_rules()],
@@ -6787,9 +5866,6 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/ui/suite":
             return self.import_suite(body)
-
-        if path.startswith("/api/ui/chatgpt/"):
-            return self.chatgpt_console(path, body)
 
         if path == "/api/ui/chat":
             return self.console_chat(body)
@@ -7020,7 +6096,7 @@ class Handler(BaseHTTPRequestHandler):
 
         Not a shortcut into the internals: the request is shaped like the one
         the model's own vendor would take and handed to handle_chat, so routing,
-        validation, the script, relay, the ChatGPT plan and the Logs page all
+        validation, the script, relay, Anthropic and the Logs page all
         behave exactly as they do for any client. Which provider and which wire
         format is decided here, from the model, so the page does not need the
         keys or the formats.
@@ -7149,32 +6225,6 @@ class Handler(BaseHTTPRequestHandler):
             ok, message, code, summary = session_stop(run)
             return self._session_reply(ok, message, code, summary=summary, run=run)
         return self.send_json(404, {"ok": False, "message": "No such route: %s %s" % (method, path)})
-
-    def chatgpt_console(self, path, body):
-        """Sign in, finish signing in, sign out.
-
-        A page on any other site can make a browser POST to this port, and
-        text/plain is enough to get past the browser's own checks because this
-        server reads the body as JSON whatever its type. The routes below hold
-        the keys to somebody's subscription, so a request that declares an
-        origin other than this server's own is refused. A caller that sends no
-        Origin — curl, a script — is not a browser and is let through.
-        """
-        if self.foreign_origin():
-            return self.send_json(403, {"error": "That request came from another site."})
-
-        if path == "/api/ui/chatgpt/login":
-            if body.get("newAccount") and chatgpt_status()["signedIn"]:
-                return self.send_json(409, {"error": "Sign out first, then choose Use another account."})
-            return self.send_json(200, chatgpt_begin_login(bool(body.get("newAccount")), bool(body.get("consent"))))
-        if path == "/api/ui/chatgpt/complete":
-            ok, message = chatgpt_complete_by_paste(body.get("redirect"))
-            return self.send_json(200 if ok else 400, {"ok": ok, "message": message, "status": chatgpt_status()})
-        if path == "/api/ui/chatgpt/logout":
-            return self.send_json(200, dict(chatgpt_logout(), status=chatgpt_status()))
-        if path == "/api/ui/chatgpt/welcomed":
-            return self.send_json(200, chatgpt_welcomed())
-        return self.send_json(404, {"error": "No such route: " + path})
 
     def begin_stream(self):
         self.send_response(200)
@@ -7342,17 +6392,14 @@ class Handler(BaseHTTPRequestHandler):
                 pass
         return None
 
-    def chatgpt_serve(self, resp, shape, model, stream, body, messages, started, plan):
-        return self.upstream_serve(resp, chatgpt_events(resp), "chatgpt", plan, shape, model, stream, body, messages, started)
-
     def upstream_serve(self, resp, events, route, plan, shape, model, stream, body, messages, started):
         """Answer from an open stream of a real model, in the shape the client asked.
 
-        `route` is which real model it is (chatgpt, anthropic) and `plan` the
+        `route` is which real model it is (anthropic) and `plan` the
         model it was asked for; `events` is its stream as canonical events.
 
         Whole when the client did not ask for a stream, and otherwise piece by
-        piece as the plan produces it. In both the failure that matters is the
+        piece as the model produces it. In both the failure that matters is the
         one after the first byte, when the status is already sent: it is
         reported inside the stream in the client's own error form, since
         nothing else is left to say it with.
@@ -7369,7 +6416,7 @@ class Handler(BaseHTTPRequestHandler):
         begun = False
         try:
             if not stream:
-                turn = _collect(events, plan, "Anthropic" if route == "anthropic" else "ChatGPT")
+                turn = _collect(events, plan, "Anthropic")
                 capture_note(self, route=route, rule=route + ":" + plan, text=turn.get("text") or "", usage=_usage_of(turn),
                              toolCalls=[{"id": c.get("id"), "name": c.get("name"), "input": c.get("input")} for c in turn.get("tool_calls") or []])
                 session_capture(self.ctx, route, route + ":" + plan, turn, int((time.time() - started) * 1000))
@@ -7379,7 +6426,7 @@ class Handler(BaseHTTPRequestHandler):
                          else responses_body if shape == "responses" else openai_body)
                 return self.send_json(200, build(turn, model))
 
-            enc, said, made = chatgpt_encoder(shape, model, body), [], []
+            enc, said, made = model_route_encoder(shape, model, body), [], []
             for kind, data in events:
                 frames = (enc.text(data) if kind == "text" else enc.call(data) if kind == "call" else enc.end(data))
                 if not begun:
@@ -7405,7 +6452,7 @@ class Handler(BaseHTTPRequestHandler):
                         int((time.time() - started) * 1000))
                     settle(reply="".join(said)[:400],
                            usage={"input": u["input"], "output": u["output"], "cacheRead": u["cached"], "model": plan})
-        except ChatGPTError as exc:
+        except ModelRouteError as exc:
             log(route + " failed %s: %s" % ("mid-stream" if begun else "before the first word", exc.message))
             settle(status=exc.status, error=exc.message)
             if not begun:
@@ -7550,7 +6597,7 @@ class Handler(BaseHTTPRequestHandler):
 
         # A scenario that brought its own script is answered by it wherever it has a rule for
         # the request, whatever this LLMSim's default route is: a test that scripts the model
-        # must not quietly get a real one because somebody's default is a ChatGPT plan. What
+        # must not quietly get a real one because somebody's default is a real model. What
         # its script does not cover still goes where Routing says, so a run can script the
         # steps that matter and let a real model do the rest, unless it asked to be refused.
         if not internal and not replayed:
@@ -7630,26 +6677,6 @@ class Handler(BaseHTTPRequestHandler):
                                        "LLMSim could not reach its upstream model: %s" % exc)
                 name, turn = choose_turn(self.provider, model, messages, declared, view)
                 name = "fallback:" + name
-        elif route == "chatgpt":
-            canon = canon_request(shape, body)
-            try:
-                plan = plan_model()
-                resp = chatgpt_open(chatgpt_payload(canon, plan))
-            except ChatGPTError as exc:
-                log("chatgpt failed before it began: %s" % exc.message)
-                if not CONFIG["chatgpt"]["fallback"]:
-                    record({"provider": self.provider, "shape": shape, "model": model,
-                            "route": route, "rule": None, "stream": stream, "status": exc.status,
-                            "ms": int((time.time() - started) * 1000),
-                            "prompt": subject(messages)[:400], "reply": None, "tools": [],
-                            "error": exc.message})
-                    return self.refuse(exc.status, exc.kind, exc.message)
-                name, turn = choose_turn(self.provider, model, messages, declared, view)
-                name = "fallback:" + name
-            else:
-                if canon["dropped"]:
-                    log("   not sent to ChatGPT, which does not take them: %s" % ", ".join(canon["dropped"]))
-                return self.chatgpt_serve(resp, shape, model, stream, body, messages, started, plan)
         elif route == "anthropic":
             canon = canon_request(shape, body)
             try:
@@ -7824,12 +6851,11 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     os.makedirs(DATA_DIR, exist_ok=True)
     testkit.attach(sys.modules[__name__])
-    _load_chatgpt_auth()
     log("listening on http://localhost:%d" % PORT)
     if state_store()["kept"]:
         log("state:  %s" % DATA_DIR)
     else:
-        log("state:  %s is inside this container — a restart signs out and forgets keys, routing and rules;"
+        log("state:  %s is inside this container — a restart forgets keys, routing and rules;"
             " mount a volume there (LLMSIM_DATA)" % DATA_DIR)
     USER_RULES.update(load_user_rules())
     ASSERTION_SETS.update(load_assertion_sets())
@@ -7855,19 +6881,6 @@ def main():
     elif record_as or replay_as:
         ok, message = session_start("record" if record_as else "replay", record_as or replay_as)
         log("session: " + message if ok else "session: could not start — " + message)
-    plan = CONFIG["chatgpt"]
-    routed_to_plan = [m for m, r in CONFIG["routing"]["models"].items() if r == "chatgpt"]
-    if CHATGPT["made_as_codex"]:
-        log("chatgpt: the saved sign-in was made as the Codex client and is not used; sign in again from the console, as LLMSim")
-    elif CHATGPT["auth"]:
-        log("chatgpt: signed in as %s%s — answers with %s%s"
-            % (CHATGPT["registration"].get("email") or "an account", " (%s)" % CHATGPT["auth"]["plan"] if CHATGPT["auth"]["plan"] else "",
-               plan["model"] or "the plan's own default model", " for the default route" if CONFIG["routing"]["default"] == "chatgpt" else ""))
-        # Said out loud because the README's old promise — nothing here is
-        # worth taking — stops being true once a subscription is signed in.
-        log("          anyone who can reach this port can spend that plan; keep it off a shared network")
-    elif CONFIG["routing"]["default"] == "chatgpt" or routed_to_plan:
-        log("chatgpt: routes point at the plan but nobody is signed in — those requests will fail until the console signs in")
     claude = CONFIG["anthropic"]
     routed_to_claude = [m for m, r in CONFIG["routing"]["models"].items() if r == "anthropic"]
     if CONFIG["routing"]["default"] == "anthropic" or routed_to_claude:

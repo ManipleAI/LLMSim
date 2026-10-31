@@ -1887,6 +1887,28 @@ def chunked(text, size):
         return
 
 
+# ── What every real model's route shares ──────────────────────────────────
+
+class ModelRouteError(Exception):
+    """A failure to report in the client's own error envelope."""
+
+    def __init__(self, status, kind, message):
+        Exception.__init__(self, message)
+        self.status, self.kind, self.message = status, kind, message
+
+
+def state_store():
+    """Where LLMSim keeps what it writes, and whether that outlives it.
+
+    On a machine it does. In a container it does only if the directory is a
+    volume: otherwise the next restart starts from nothing, signed out of the
+    ChatGPT plan, with no keys, no routing and none of your rules. Said out
+    loud, because the first anybody hears of it otherwise is the sign-in
+    screen again."""
+    contained = os.path.exists("/.dockerenv") or bool(os.environ.get("KUBERNETES_SERVICE_HOST"))
+    return {"dir": DATA_DIR, "kept": not contained or os.path.ismount(DATA_DIR)}
+
+
 # ── ChatGPT plan: a third route ──────────────────────────────────────────
 #
 # Scripted answers here, one real model through an API key (relay), and now a
@@ -1954,17 +1976,9 @@ CHATGPT = {
 }
 
 
-class ChatGPTError(Exception):
-    """A failure to report in the client's own error envelope."""
-
-    def __init__(self, status, kind, message):
-        Exception.__init__(self, message)
-        self.status, self.kind, self.message = status, kind, message
-
-
-class ChatGPTAuthError(ChatGPTError):
+class ChatGPTAuthError(ModelRouteError):
     def __init__(self, message, permanent=False):
-        ChatGPTError.__init__(self, 502, "upstream_error", message)
+        ModelRouteError.__init__(self, 502, "upstream_error", message)
         self.permanent = permanent
 
 
@@ -2462,18 +2476,6 @@ def chatgpt_welcomed():
     return {"ok": True}
 
 
-def state_store():
-    """Where LLMSim keeps what it writes, and whether that outlives it.
-
-    On a machine it does. In a container it does only if the directory is a
-    volume: otherwise the next restart starts from nothing, signed out of the
-    ChatGPT plan, with no keys, no routing and none of your rules. Said out
-    loud, because the first anybody hears of it otherwise is the sign-in
-    screen again."""
-    contained = os.path.exists("/.dockerenv") or bool(os.environ.get("KUBERNETES_SERVICE_HOST"))
-    return {"dir": DATA_DIR, "kept": not contained or os.path.ismount(DATA_DIR)}
-
-
 def chatgpt_status():
     """What the console may know. Never a token, never the client id."""
     with CHATGPT_LOCK:
@@ -2517,7 +2519,7 @@ def _plan_rows(refresh=False):
     except urllib.error.HTTPError as exc:
         raise _chatgpt_http_error(exc)
     except Exception as exc:
-        raise ChatGPTError(502, "upstream_error", "Could not list the plan's models: %s" % exc)
+        raise ModelRouteError(502, "upstream_error", "Could not list the plan's models: %s" % exc)
     rows = [m for m in (body.get("models") or body.get("data") if isinstance(body, dict) else body) or []
             if isinstance(m, dict) and (m.get("slug") or m.get("id"))]
     with CHATGPT_LOCK:
@@ -2557,7 +2559,7 @@ def plan_default(rows):
 def plan_model():
     """The model to ask for: the one that was chosen, else the plan's default.
 
-    Raises ChatGPTError when nothing was chosen and the plan's list cannot be
+    Raises ModelRouteError when nothing was chosen and the plan's list cannot be
     read, saying so — not guessing a name that may be refused.
     """
     chosen = CONFIG["chatgpt"]["model"]
@@ -2565,14 +2567,14 @@ def plan_model():
         return chosen
     try:
         default = plan_default(_plan_rows())
-    except ChatGPTError as exc:
+    except ModelRouteError as exc:
         # Say which step failed and what to do. "ChatGPT refused the request"
         # would send somebody looking at their prompt.
-        raise ChatGPTError(exc.status if exc.status == 429 else 502, exc.kind,
+        raise ModelRouteError(exc.status if exc.status == 429 else 502, exc.kind,
                            "No plan model is chosen, and the plan's own list of models could not be read, so there is "
                            "nothing to pick from (%s). Choose a model on the Routing page." % exc.message)
     if not default:
-        raise ChatGPTError(502, "upstream_error", "No plan model is chosen and the plan lists no model to pick one from. "
+        raise ModelRouteError(502, "upstream_error", "No plan model is chosen and the plan lists no model to pick one from. "
                            "Choose one on the Routing page.")
     return default
 
@@ -2856,18 +2858,18 @@ def _plan_error(code, message, param=None):
     Each stops the answer: OpenAI never moves a request to another billing path, and neither does this."""
     if code == "subscription_sharing_usage_limit_exceeded":
         # Not "the plan is empty" and no reset time: an app's own limit can be the one that was reached.
-        return ChatGPTError(429, "rate_limit_error", "The ChatGPT plan's usage limit for this app was reached: %s "
+        return ModelRouteError(429, "rate_limit_error", "The ChatGPT plan's usage limit for this app was reached: %s "
                             "Manage usage at %s" % (message, CHATGPT_USAGE_URL))
     if code == "subscription_sharing_user_not_eligible":
-        return ChatGPTError(502, "upstream_error", "ChatGPT plan usage is not available for this account, workspace or policy: " + message)
+        return ModelRouteError(502, "upstream_error", "ChatGPT plan usage is not available for this account, workspace or policy: " + message)
     if code in ("subscription_sharing_usage_unavailable", "subscription_sharing_user_unavailable"):
-        return ChatGPTError(503, "upstream_error", "ChatGPT could not check this plan's usage just now. Try again shortly: " + message)
+        return ModelRouteError(503, "upstream_error", "ChatGPT could not check this plan's usage just now. Try again shortly: " + message)
     if code == "subscription_sharing_unsupported_capability":
-        return ChatGPTError(400, "invalid_request_error", "The ChatGPT plan's route does not support %s: %s"
+        return ModelRouteError(400, "invalid_request_error", "The ChatGPT plan's route does not support %s: %s"
                             % (param or "part of this request", message))
     if code in ("subscription_sharing_route_not_supported", "subscription_sharing_invalid_user",
                 "chatpass_v2_scope_not_authorized", "chatpass_v2_invalid_authorization_context"):
-        return ChatGPTError(502, "upstream_error", "ChatGPT refused this sign-in's request (%s): %s" % (code, message))
+        return ModelRouteError(502, "upstream_error", "ChatGPT refused this sign-in's request (%s): %s" % (code, message))
     return None
 
 
@@ -2886,19 +2888,19 @@ def _chatgpt_http_error(exc):
     except Exception:
         pass
     if exc.code == 429:
-        return ChatGPTError(429, "rate_limit_error", "The ChatGPT plan's limit was reached: " + message)
+        return ModelRouteError(429, "rate_limit_error", "The ChatGPT plan's limit was reached: " + message)
     if exc.code in (400, 404, 413, 422):
-        return ChatGPTError(400, "invalid_request_error", "ChatGPT rejected the request: " + message)
+        return ModelRouteError(400, "invalid_request_error", "ChatGPT rejected the request: " + message)
     if exc.code == 503:
-        return ChatGPTError(503, "upstream_error", "ChatGPT plan usage is unavailable just now: " + message)
+        return ModelRouteError(503, "upstream_error", "ChatGPT plan usage is unavailable just now: " + message)
     # 401 and 403 are LLMSim's credential failing, not the caller's, so they
     # are not passed on as one: a 401 here would tell a gateway its own key
     # was wrong and send somebody off to fix the wrong thing.
-    return ChatGPTError(502, "upstream_error", "ChatGPT refused the request (%d): %s" % (exc.code, message))
+    return ModelRouteError(502, "upstream_error", "ChatGPT refused the request (%d): %s" % (exc.code, message))
 
 
 def chatgpt_open(payload):
-    """Open the upstream stream. Raises ChatGPTError before any byte is sent
+    """Open the upstream stream. Raises ModelRouteError before any byte is sent
     to the client, so a failure can still be an honest HTTP status."""
     body = json.dumps(payload).encode()
     for attempt in (0, 1):
@@ -2911,7 +2913,7 @@ def chatgpt_open(payload):
                 continue          # the token was revoked or rotated under us: refresh once and retry
             raise _chatgpt_http_error(exc)
         except Exception as exc:
-            raise ChatGPTError(502, "upstream_error", "Could not reach ChatGPT: %s" % exc)
+            raise ModelRouteError(502, "upstream_error", "Could not reach ChatGPT: %s" % exc)
 
 
 # -- canonical events: what the route says, in the order it says it -----------
@@ -2933,10 +2935,10 @@ def _failure_from(ev):
     if known:
         return known
     if code in ("rate_limit_exceeded", "usage_limit_reached", "insufficient_quota"):
-        return ChatGPTError(429, "rate_limit_error", "The ChatGPT plan's limit was reached: " + message)
+        return ModelRouteError(429, "rate_limit_error", "The ChatGPT plan's limit was reached: " + message)
     if code in ("context_length_exceeded", "invalid_prompt", "invalid_request_error"):
-        return ChatGPTError(400, "invalid_request_error", message)
-    return ChatGPTError(502, "upstream_error", "ChatGPT failed: " + message)
+        return ModelRouteError(400, "invalid_request_error", message)
+    return ModelRouteError(502, "upstream_error", "ChatGPT failed: " + message)
 
 
 def chatgpt_events(resp):
@@ -2984,10 +2986,10 @@ def chatgpt_events(resp):
             return
         elif kind in ("response.failed", "error"):
             raise _failure_from(ev)
-    raise ChatGPTError(502, "upstream_error", "ChatGPT closed the stream before the answer was finished.")
+    raise ModelRouteError(502, "upstream_error", "ChatGPT closed the stream before the answer was finished.")
 
 
-def _collect(events, plan, who="ChatGPT"):
+def _collect(events, plan, who):
     """The whole answer as the {text, tool_calls} turn the script produces, so
     a client that did not ask for a stream is served by the builders every
     other route already uses."""
@@ -3214,7 +3216,7 @@ class _ResponsesEnc:
             "failed", self.output, error={"code": exc.kind, "message": exc.message})})]
 
 
-def chatgpt_encoder(shape, model, body):
+def model_route_encoder(shape, model, body):
     if shape == "anthropic":
         return _AnthropicEnc(model)
     if shape == "responses":
@@ -3238,7 +3240,7 @@ def chatgpt_encoder(shape, model, body):
 # x-api-key; or, for a gateway that stands in front of the API, whatever token
 # that gateway issues, sent as Authorization: Bearer.
 
-class AnthropicError(ChatGPTError):
+class AnthropicError(ModelRouteError):
     pass
 
 
@@ -6614,7 +6616,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 models, default = chatgpt_models()
                 return self.send_json(200, {"models": models, "default": default})
-            except ChatGPTError as exc:
+            except ModelRouteError as exc:
                 return self.send_json(exc.status, {"error": exc.message})
 
         if path == "/api/ui/suite":
@@ -7379,7 +7381,7 @@ class Handler(BaseHTTPRequestHandler):
                          else responses_body if shape == "responses" else openai_body)
                 return self.send_json(200, build(turn, model))
 
-            enc, said, made = chatgpt_encoder(shape, model, body), [], []
+            enc, said, made = model_route_encoder(shape, model, body), [], []
             for kind, data in events:
                 frames = (enc.text(data) if kind == "text" else enc.call(data) if kind == "call" else enc.end(data))
                 if not begun:
@@ -7405,7 +7407,7 @@ class Handler(BaseHTTPRequestHandler):
                         int((time.time() - started) * 1000))
                     settle(reply="".join(said)[:400],
                            usage={"input": u["input"], "output": u["output"], "cacheRead": u["cached"], "model": plan})
-        except ChatGPTError as exc:
+        except ModelRouteError as exc:
             log(route + " failed %s: %s" % ("mid-stream" if begun else "before the first word", exc.message))
             settle(status=exc.status, error=exc.message)
             if not begun:
@@ -7635,7 +7637,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 plan = plan_model()
                 resp = chatgpt_open(chatgpt_payload(canon, plan))
-            except ChatGPTError as exc:
+            except ModelRouteError as exc:
                 log("chatgpt failed before it began: %s" % exc.message)
                 if not CONFIG["chatgpt"]["fallback"]:
                     record({"provider": self.provider, "shape": shape, "model": model,

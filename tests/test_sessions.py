@@ -525,7 +525,7 @@ def api(sim, method, path, body=None, headers=None):
 
 
 def case_the_rest_api_records_and_replays_a_run_that_has_a_different_run_id(sim, stub):
-    """The shape of Maniple's own use: a prompt carrying a run id from the clock, recorded once and replayed
+    """The shape of a common use: a prompt carrying a run id from the clock, recorded once and replayed
     on a later run with another id. Without a mask the two asks never meet."""
     sim.configure(routing={"default": "scripted", "models": {}})
     masks = [r"run-\d{6}"]

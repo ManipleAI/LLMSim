@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# This agent's own LLMSim, in a container, apart from the one Maniple's tests use on :8099.
+# This agent's own LLMSim, in a container, apart from any other on :8099.
 #
 #   llmsim/start-llmsim.sh                      build the LLMSim this folder is part of, and (re)start it
 #   LLMSIM_DIR=/path/to/LLMSim llmsim/start-llmsim.sh   build another checkout instead

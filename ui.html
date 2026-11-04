@@ -7,9 +7,8 @@
 <!--
   One file, no build step, no dependency — the same promise the server makes.
 
-  Colours are Maniple's own, copied from its app/globals.css rather than
-  eyeballed: this console sits beside Maniple's screens, and a near miss
-  reads worse than a deliberate difference.
+  Colours are one fixed palette, defined once below rather than eyeballed
+  per screen: a near miss reads worse than a deliberate difference.
 
   Laid out as a control plane rather than a page of cards, because it is now
   four unrelated jobs — what a model answers, where traffic goes, what came
@@ -97,7 +96,7 @@
   nav .foot .who b { color:var(--chrome-fg); font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   nav .foot .who form { margin:0 0 0 auto; }
 
-  /* ── sign-in: Maniple's card, in front of the console while nobody is signed in ── */
+  /* ── sign-in: a card in front of the console while nobody is signed in ── */
   #signin { display:none; position:fixed; inset:0; z-index:1000; background:var(--page); align-items:center; justify-content:center; padding:16px; overflow:auto; }
   body.signing-in #signin { display:flex; }
   body.signing-in > nav, body.signing-in > main { visibility:hidden; }
@@ -602,7 +601,7 @@
           <input id="f-unknownModel" type="checkbox" style="width:auto" onchange="saveFidelity()"> 404 a model that is not in the catalogue
         </label>
         <div class="note warn">
-          The last one is off by default and that is not an oversight: a gateway may route an upstream name this list has never heard of — Maniple's own sends <code>claude-sonnet-4-5</code> — so turning it on without checking breaks a working deployment.
+          The last one is off by default and that is not an oversight: a gateway may route an upstream name this list has never heard of — one in real use sends <code>claude-sonnet-4-5</code> — so turning it on without checking breaks a working deployment.
         </div>
       </div>
 
@@ -842,7 +841,7 @@
   <!-- ── Sessions ───────────────────────────────────────────────────── -->
   <section class="view" id="v-sessions" hidden>
     <div class="head">
-      <div><h1>Record and replay</h1><p>Record a real run once — a Maniple session, say — and replay it exactly, offline and free.</p></div>
+      <div><h1>Record and replay</h1><p>Record a real run of your agent once and replay it exactly, offline and free.</p></div>
     </div>
     <div class="body">
       <div class="card">

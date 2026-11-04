@@ -1,5 +1,5 @@
 # LLMSim as a cluster service, so a gateway or a workspace pod can reach it
-# by name. Namespace is passed in; nothing here is Maniple-specific.
+# by name. Namespace is passed in; nothing here is specific to one deployment.
 #
 #   docker build -t llmsim:dev . && docker save llmsim:dev | k3s ctr images import -
 #   kubectl -n <ns> apply -f deploy/k8s-data.yaml     # once: the volume for its state

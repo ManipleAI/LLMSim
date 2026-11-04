@@ -17,8 +17,8 @@ Sitting where the vendor sits keeps the entire real path in the picture:
 
 ```
 Claude Code ─┐
-HarnessRouter ├→ LiteLLM ──→ LLMSim
-Langflow      │              (instead of api.anthropic.com)
+Agent harness ├→ LiteLLM ──→ LLMSim
+Agent builder │              (instead of api.anthropic.com)
 flows        ─┘
 ```
 
@@ -301,8 +301,8 @@ into the other behaviour.
 ## Recording a session, and replaying it exactly
 
 Scripted answers are written by hand, and relayed ones differ every time. A
-**session recording** is the third thing: run a real session once — a Maniple
-agent going through the gateway to a real model, say — keep every answer, and
+**session recording** is the third thing: run a real session once — an
+agent going through your gateway to a real model, say — keep every answer, and
 from then on answer that same run with exactly those words. Offline, free, and
 identical every time, which is what a regression test of an agent needs and a
 live model can never give.
@@ -314,8 +314,8 @@ Record & replay → Replay
 
 ### The API a test harness drives
 
-Plain HTTP, so a harness needs nothing but a client. Maniple's suite drives it
-this way (`test/system/llmsim.py`, with `--llmsim-record` / `--llmsim-replay`).
+Plain HTTP, so a harness needs nothing but a client: a test suite starts a
+recording, runs its agents and stops it, and later replays the same run.
 
 | | |
 |---|---|
@@ -354,8 +354,8 @@ a harness downloads the cassette after recording, keeps it in its own repository
 and uploads it again before a replay.
 
 **Masks.** A request is matched on its ask, and an ask can carry text that is
-different every run — a run id made from the clock, say, which Maniple puts in
-every prompt it sends. Left alone, a replay asks for something the recording
+different every run — a run id made from the clock, say, which some harnesses put in
+every prompt they send. Left alone, a replay asks for something the recording
 never held. A *mask* is a regular expression whose matches are removed from the
 ask, in the recording **and again in the replay**:
 
@@ -430,9 +430,9 @@ A cassette is a JSON file. **Download** and **Import** move one between machines
 an imported file is checked, and the keys in it are worked out again rather than
 believed, since a key decides which request is given which answer.
 
-**What is not verified.** The matching has been tested against the script, the
-plan stand-in and all three wire formats. It has not been tried against a real
-Maniple session, whose requests carry more than any test here does. The first
+**What is not verified.** The matching has been tested against the script, a
+real model's stand-in and all three wire formats. It has not been tried against
+every real agent platform's session, whose requests carry more than any test here does. The first
 recording will say: if requests that should match show as *no recording*, the
 console lists the ask each one arrived with.
 
@@ -655,7 +655,7 @@ a setup that currently works.
 | `validate` | on | Refuses a malformed request the way the vendor does — missing `max_tokens`, empty `messages`, an invalid role. A simulator that answers 200 to a bad request is worse than none: the client passes here and fails in production. |
 | `limits` | on | Enforces each model's context window and maximum output. |
 | `headers` | on | `request-id`, the rate-limit trio, and **`retry-after` on a 429** — without which a 429 is a dead end and every backoff is a guess. |
-| `unknownModel` | **off** | 404s a model that is not in the catalogue. Off deliberately: a gateway may route an upstream name this list has never heard of — Maniple's own sends `claude-sonnet-4-5` — so turning it on without checking breaks a working deployment. |
+| `unknownModel` | **off** | 404s a model that is not in the catalogue. Off deliberately: a gateway may route an upstream name this list has never heard of — one in real use sends `claude-sonnet-4-5` — so turning it on without checking breaks a working deployment. |
 
 Responses carry what a real one carries: Anthropic's `cache_creation_input_tokens`
 and `cache_read_input_tokens`, OpenAI's `system_fingerprint`, `service_tier`,

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build LLMSim, put it in k3s, and apply it — script, volume and all.
 #
-#   NAMESPACE=maniple ./deploy/install.sh
+#   NAMESPACE=llmsim ./deploy/install.sh
 #
 # On k3d rather than k3s: K3D_CLUSTER=<name> NAMESPACE=... ./deploy/install.sh
 #

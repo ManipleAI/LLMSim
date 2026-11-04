@@ -127,8 +127,8 @@ API_KEYS = {
 #
 # WHERE IT COMES FROM
 #
-# Every model id declared by any base the Coding Agent Router serves, plus
-# the real ids in Maniple's own model catalogue. Both were read from a
+# Every model id declared by the coding agents it was built against, plus
+# the real ids in a gateway's own model catalogue. Both were read from a
 # running deployment rather than typed, because a hand-kept list of seventy
 # names drifts the week after it is written. To regenerate, ask the engine
 # for its bases and union their model ids with ModelCatalogEntry.realModelId.
@@ -185,7 +185,7 @@ MODELS = {
 # time and visibly canned, while wiring seventy models to real vendors costs
 # seventy configurations and a real bill. This gives genuinely generated,
 # varied answers for any model name, from one cheap model, with nothing
-# downstream reconfigured — Maniple, the gateway and the agent still ask for
+# downstream reconfigured — the platform, the gateway and the agent still ask for
 # claude-opus-5 or gpt-5.4 and still get an answer in that vendor's format.
 #
 # Unset LLMSIM_UPSTREAM and nothing changes: no request leaves the machine.
@@ -243,8 +243,8 @@ DEFAULTS = {
     #                 does not is exactly what this is for.
     #   unknownModel  404 a model that is not in the catalogue. OFF by
     #                 default, and not an oversight: a gateway may route an
-    #                 upstream name this list has never heard of — Maniple's
-    #                 own does, sending claude-sonnet-4-5 — and turning this
+    #                 upstream name this list has never heard of — one in
+    #                 real use does, sending claude-sonnet-4-5 — and turning this
     #                 on without checking breaks a working deployment.
     #   headers       request-id, rate-limit and retry-after headers.
     #   limits        refuse a request past the model's context window.
@@ -1497,7 +1497,7 @@ def anthropic_body(turn, model):
         "stop_reason": stop,
         "stop_sequence": None,
         # The cache fields are not decoration. Claude Code reports them, and
-        # Maniple's own extractUsage reads cacheReadInputTokens and
+        # gateways read cacheReadInputTokens and
         # cacheCreationInputTokens — so a usage path that handles them could
         # never be exercised while this returned two numbers.
         #
@@ -1699,7 +1699,7 @@ def resolve_tool_name(scripted, declared):
 # ── OpenAI Responses: /v1/responses ──────────────────────────────────────
 #
 # A third wire format, and not an optional one: Codex talks Responses, not
-# Chat Completions. Pointing HarnessRouter's Codex backend at this server got
+# Chat Completions. Pointing a Codex backend at this server got
 # `404 No such route: /v1/responses` five times over while the agent retried —
 # the routing was right and the format was missing.
 
@@ -2687,7 +2687,7 @@ def _compile_masks(patterns):
     """(compiled, sources) from a list of regular expressions, or ValueError.
 
     A mask is text that changes from run to run and is not what was asked:
-    Maniple's prompts carry a run id made from the clock, so without one the
+    Some harnesses put a run id made from the clock in every prompt, so without one the
     ask a replay sees is never the ask the recording held. Each mask is
     removed from the ask — in the recording and again in the replay — before
     anything is compared. They are bounded and checked here, because they come
@@ -6196,7 +6196,7 @@ class Handler(BaseHTTPRequestHandler):
         return self._session_reply(False, "Unknown action.", 400)
 
     def session_api(self, method, path, body, query):
-        """The API a test harness drives. Plain REST, so Maniple's suite needs
+        """The API a test harness drives. Plain REST, so a test suite needs
         nothing but an HTTP client:
 
             GET    /api/sessions                status, and every cassette

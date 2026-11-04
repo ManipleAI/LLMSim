@@ -43,7 +43,7 @@
   "rules": [
     {
       "name": "knowledge-search",
-      "_why": "A grounded agent is one that looks things up before it answers. Keyed on the tool Maniple's context server offers, so it only fires for an agent that was given the company's knowledge \u2014 the same question to an agent without it falls through, which is the behaviour being told apart. The search is for the question itself and the answer repeats what came back, so a test can assert that a passage reached the reader rather than that a tool was called.",
+      "_why": "A grounded agent is one that looks things up before it answers. Keyed on the tool a context server offers, so it only fires for an agent that was given the company's knowledge \u2014 the same question to an agent without it falls through, which is the behaviour being told apart. The search is for the question itself and the answer repeats what came back, so a test can assert that a passage reached the reader rather than that a tool was called.",
       "when": {
         "tool": "search_context"
       },
@@ -125,7 +125,7 @@
             {
               "name": "Bash",
               "input": {
-                "command": "cat /workspace/.maniple/granted-capabilities.json"
+                "command": "cat /workspace/.agent/granted-capabilities.json"
               }
             }
           ]
@@ -136,7 +136,7 @@
             {
               "name": "Bash",
               "input": {
-                "command": ".maniple/request-capability.sh \"SAP.Invoice.Read\" \"Needed to build INVOICES.md, a report of supplier invoices that are not three-way matched, by reading GET /api/v2/invoices and filtering on matchStatus.\""
+                "command": ".agent/request-capability.sh \"SAP.Invoice.Read\" \"Needed to build INVOICES.md, a report of supplier invoices that are not three-way matched, by reading GET /api/v2/invoices and filtering on matchStatus.\""
               }
             }
           ]

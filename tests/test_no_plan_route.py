@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """This repository answers from a person's rules, an upstream or Anthropic's API, never from a
-ChatGPT subscription or as anybody else's client. Nothing that does may come into it.
+ChatGPT subscription or as anybody else's client, and it names no company's own systems: it is
+open source for anyone. Nothing that does may come into it.
 
     python3 tests/test_no_plan_route.py
 
-LLMSim-internal, Maniple's own copy, is this repository plus the ChatGPT plan route, and is kept
-in step by merging from here. INTERNAL.md marks that copy, and this check does not apply there.
+A private copy that keeps such things marks itself with INTERNAL.md, and this check does not
+apply there.
 """
 
 import os
@@ -16,6 +17,9 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FORBIDDEN = re.compile(r"chatgpt|chat\.openai|sign.in.with.openai|app_EMoam|codex_cli|REMOVED_CLIENT_ID|removed_originator|"
                        r"dynamic_agent_client|tokens\.use\.direct|backend-api", re.I)
+# The publisher's name is on the repository's address and nowhere else.
+ADDRESS = "ManipleAI/LLMSim"
+INTERNAL = re.compile(r"%s|harness ?router|coding agent router" % re.escape(ADDRESS.split("/")[0][:-2]), re.I)
 
 
 def main():
@@ -33,13 +37,13 @@ def main():
         if b"\0" in raw:
             continue
         for number, line in enumerate(raw.decode("utf-8", "replace").split("\n"), 1):
-            if FORBIDDEN.search(line):
+            if FORBIDDEN.search(line) or INTERNAL.search(line.replace(ADDRESS, "")):
                 found.append("%s:%d: %s" % (name, number, line.strip()[:100]))
     if found:
-        print("  FAIL  this repository must not carry the ChatGPT plan route\n        " + "\n        ".join(found[:40]))
+        print("  FAIL  this repository must not carry the ChatGPT plan route or a company's own names\n        " + "\n        ".join(found[:40]))
         print("\n0 passed, 1 failed")
         sys.exit(1)
-    print("  ok    nothing of the ChatGPT plan route is in any tracked file\n\n1 passed, 0 failed")
+    print("  ok    no ChatGPT plan route and no company's own names in any tracked file\n\n1 passed, 0 failed")
 
 
 if __name__ == "__main__":

@@ -14,7 +14,7 @@ and keeps every request. It runs as one Python process with no dependencies.
 
 [Quick start](#quick-start) · [How to use it](#how-to-use-it) · [Test an agent](#test-an-agent) · [Ways to run it](#ways-to-run-it) · [Documentation](docs/guide.md)
 
-<img src="docs/images/home.png" alt="The LLMSim console: Simulate a model, Test agents, Settings" width="900">
+<img src="docs/images/canvas.png" alt="A scenario on the canvas: a coordinator agent handing work to two stub agents, with routing, handoff, duplication and termination checks" width="900">
 
 </div>
 
@@ -115,6 +115,8 @@ print(reply.content[0].text)
 Then open the console at **http://localhost:8099/ui**. Your request is under **Traffic**,
 with the rule that answered it. The full documentation is served at
 **http://localhost:8099/guide**.
+
+<img src="docs/images/home.png" alt="The LLMSim console: Simulate a model, Test agents, Settings" width="900">
 
 ## How to use it
 
@@ -224,9 +226,7 @@ scenario installs (rules, mock servers, stub agents, faults) applies to that run
 You can also build the same scenario visually: who speaks, the agent under test, what it
 reaches (the model, stub agents, proxies, mock tool servers, mock backends, seeded records,
 faults), and what must hold at the end. The **Form** and **JSON** views show the same
-scenario.
-
-<img src="docs/images/canvas.png" alt="A scenario on the canvas: a coordinator agent handing work to two stub agents, with routing, handoff, duplication and termination checks" width="900">
+scenario. The picture at the top of this page is one.
 
 ### See what passes, what fails, and why
 
@@ -352,6 +352,8 @@ LLMSIM_ADMIN_PASSWORD='choose one' LLMSIM_API_KEY='llmsim-…' python3 server.py
   `LLMSIM_OPENAI_KEY`, `LLMSIM_ANTHROPIC_KEY` and `LLMSIM_DEEPSEEK_KEY` to keys of your own.
 
 Even with it on, put LLMSim behind HTTPS before you expose it beyond a network you trust.
+
+To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
 ## Documentation
 

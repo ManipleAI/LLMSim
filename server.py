@@ -684,6 +684,11 @@ def relaying():
 # caller that never checks a context window is the thing this catches.
 MODEL_FAMILIES = [
     ("claude-opus",   {"context": 200000, "maxOutput": 32000}),
+    # Sonnet 5 and 5.5 before the family row, which carries 4.5's figures: a
+    # prefix match gave Sonnet 5 a 64,000-token output limit it does not have,
+    # and refused clients that asked for its real 128,000. Published by
+    # Anthropic: 1M context, 128K output on the Messages API.
+    ("claude-sonnet-5", {"context": 1000000, "maxOutput": 128000}),
     ("claude-sonnet", {"context": 200000, "maxOutput": 64000}),
     ("claude-haiku",  {"context": 200000, "maxOutput": 8192}),
     ("claude-fable",  {"context": 200000, "maxOutput": 32000}),
@@ -5890,6 +5895,15 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/v1/messages" and self.provider == "anthropic":
             return self.handle_chat(body, "anthropic")
+        # DeepSeek publishes an Anthropic-compatible endpoint beside its own
+        # (api.deepseek.com/anthropic), and a gateway sends any client that
+        # speaks Messages there: LiteLLM's deepseek/ provider does. Without it a
+        # coding agent on a DeepSeek model got "No such route" here and nowhere
+        # else.
+        if self.provider == "deepseek" and path in ("/anthropic/v1/messages", "/anthropic/v1/messages/count_tokens"):
+            path = path[len("/anthropic"):]
+            if path == "/v1/messages":
+                return self.handle_chat(body, "anthropic")
         if path == "/v1/messages/count_tokens":
             text = json.dumps(body.get("messages", []))
             return self.send_json(200, {"input_tokens": rough_tokens(text)})

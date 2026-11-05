@@ -86,6 +86,19 @@ published, so they're safe to commit to a test config.
 | OpenAI | `http://localhost:8099/openai/v1` | `sk-llmsim-000000000000000000000000` |
 | DeepSeek | `http://localhost:8099/deepseek/v1` | `sk-llmsim-deepseek-0000000000000000` |
 
+**Which models.** The three routes are three request formats, not three vendors. Every model
+goes through the one whose format its clients speak:
+
+- **`/anthropic`:** Claude.
+- **`/openai`:** GPT, and every model reached through an OpenAI-compatible endpoint: Gemini,
+  Grok, Qwen, Kimi, Llama, Mistral, GLM, Nemotron, MiniMax and the open-weight models agent
+  harnesses run.
+- **`/deepseek`:** DeepSeek.
+
+Each route's `/v1/models` lists the model ids coding agents and gateways commonly ask for,
+about seventy in all. Any id missing from it still gets an answer, so a client never has to
+wait for this list to know its model.
+
 Send it something:
 
 ```bash

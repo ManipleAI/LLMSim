@@ -1,6 +1,6 @@
 <div align="center">
 
-# LLMSim
+# LLMSim - LLM ans AI Agent Simulator for Testing
 
 **A stand-in for the model your agent talks to, and a test kit for the agent itself.**
 

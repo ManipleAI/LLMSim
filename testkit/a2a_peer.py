@@ -328,6 +328,30 @@ def _sse_events(text):
     return out
 
 
+def _retext(events, text):
+    """The same answer events with what the peer said replaced by `text`: a message's parts, a task's status message
+    and artifacts. A fault that changes the answer must change what the caller receives, not only what is logged."""
+    part = [{"kind": "text", "text": text}]
+    out = []
+    for e in events:
+        res = e.get("result")
+        if not isinstance(res, dict):
+            out.append(e)
+            continue
+        res = dict(res)
+        if res.get("kind") == "message":
+            res["parts"] = part
+        else:
+            status = dict(res.get("status") or {})
+            if status.get("message") or text:
+                status["message"] = dict(status.get("message") or {"kind": "message", "role": "agent", "messageId": uuid.uuid4().hex}, parts=part)
+            res["status"] = status
+            if res.get("artifacts"):
+                res["artifacts"] = [dict(a, parts=part) for a in res["artifacts"]]
+        out.append(dict(e, result=res))
+    return out
+
+
 @route("/a2a-proxy/")
 def _proxy_endpoint(handler, method, path, rest, raw):
     name, _, tail = rest.partition("/")
@@ -401,9 +425,18 @@ def _proxy_endpoint(handler, method, path, rest, raw):
     reply_text = _text(result.get("parts")) or _text(((result.get("status") or {}).get("message") or {}).get("parts")) or \
         "\n".join(_text(a.get("parts")) for a in result.get("artifacts") or [])
     if kind == "wrong_answer":
-        reply_text, events = fault.get("text", "Wrong."), [dict(e, result=dict(e.get("result") or {}, parts=[{"kind": "text", "text": fault.get("text", "Wrong.")}])) if e.get("result", {}).get("kind") == "message" else e for e in events]
+        reply_text = fault.get("text", "Wrong.")
+        events = _retext(events, reply_text)
+    elif kind == "contradict" and n > 1:
+        reply_text = fault.get("text", "Actually, the opposite is true.")
+        events = _retext(events, reply_text)
     elif kind == "empty":
         reply_text = ""
+        events = _retext(events, "")
+    elif kind == "never_complete":
+        reply_text = ""
+        events = [dict(e, result={"kind": "task", "id": uuid.uuid4().hex, "contextId": (e.get("result") or {}).get("contextId") or uuid.uuid4().hex,
+                                  "status": {"state": "working"}}) if e.get("result") else e for e in events[-1:]]
     _event(run, name, caller, reply_text, inbound, method="reply", state=(result.get("status") or {}).get("state", ""), fault=kind or "", error=bool(last.get("error")))
     if rpc == "message/stream":
         return _sse(handler, events)

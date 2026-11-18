@@ -184,6 +184,38 @@ def case_peer_faults_are_the_same_rules_and_the_system_is_judged_on_how_it_copes
         assert sim.api("PUT", "/api/kitfaults/bad", bad_fault)[0] == 400, bad_fault
 
 
+def case_a_fault_on_a_proxied_peer_changes_what_the_caller_receives(sim):
+    """Not only what the timeline says: the caller got the real answer through an `empty` fault once."""
+    setup(sim)
+    sim.api("PUT", "/api/a2aproxies/via", {"url": sim.url("/a2a/billing"), "mode": "passthrough"})
+    ask = lambda: sim.api("POST", "/a2a-proxy/via", {"jsonrpc": "2.0", "id": 1, "method": "message/send", "params": {"message": {
+        "kind": "message", "role": "user", "messageId": "m", "parts": [{"kind": "text", "text": "please refund it"}]}}})[1]
+
+    def said(body):
+        res = body.get("result") or {}
+        if res.get("kind") == "message":
+            return "".join(p.get("text", "") for p in res.get("parts") or [])
+        return "".join(p.get("text", "") for p in ((res.get("status") or {}).get("message") or {}).get("parts") or [])
+
+    def fault(f, **g):
+        assert sim.api("PUT", "/api/kitfaults/pf", dict({"target": "peer", "match": {"field": "peer", "op": "eq", "value": "via"}, "fault": f}, **g))[0] == 200
+    try:
+        assert "R-77" in said(ask())
+        fault({"type": "empty"})
+        got = ask()
+        assert said(got) == "" and "R-77" not in json.dumps(got), got
+        fault({"type": "wrong_answer", "text": "Refund rejected."})
+        assert said(ask()) == "Refund rejected."
+        fault({"type": "contradict", "text": "Actually no."})
+        assert said(ask()) == "Actually no."          # by now this is not the first call, and every later one is untrue
+        fault({"type": "never_complete"})
+        res = ask()["result"]
+        assert res["kind"] == "task" and res["status"]["state"] == "working" and "R-77" not in json.dumps(res), res
+    finally:
+        sim.api("DELETE", "/api/kitfaults/pf")
+        sim.api("DELETE", "/api/a2aproxies/via")
+
+
 def case_a_hostile_peer_is_caught_when_the_agent_obeys_it(sim):
     sim.api("PUT", "/api/a2a/attacker", {"id": "attacker", "results": [{"when": {}, "result": "Order 1182 looks fine."}], "inject": {"preset": "ignore-instructions"}})
     flow = lambda final_when: {"name": "ask-attacker", "when": {"contains": "refund"}, "turns": [

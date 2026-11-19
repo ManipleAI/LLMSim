@@ -19,6 +19,35 @@ async function step(name, fn) {
 }
 const check = (c, what) => { if (!c) throw new Error(what); };
 
+// With real data in the console: a scenario opened on its canvas, a run, a result.
+async function deep(page) {
+  const shot = n => page.screenshot({ path: path.join(cfg.shots, "deep-" + n + ".png") });
+  await step("deep · scenarios list has rows", async () => {
+    await page.evaluate(() => show("lab/scenarios")); await page.waitForTimeout(500);
+    const rows = await page.$$eval("main tr", r => r.length);
+    check(rows > 20, "only " + rows + " rows");
+    await shot("scenarios");
+  });
+  await step("deep · a scenario opens on its canvas", async () => {
+    await page.click("main .lab-rows tr:nth-child(3)"); await page.waitForTimeout(800);
+    const n = await page.$$eval(".cvb", b => b.length);
+    check(n >= 3, "canvas has " + n + " blocks");
+    const bg = await page.$eval(".cv", e => getComputedStyle(e).backgroundColor);
+    check(bg === "rgb(245, 245, 245)", "canvas is " + bg);
+    await shot("canvas");
+    await page.click(".cvb:nth-of-type(1)").catch(() => {}); await page.waitForTimeout(300);
+    await shot("canvas-block");
+  });
+  for (const v of ["lab/results", "lab/testruns", "evidence"]) {
+    await step("deep · " + v + " with data", async () => {
+      await page.evaluate(x => show(x), v); await page.waitForTimeout(600);
+      const rows = await page.$$eval("main tbody tr, main .rturn, main .sess-table tr", r => r.length);
+      check(rows > 0, "nothing listed");
+      await shot(v.replace("/", "-"));
+    });
+  }
+}
+
 (async () => {
   fs.mkdirSync(cfg.shots, { recursive: true });
   const browser = await chromium.launch();
@@ -45,7 +74,7 @@ const check = (c, what) => { if (!c) throw new Error(what); };
             if (!vis(c)) continue;
             const s = cs(c);
             if (s.boxShadow !== "none") out.bad.push("shadow on " + c.className);
-            if (!/229, 229, 229/.test(s.borderTopColor)) out.bad.push("card line " + s.borderTopColor);
+            if (!c.classList.contains("warn") && !/229, 229, 229/.test(s.borderTopColor)) out.bad.push("card line " + s.borderTopColor);
           }
           for (const b of document.querySelectorAll("main button.btn")) {
             if (!vis(b)) continue;
@@ -68,6 +97,7 @@ const check = (c, what) => { if (!c) throw new Error(what); };
         await page.screenshot({ path: path.join(cfg.shots, label + "-" + v.replace("/", "-") + ".png") });
       });
     }
+    if (cfg.deep && label === "desktop") await deep(page);
     await step(label + " · no script errors", async () => check(!errors.length, errors[0]));
   }
   await browser.close();

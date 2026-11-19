@@ -24,12 +24,17 @@ def main():
         print("Console look in a browser\n  skip  Node or Playwright for Node was not found\n\n0 passed, 0 failed")
         return 0
     shots = os.environ.get("LLMSIM_SHOTS") or tempfile.mkdtemp(prefix="llmsim-look-")
-    sim = Sim()
+    # LLMSIM_LOOK_BASE: look at a console that already has agents, scenarios and runs in it.
+    given = os.environ.get("LLMSIM_LOOK_BASE")
+    sim = None if given else Sim()
     try:
-        sim.start()
-        done = subprocess.run([node, os.path.join(HERE, "ui", "console_look.cjs"), json.dumps({"base": sim.base, "shots": shots})], timeout=600)
+        if sim:
+            sim.start()
+        cfg = {"base": given or sim.base, "shots": shots, "deep": bool(given)}
+        done = subprocess.run([node, os.path.join(HERE, "ui", "console_look.cjs"), json.dumps(cfg)], timeout=900)
     finally:
-        sim.stop()
+        if sim:
+            sim.stop()
     print("pictures: " + shots)
     return done.returncode
 

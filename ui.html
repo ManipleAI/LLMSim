@@ -17,9 +17,9 @@
 -->
 <style>
   :root {
-    --page:#efece6; --surface:#fff; --subtle:#f5f2ec;
-    --ink:#14181f; --muted:#5a6068; --faint:#8a8f97;
-    --border:#e7e2d9; --border-soft:#ede8e0;
+    --page:#fafafa; --surface:#fff; --subtle:#f5f5f5;
+    --ink:#14181f; --muted:#5a6068; --faint:#6e747c;
+    --border:#e5e5e5; --border-soft:#ececec;
     --primary:#b23a22; --primary-hover:#8e2c18; --primary-tint:#f7ece8;
     --amber:#a96609; --amber-tint:#fbf0dd;
     --green:#2a6f4e; --green-tint:#e4f0e9;
@@ -70,18 +70,18 @@
   /* Where answers come from, on every page: it changes what every other page does. */
   #statusbar { position:sticky; top:0; z-index:6; height:var(--bar); display:flex; align-items:center; gap:8px; padding:0 28px;
     background:var(--surface); border-bottom:1px solid var(--border); font-size:12px; color:var(--muted); }
-  #statusbar .chip { border:1px solid var(--border); background:var(--page); color:var(--ink); border-radius:999px; padding:2px 10px; font:500 11.5px/1.5 inherit; cursor:pointer; }
+  #statusbar .chip { border:1px solid var(--border); background:#fff; color:var(--ink); border-radius:999px; padding:2px 10px; font:500 11.5px/1.5 inherit; cursor:pointer; }
   #statusbar .chip.ok { border-color:#cfe3d2; background:#eef6ef; color:#25613a; }
   #statusbar .chip.warn { border-color:#e6cf9f; background:var(--amber-tint); color:#7a5410; }
-  #statusbar .chip:hover { border-color:#c9c2b6; }
+  #statusbar .chip:hover { border-color:#cfcfcf; }
   #statusbar .sb-host { font-family:var(--mono); font-size:11px; color:var(--faint); }
   .home-spaces { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:14px; }
   @media (max-width:1100px) { .home-spaces { grid-template-columns:1fr; } }
   .home-space { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:16px 18px; display:flex; flex-direction:column; gap:6px; }
   .home-space h2 { margin:0; font-size:16px; }
   .home-space p { margin:0 0 6px; color:var(--muted); font-size:12.5px; }
-  .home-space button { text-align:left; background:var(--page); border:1px solid var(--border-soft); border-radius:7px; padding:8px 10px; cursor:pointer; font:inherit; color:inherit; }
-  .home-space button:hover { border-color:#c9c2b6; }
+  .home-space button { text-align:left; background:var(--subtle); border:1px solid var(--border-soft); border-radius:7px; padding:8px 10px; cursor:pointer; font:inherit; color:inherit; }
+  .home-space button:hover { border-color:#cfcfcf; }
   .home-space button b { display:block; font-size:13px; }
   .home-space button span { display:block; color:var(--muted); font-size:11.5px; }
   .home-space .open { margin-top:auto; align-self:flex-start; }
@@ -150,13 +150,13 @@
   .ov-tasks { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; }
   .ov-task { display:flex; gap:12px; align-items:flex-start; text-align:left; width:100%; cursor:pointer;
     background:#fff; border:1px solid var(--border); border-radius:9px; padding:12px 14px; font:inherit; color:inherit; }
-  .ov-task:hover { border-color:#c9c2b6; background:var(--subtle); }
+  .ov-task:hover { border-color:#cfcfcf; background:var(--subtle); }
   .ov-task b { display:block; font-size:13.5px; }
   .ov-task span { color:var(--muted); font-size:12.5px; }
   .ov-task .go { margin-left:auto; color:var(--faint); font:600 10px/1 var(--mono); letter-spacing:.1em; text-transform:uppercase; white-space:nowrap; padding-top:3px; }
   .ov-connect td { vertical-align:middle; }
   .copy { border:1px solid var(--border); background:#fff; border-radius:6px; font:500 11px/1 inherit; padding:5px 8px; cursor:pointer; color:var(--muted); }
-  .copy:hover { color:var(--ink); border-color:#c9c2b6; }
+  .copy:hover { color:var(--ink); border-color:#cfcfcf; }
   .card a { color:var(--primary); }
   @media (max-width:1000px) { .ov-stats { grid-template-columns:repeat(2, minmax(0, 1fr)); } .ov-tasks { grid-template-columns:1fr; } }
 
@@ -208,11 +208,11 @@
   .ferr { color:var(--primary); font-size:11.5px; margin-top:4px; }
   textarea.bad { border-color:var(--primary); background:var(--primary-tint); }
   .flist { margin-top:12px; }
-  .fitem { border:1px solid var(--border); border-radius:9px; padding:10px 14px 14px; margin-bottom:10px; background:#fcfbf8; }
+  .fitem { border:1px solid var(--border); border-radius:9px; padding:10px 14px 14px; margin-bottom:10px; background:#fafafa; }
   .fitem .fitem { background:#fff; }
   .fih { display:flex; align-items:center; gap:6px; }
   .mini { border:1px solid var(--border); background:#fff; border-radius:6px; font:500 11px/1 inherit; padding:5px 8px; cursor:pointer; color:var(--muted); }
-  .mini:hover { color:var(--ink); border-color:#c9c2b6; }
+  .mini:hover { color:var(--ink); border-color:#cfcfcf; }
   .fgen { margin-top:14px; border-top:1px solid var(--border-soft); padding-top:12px; }
   .fgen summary { cursor:pointer; color:var(--muted); font-size:12.5px; }
 
@@ -250,15 +250,15 @@
   .cvb { position:relative; text-align:left; background:#fff; border:1px solid var(--border); border-radius:9px; padding:9px 12px 10px; font:inherit; color:inherit; cursor:pointer; min-width:0; }
   .cv-lane.row .cvb { flex:1 1 190px; max-width:440px; }
   .cvb { cursor:grab; touch-action:none; user-select:none; -webkit-user-select:none; }
-  .cvb:hover { border-color:#c9c2b6; }
+  .cvb:hover { border-color:#cfcfcf; }
   .cvb.drag { cursor:grabbing; z-index:3; box-shadow:0 6px 18px rgba(20, 24, 31, .16); }
   .cv-tools { display:flex; align-items:center; gap:6px; flex-wrap:wrap; justify-content:flex-end; }
   .cv-tools .hint { color:var(--faint); font-size:11px; margin-right:4px; }
   .cv-tools .tag { margin:0; }
   .cv-tidy { border:1px solid var(--border); background:#fff; border-radius:6px; font:500 11px/1 inherit; padding:5px 8px; cursor:pointer; color:var(--muted); white-space:nowrap; }
-  .cv-tidy:hover { color:var(--ink); border-color:#c9c2b6; }
+  .cv-tidy:hover { color:var(--ink); border-color:#cfcfcf; }
   .cvb[aria-current=true] { border-color:var(--primary); box-shadow:0 0 0 2px var(--primary-tint); }
-  .cvb.agent { border-width:2px; border-color:#d8cfc2; }
+  .cvb.agent { border-width:2px; border-color:#d0d0d0; }
   .cvb.agent[aria-current=true] { border-color:var(--primary); }
   .cvb.ghost { border-style:dashed; background:var(--subtle); }
   .cvb.bad { border-color:#e6cf9f; background:var(--amber-tint); }
@@ -268,7 +268,7 @@
   .cvb .n { position:absolute; top:-8px; right:-8px; background:var(--amber); color:#fff; font:600 10px/1 var(--mono); padding:4px 6px; border-radius:9px; }
   .cv-adds { display:flex; flex-wrap:wrap; gap:6px; }
   .cv-lane.row .cv-adds { flex:0 0 auto; align-self:center; }
-  .cv-add { position:relative; border:1px dashed #c9c2b6; background:var(--subtle); border-radius:9px; padding:6px 10px; font:500 12px/1.3 inherit; color:var(--muted); cursor:pointer; text-align:left; white-space:nowrap; }
+  .cv-add { position:relative; border:1px dashed #cfcfcf; background:var(--subtle); border-radius:9px; padding:6px 10px; font:500 12px/1.3 inherit; color:var(--muted); cursor:pointer; text-align:left; white-space:nowrap; }
   .cv-add:hover { color:var(--primary); border-color:var(--primary); }
   .cv-panel { background:#fff; border:1px solid var(--border); border-radius:10px; padding:14px 16px 16px; position:sticky; top:84px; max-height:calc(100vh - 110px); overflow:auto; }
   .cv-panel h3.cvt { font-size:14px; font-weight:650; margin:0; letter-spacing:-.01em; }
@@ -415,10 +415,31 @@
     color:var(--muted); padding:0 9px 8px; position:sticky; top:0; background:var(--surface);
   }
   td { padding:8px 9px; border-top:1px solid var(--border-soft); vertical-align:top; }
-  tr.bad td { background:#fdf5f3; }
+  tr.bad td { background:#fbf3f1; }
   .truncate { max-width:1px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .empty { color:var(--faint); font-size:12.5px; padding:26px 10px; text-align:center; }
   .empty b { display:block; color:var(--muted); font-size:13px; margin-bottom:3px; }
+
+  /* ── the citizen look: Claude-grey page, white cards with neutral lines, flat 6px buttons, black text ── */
+  .card, .ov-stat, .home-space, .list, .cv-panel, .sys, .ov-task { box-shadow:none; }
+  .card, .ov-stat, .home-space, .list, .cv-panel { border-radius:8px; }
+  .head { background:var(--page); }
+  #statusbar { background:var(--page); }
+  button.btn, .seg, .seg button, .mini, .copy, .cv-tidy { border-radius:6px; }
+  button.btn { background:var(--primary); border:1px solid var(--primary); box-shadow:none; }
+  button.btn:hover { background:var(--primary-hover); border-color:var(--primary-hover); }
+  button.ghost { background:#fff; color:var(--ink); border:1px solid var(--border); }
+  button.ghost:hover { background:var(--subtle); color:var(--ink); }
+  .seg { background:#fff; }
+  .seg button[aria-pressed=true] { background:var(--primary); }
+  .mini, .copy, .cv-tidy { color:var(--ink); }
+  input[type=text], input[type=password], input[type=number], select, textarea { border-radius:6px; }
+  .ov-task:hover, .sys:hover { background:var(--subtle); }
+  .cv { background:var(--subtle); border-color:var(--border); }
+  .rturn > div + div, .rtrans { background:var(--subtle); }
+  /* small labels were 9-10px; the citizen scale starts at 11 */
+  .ov-stat .k, .card h2, .rh, th, .sess-table th, .tag, .lab-group h3 { font-size:11px; }
+  .cvb .k, .cv-row > h5, .cv-lane > h4, .rturn .who, .stat span, .list .prov, .cv-panel h3.cvt .k { font-size:10.5px; }
 </style>
 </head>
 <body>

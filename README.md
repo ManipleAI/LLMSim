@@ -331,7 +331,7 @@ example:
 | `LLMSIM_API_KEY` | The key scripts and CI send as `X-LLMSim-Key` |
 | `LLMSIM_DATA` | Where LLMSim keeps what it writes |
 | `LLMSIM_SCRIPT` | The rules file to answer from (default `responses.json`) |
-| `LLMSIM_UPSTREAM`, `LLMSIM_UPSTREAM_KEY`, `LLMSIM_UPSTREAM_FORMAT` | A real model to send requests to |
+| `LLMSIM_UPSTREAM`, `LLMSIM_UPSTREAM_KEY`, `LLMSIM_UPSTREAM_FORMAT`, `LLMSIM_UPSTREAM_PARAMS` | A real model to send requests to, and extra request fields for it |
 | `LLMSIM_RECORD`, `LLMSIM_REPLAY` | Record a session, or replay one |
 
 The [documentation](docs/guide.md) lists all of them.

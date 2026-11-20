@@ -676,7 +676,7 @@
         <h2>Upstream</h2>
         <p class="help">One real model answers for every model routed to it — whatever name the client asked for, and in the format it asked in.</p>
         <label for="url">Base URL</label>
-        <input id="url" class="mono" type="text" placeholder="https://api.openai.com/v1">
+        <input id="url" class="mono" type="text" placeholder="https://api.openai.com">
         <div class="row">
           <div><label for="umodel">Model</label><input id="umodel" class="mono" type="text" placeholder="gpt-4o-mini"></div>
           <div style="flex:0 0 150px"><label for="format">Speaks</label>
@@ -684,6 +684,9 @@
         </div>
         <label for="key">Key <span id="keyset" style="color:var(--green)"></span></label>
         <input id="key" class="mono" type="password" placeholder="leave blank to keep the stored one">
+        <label for="uparams">Extra request fields <span class="hint">· optional JSON, sent with every request</span></label>
+        <input id="uparams" class="mono" type="text" placeholder='{"reasoning_effort": "none"}'>
+        <div class="fh">Some models refuse a request that declares tools unless a field like this is set. A request's own fields are never overridden.</div>
         <label style="display:flex; align-items:center; gap:8px; margin-top:14px; color:var(--ink)">
           <input id="fallback" type="checkbox" style="width:auto"> Answer here if the upstream fails
         </label>
@@ -1636,6 +1639,7 @@ function renderRouting() {
   if (live !== "umodel") document.getElementById("umodel").value = up.model || "";
   if (live !== "format") document.getElementById("format").value = up.format || "openai";
   if (live !== "fallback") document.getElementById("fallback").checked = !!up.fallback;
+  if (live !== "uparams") document.getElementById("uparams").value = Object.keys(up.params || {}).length ? JSON.stringify(up.params) : "";
   document.getElementById("keyset").textContent = up.keySet ? "· stored" : "";
   const fid = CFG.fidelity || {};
   for (const k of ["validate", "limits", "headers", "unknownModel"]) {
@@ -1756,6 +1760,7 @@ const saveUpstream = () => post({
     format: document.getElementById("format").value,
     key: document.getElementById("key").value,
     fallback: document.getElementById("fallback").checked,
+    params: document.getElementById("uparams").value.trim(),
   },
 }, "saved");
 

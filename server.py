@@ -212,6 +212,20 @@ SUITE_KEYS = ("tests", "plans")
 # There, LLMSIM_ADMIN_PASSWORD and LLMSIM_API_KEY put the console and /api behind
 # a sign-in, and the installers set them.
 
+def _env_params():
+    raw = os.environ.get("LLMSIM_UPSTREAM_PARAMS", "").strip()
+    if not raw:
+        return {}
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        value = None
+    if not isinstance(value, dict):
+        sys.stderr.write("llmsim: LLMSIM_UPSTREAM_PARAMS is not a JSON object, so it is ignored\n")
+        return {}
+    return value
+
+
 DEFAULTS = {
     "routing": {
         # What a model does when nothing names it specifically.
@@ -409,6 +423,9 @@ DEFAULTS = {
     },
     "upstream": {
         "url": os.environ.get("LLMSIM_UPSTREAM", "").rstrip("/"),
+        # Extra fields sent with every relayed request, such as {"reasoning_effort": "none"}: some models
+        # refuse a request that declares tools unless one is set. LLMSIM_UPSTREAM_PARAMS is a JSON object.
+        "params": _env_params(),
         "key": os.environ.get("LLMSIM_UPSTREAM_KEY", ""),
         "model": os.environ.get("LLMSIM_UPSTREAM_MODEL", "gpt-4o-mini"),
         "format": os.environ.get("LLMSIM_UPSTREAM_FORMAT", "openai").lower(),
@@ -449,7 +466,19 @@ ROUTES = ("scripted", "relay", "anthropic")
 
 
 def load_config():
-    config = _merge(DEFAULTS, _read_json(CONFIG_PATH, "config") or {})
+    saved = _read_json(CONFIG_PATH, "config") or {}
+    # A saved config that holds an EMPTY url or key does not beat one the environment sets: an upstream
+    # block saved before the variables existed used to switch the relay off with nothing said. A saved
+    # value that differs from the environment still wins (it was chosen in the console), and says so.
+    up = saved.get("upstream")
+    if isinstance(up, dict):
+        for field in ("url", "key"):
+            if up.get(field) == "" and DEFAULTS["upstream"].get(field):
+                up.pop(field)
+        if up.get("url") and DEFAULTS["upstream"]["url"] and up["url"].rstrip("/") != DEFAULTS["upstream"]["url"]:
+            sys.stderr.write("llmsim: the saved upstream %s wins over LLMSIM_UPSTREAM=%s (change or clear it on the Upstream page)\n"
+                             % (up["url"], DEFAULTS["upstream"]["url"]))
+    config = _merge(DEFAULTS, saved)
     # The suite file wins where it exists. An older config that still carries
     # tests keeps working and is migrated on the next save, so nobody loses a
     # suite to this change.
@@ -608,8 +637,16 @@ def set_routing(routing):
 
 
 def routing_view():
-    return {"default": CONFIG["routing"]["default"], "models": dict(CONFIG["routing"]["models"]), "effective": default_route(),
+    chosen = default_route()
+    nowhere = chosen == "relay" and not CONFIG["upstream"]["url"]
+    view = {"default": CONFIG["routing"]["default"], "models": dict(CONFIG["routing"]["models"]),
+            # What really answers: a relay route with no upstream address answers from the script.
+            "effective": "scripted" if nowhere else chosen,
             "routes": list(ROUTES), "hold": route_hold()}
+    if nowhere:
+        view["warning"] = ("The route is relay but no upstream is set, so the script answers. Set LLMSIM_UPSTREAM "
+                           "or fill in the Upstream page.")
+    return view
 
 
 def _rest_routing(method, rest, body, query, host):
@@ -1308,6 +1345,27 @@ class UpstreamError(Exception):
     pass
 
 
+def upstream_failure(exc):
+    """One sentence for what went wrong asking the upstream, in the upstream's own words when it gave any.
+
+    A bare "400 Bad Request" hid the one thing that mattered (a model refusing tools without a reasoning
+    setting), and the only way to see it was to repeat the call by hand."""
+    if isinstance(exc, urllib.error.HTTPError):
+        said = ""
+        try:
+            raw = exc.read()[:4000].decode("utf-8", "replace")
+            try:
+                body = json.loads(raw)
+                err = body.get("error", body) if isinstance(body, dict) else body
+                said = err.get("message") if isinstance(err, dict) else str(err)
+            except ValueError:
+                said = raw
+        except Exception:  # noqa: BLE001
+            pass
+        return "LLMSim's upstream model answered %d: %s" % (exc.code, (said or exc.reason or "").strip()[:500])
+    return "LLMSim could not reach its upstream model: %s: %s" % (type(exc).__name__, exc)
+
+
 def upstream_turn(messages, declared, tools_body):
     """Ask the one configured model, and return a turn in the script's shape.
 
@@ -1334,16 +1392,16 @@ def upstream_turn(messages, declared, tools_body):
         payload = {"model": up["model"], "messages": messages}
         if tools_body:
             payload["tools"] = tools_body
+    for field, value in (up.get("params") or {}).items():
+        payload.setdefault(field, value)            # what LLMSim itself builds is never overridden
 
     headers["content-type"] = "application/json"
     req = urllib.request.Request(url, data=json.dumps(payload).encode(), headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=120) as resp:
             body = json.loads(resp.read())
-    except urllib.error.HTTPError as exc:
-        raise UpstreamError("%s %s: %s" % (exc.code, exc.reason, exc.read()[:200].decode("utf-8", "replace")))
     except Exception as exc:
-        raise UpstreamError("%s: %s" % (type(exc).__name__, exc))
+        raise UpstreamError(upstream_failure(exc))
 
     return _turn_from_upstream(body)
 
@@ -5480,6 +5538,20 @@ class Handler(BaseHTTPRequestHandler):
             if problem:
                 return self.send_json(400, {"error": problem})
 
+        if "params" in upstream:
+            params = upstream["params"]
+            if isinstance(params, str):
+                try:
+                    params = json.loads(params) if params.strip() else {}
+                except ValueError:
+                    params = []                      # not an object: refused below, not quietly cleared
+            if params is None:
+                params = {}
+            if not isinstance(params, dict) or len(json.dumps(params)) > 2000:
+                return self.send_json(400, {"error": "upstream.params is a JSON object of extra request fields, "
+                                                     "such as {\"reasoning_effort\": \"none\"}, up to 2000 characters"})
+            CONFIG["upstream"]["params"] = params
+
         for field in ("url", "key", "model", "format", "fallback"):
             if field not in upstream:
                 continue
@@ -6337,13 +6409,16 @@ class Handler(BaseHTTPRequestHandler):
             payload = {"model": up["model"], "messages": messages, "stream": True}
         if tools_body:
             payload["tools"] = tools_body
+        for field, value in (up.get("params") or {}).items():
+            payload.setdefault(field, value)
         headers["content-type"] = "application/json"
 
         req = urllib.request.Request(url, data=json.dumps(payload).encode(), headers=headers)
         try:
             resp = urllib.request.urlopen(req, timeout=180)
         except Exception as exc:
-            log("relay stream failed before it began: %s" % exc)
+            failure = upstream_failure(exc)
+            log("relay stream failed before it began: %s" % failure)
             if CONFIG["upstream"]["fallback"]:
                 name, turn = choose_turn(self.provider, model, messages, None)
                 self.begin_stream()
@@ -6354,8 +6429,7 @@ class Handler(BaseHTTPRequestHandler):
                 for ev in _stream_close(shape, turn.get("text") or ""):
                     self.write_event(ev[0], ev[1])
                 return None
-            return self.refuse(502, "upstream_error",
-                               "LLMSim could not reach its upstream model: %s" % exc)
+            return self.refuse(502, "upstream_error", failure)
 
         started, sent = False, []
         try:
@@ -6687,8 +6761,7 @@ class Handler(BaseHTTPRequestHandler):
                             "ms": int((time.time() - started) * 1000),
                             "prompt": subject(messages)[:400], "reply": None, "tools": [],
                             "error": str(exc)})
-                    return self.refuse(502, "upstream_error",
-                                       "LLMSim could not reach its upstream model: %s" % exc)
+                    return self.refuse(502, "upstream_error", str(exc))
                 name, turn = choose_turn(self.provider, model, messages, declared, view)
                 name = "fallback:" + name
         elif route == "anthropic":

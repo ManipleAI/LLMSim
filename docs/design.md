@@ -254,10 +254,11 @@ and any model can be pinned to the other route. So a demo can send the one
 model somebody will actually look at to a real cheap one, and keep the other
 sixty-nine offline and free. The table lives in `llmsim.config.json` beside
 the script, written by the console, and survives a restart; the environment
-variables below seed it the first time and the file wins after that.
+variables below seed it the first time and a value saved in the file wins after that (an empty saved
+url or key does not: it never switches off an upstream the environment sets).
 
 ```
-LLMSIM_UPSTREAM=https://api.openai.com/v1 \
+LLMSIM_UPSTREAM=https://api.openai.com \
 LLMSIM_UPSTREAM_KEY=sk-... \
 LLMSIM_UPSTREAM_MODEL=gpt-4o-mini \
 python3 server.py
@@ -265,10 +266,11 @@ python3 server.py
 
 | Variable | Default | |
 |---|---|---|
-| `LLMSIM_UPSTREAM` | *(unset)* | Base URL. Unset means scripted — nothing leaves the machine. |
+| `LLMSIM_UPSTREAM` | *(unset)* | Base URL, without `/v1`: LLMSim adds `/v1/chat/completions` (`/v1/messages` for `anthropic`). Azure: `https://<resource>.services.ai.azure.com/openai`. Unset means scripted — nothing leaves the machine. |
 | `LLMSIM_UPSTREAM_KEY` | *(unset)* | The upstream's key. |
 | `LLMSIM_UPSTREAM_MODEL` | `gpt-4o-mini` | The one model that answers everything. |
 | `LLMSIM_UPSTREAM_FORMAT` | `openai` | `openai` or `anthropic` — what the upstream speaks, which need not be what the client speaks. |
+| `LLMSIM_UPSTREAM_PARAMS` | *(none)* | A JSON object of extra fields sent with every request, such as `{"reasoning_effort": "none"}`: some models refuse a request that declares tools without one. What LLMSim builds (model, messages, tools) is never overridden. Also on the Upstream page. |
 | `LLMSIM_UPSTREAM_FALLBACK` | off | On an upstream failure, serve the script instead of an error. |
 
 ### Why this exists

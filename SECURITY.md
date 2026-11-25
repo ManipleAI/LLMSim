@@ -14,7 +14,7 @@ We'll reply in the report, and agree a fix and when to disclose it with you ther
 
 ## Supported versions
 
-LLMSim has no releases yet, and fixes go to `main`. Please test against the latest `main` before reporting.
+Fixes go to `main` and to the latest release. Please test against the latest `main` before reporting.
 
 ## What is expected, not a vulnerability
 

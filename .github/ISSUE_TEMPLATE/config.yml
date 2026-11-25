@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or idea
+    url: https://github.com/ManipleAI/LLMSim/discussions
+    about: Ask how to do something, or float an idea, before opening an issue.
+  - name: Report a vulnerability
+    url: https://github.com/ManipleAI/LLMSim/security/advisories/new
+    about: Please do not report a vulnerability in a public issue.

@@ -1,0 +1,36 @@
+name: Bug report
+description: Something LLMSim does is wrong, or differs from the vendor API it simulates.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you got instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: The smallest request or scenario that shows it. A `curl` command is ideal. Leave out real keys and personal data.
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The release, or the commit if you run from `main`.
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python and how you run it
+      description: For example "3.12, python3 server.py" or "Docker".
+  - type: textarea
+    id: settings
+    attributes:
+      label: Any LLMSIM_* settings that matter
+      description: Never paste a key.

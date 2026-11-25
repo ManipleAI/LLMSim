@@ -1,6 +1,6 @@
 <div align="center">
 
-# LLMSim - LLM ans AI Agent Simulator for Testing
+# LLMSim: an LLM and AI agent simulator for testing
 
 **A stand-in for the model your agent talks to, and a test kit for the agent itself.**
 
@@ -13,6 +13,14 @@ and keeps every request. It runs as one Python process with no dependencies.
 ![Docker](https://img.shields.io/badge/docker-ready-2496ED.svg)
 
 [Quick start](#quick-start) · [How to use it](#how-to-use-it) · [Test an agent](#test-an-agent) · [Ways to run it](#ways-to-run-it) · [Documentation](docs/guide.md)
+
+<img src="docs/images/demo.gif" alt="Sending two messages in the Playground, then seeing both under Traffic with the rule that answered each" width="880">
+
+**Try it in ten seconds** (Python 3.9 or newer, nothing to install):
+
+```bash
+git clone https://github.com/ManipleAI/LLMSim.git && cd LLMSim && python3 server.py   # then open http://localhost:8099/ui
+```
 
 <img src="docs/images/canvas.png" alt="A scenario on the canvas: a coordinator agent handing work to two stub agents, with routing, handoff, duplication and termination checks" width="900">
 
@@ -398,8 +406,10 @@ browser. It needs Node and Playwright for Node, and skips without them:
 NODE_PATH=/path/to/node_modules python3 tests/test_access_page.py
 ```
 
-Contributions are welcome. Open an issue to discuss a change, or send a pull request with a
-test that shows it working.
+Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md). Open an issue to discuss a
+change, ask a question in [Discussions](https://github.com/ManipleAI/LLMSim/discussions), or send
+a pull request with a test that shows it working. Issues labelled
+[`good first issue`](https://github.com/ManipleAI/LLMSim/labels/good%20first%20issue) are a good way in.
 
 ## License
 
